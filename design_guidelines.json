@@ -1,0 +1,70 @@
+{
+  "theme": "DARK",
+  "archetype": "7 (Electric & Neon) - High-End Premium Variant",
+  "colors": {
+    "background_base": "#09090b",
+    "background_surface": "#18181b",
+    "background_elevated": "#27272a",
+    "primary": "#f43f5e",
+    "primary_hover": "#e11d48",
+    "secondary": "#a1a1aa",
+    "text_primary": "#fafafa",
+    "text_secondary": "#a1a1aa",
+    "border": "#27272a",
+    "pro_gradient": "linear-gradient(to right, #f43f5e, #fb923c)"
+  },
+  "typography": {
+    "heading_font": "Outfit",
+    "body_font": "Manrope",
+    "h1": "text-4xl sm:text-5xl font-bold tracking-tight text-zinc-50",
+    "h2": "text-2xl sm:text-3xl font-semibold tracking-tight text-zinc-50",
+    "h3": "text-xl sm:text-2xl font-semibold text-zinc-50",
+    "body": "text-base text-zinc-400 leading-relaxed",
+    "small": "text-sm text-zinc-500",
+    "label": "text-xs font-bold uppercase tracking-[0.2em] text-zinc-500"
+  },
+  "layout": {
+    "global_structure": "3-column fixed-sidebar layout (Left Sidebar: 240px, Main: Fluid, Right Sidebar: 280px). On mobile, sidebars collapse into a bottom nav or hamburger menu.",
+    "spacing_system": "Generous spacing. p-6 for cards, gap-6 for video grids. Main content wrapper needs px-6 sm:px-10 py-8.",
+    "video_grid": "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6",
+    "radius": "rounded-lg for video thumbnails, rounded-md for buttons/inputs, rounded-xl for modals."
+  },
+  "components": {
+    "video_card": "Group wrapper. Thumbnail: aspect-video, overflow-hidden, rounded-lg. Image: object-cover w-full h-full transition-transform duration-300 group-hover:scale-105. Overlay: bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center (Play icon). Below: Flex container with uploader avatar (h-10 w-10 rounded-full) and text block (title line-clamp-2, views, time ago).",
+    "left_sidebar": "Fixed h-screen w-[240px] border-r border-zinc-800 bg-zinc-950/80 backdrop-blur-xl p-4 flex flex-col gap-2 overflow-y-auto custom-scrollbar. Links are flex items, px-4 py-3 rounded-md text-zinc-400 hover:text-zinc-50 hover:bg-zinc-800/50 transition-colors.",
+    "right_sidebar": "Fixed h-screen w-[280px] right-0 border-l border-zinc-800 bg-zinc-950/80 backdrop-blur-xl p-6 overflow-y-auto custom-scrollbar. Contains User Profile mini-card, Pro Upgrade CTA with pro_gradient background or border, and Recommended Videos list (compact mode).",
+    "main_content": "ml-[240px] mr-[280px] min-h-screen bg-zinc-950 pt-20",
+    "header": "Fixed top-0 left-[240px] right-[280px] h-16 border-b border-zinc-800 bg-zinc-950/80 backdrop-blur-xl z-40 px-6 flex items-center justify-between. Search bar centered.",
+    "pro_cta": "Card with subtle gradient border (Tracing Beam style). Inner bg zinc-900. Bright rose-500 button.",
+    "video_player": "Responsive wrapper aspect-video bg-black rounded-lg overflow-hidden relative. Custom controls overlay at bottom (Tailwind styled). Resolution picker dropdown.",
+    "announcement_modal": "Centered Dialog. Backdrop blur-sm bg-black/60. Content box bg-zinc-900 border border-zinc-800 rounded-xl p-8 max-w-md text-center. High impact."
+  },
+  "motion_and_interactions": {
+    "hover_states": "Buttons and links must always change text color and background. hover:bg-zinc-800 hover:text-zinc-50.",
+    "video_hover": "Subtle scale-105 on the image thumbnail, fade in black/40 overlay with play button.",
+    "page_transitions": "Framer motion fade in for main content areas.",
+    "focus": "focus:outline-none focus:ring-2 focus:ring-rose-500/50 focus:ring-offset-2 focus:ring-offset-zinc-950"
+  },
+  "icons_and_assets": {
+    "library": "lucide-react",
+    "images": {
+      "pro_banner_bg": "https://static.prod-images.emergentagent.com/jobs/0097b48b-dc64-4651-bce7-1e1de64d4ec7/images/bc20fe10a7041d030dbe4c530ed6918bb0b5b85053219e243a37c1e36d9edee0.png",
+      "default_user_cover": "https://static.prod-images.emergentagent.com/jobs/0097b48b-dc64-4651-bce7-1e1de64d4ec7/images/7a9f6d5a091eb1422228b1144c293fadad042b6d47d3ca455284b8f9b960a623.png",
+      "default_avatar": "https://images.unsplash.com/photo-1544502062-f82887f03d1c?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDQ2Mzl8MHwxfHNlYXJjaHwxfHxkZWZhdWx0JTIwdXNlciUyMGF2YXRhciUyMHNpbGhvdWV0dGV8ZW58MHx8fHwxNzgwMjM5MzgyfDA&ixlib=rb-4.1.0&q=85",
+      "dummy_video_1": "https://images.unsplash.com/photo-1768142206948-fbbb321aac4d?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAxODF8MHwxfHNlYXJjaHw0fHxhbmltZSUyMGxhbmRzY2FwZSUyMHdhbGxwYXBlcnxlbnwwfHx8fDE3ODAyMzkzODJ8MA&ixlib=rb-4.1.0&q=85",
+      "dummy_video_2": "https://images.unsplash.com/photo-1554310603-d39d43033735?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAxODF8MHwxfHNlYXJjaHwxfHxhbmltZSUyMGxhbmRzY2FwZSUyMHdhbGxwYXBlcnxlbnwwfHx8fDE3ODAyMzkzODJ8MA&ixlib=rb-4.1.0&q=85",
+      "dummy_video_3": "https://images.unsplash.com/photo-1580920459139-68dcb30f70fe?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAxODF8MHwxfHNlYXJjaHwyfHxhbmltZSUyMGxhbmRzY2FwZSUyMHdhbGxwYXBlcnxlbnwwfHx8fDE3ODAyMzkzODJ8MA&ixlib=rb-4.1.0&q=85"
+    }
+  },
+  "instructions_to_main_agent": {
+    "1": "Initialize a React application with Vite, install Tailwind CSS, framer-motion, lucide-react, and Shadcn UI.",
+    "2": "Create the 3-column layout structure in App.js (or main layout component) early on, as all pages share this structure.",
+    "3": "Use Shadcn components for forms, inputs, dialogs (for announcements), dropdowns (for resolution picker and admin menus).",
+    "4": "The right sidebar has different states based on auth. If logged out, show Login/Register buttons. If logged in, show User Profile snippet.",
+    "5": "Admin dashboard should use the same dark theme but adopt the 'Control Room' grid (tight gap-4, metrics at the top, data tables below).",
+    "6": "Ensure all interactive elements have data-testid attributes (e.g., data-testid='upload-video-button', data-testid='pro-upgrade-btn').",
+    "7": "Do not use 'Inter' font. Use 'Outfit' for headings and 'Manrope' for body. Configure this in tailwind.config.js.",
+    "8": "Use the provided dummy video and profile images as placeholders in the UI before real backend integration.",
+    "9": "The video player should be styled nicely. Since FFmpeg backend is required for resolution switching, the frontend player needs a custom dropdown to switch source URLs based on the selected resolution."
+  }
+}
