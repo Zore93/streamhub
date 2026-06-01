@@ -285,6 +285,11 @@ function SettingsTab() {
         <Field label="Wasabi bucket"><Input value={s.wasabi_bucket} onChange={(e) => upd("wasabi_bucket", e.target.value)} className="bg-zinc-950 border-zinc-800" /></Field>
         <Field label="Wasabi region"><Input value={s.wasabi_region} onChange={(e) => upd("wasabi_region", e.target.value)} className="bg-zinc-950 border-zinc-800" /></Field>
         <Field label="Wasabi endpoint"><Input value={s.wasabi_endpoint} onChange={(e) => upd("wasabi_endpoint", e.target.value)} className="bg-zinc-950 border-zinc-800" /></Field>
+        <Field label="Public base URL (optional CDN)"><Input value={s.wasabi_public_base_url || ""} onChange={(e) => upd("wasabi_public_base_url", e.target.value)} className="bg-zinc-950 border-zinc-800" placeholder="https://cdn.example.com/bucket" /></Field>
+        <Button variant="outline" onClick={async () => {
+          try { const { data } = await api.post("/admin/wasabi/test"); data.ok ? toast.success(data.message) : toast.error(data.message); }
+          catch (e) { toast.error(e.response?.data?.detail || "Failed"); }
+        }} data-testid="test-wasabi"><RefreshCw size={14} className="mr-2" /> Test Wasabi connection</Button>
       </Section>
       <Section title="SMTP / Email verification">
         <Field label="Require email verification"><Switch checked={s.require_email_verification} onCheckedChange={(v) => upd("require_email_verification", v)} /></Field>

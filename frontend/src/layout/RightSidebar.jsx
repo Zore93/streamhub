@@ -5,8 +5,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import api, { mediaUrl } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 
-export default function RightSidebar({ recommendations = null }) {
-  const { user, logout } = useAuth();
+export default function RightSidebar({ recommendations = null }) {  const { user, logout } = useAuth();
   const [pkgs, setPkgs] = useState([]);
 
   useEffect(() => {
@@ -86,9 +85,14 @@ export default function RightSidebar({ recommendations = null }) {
           <div className="space-y-3">
             {recommendations.map((v) => (
               <Link key={v.id} to={`/watch/${v.id}`} className="flex gap-2 group" data-testid={`rec-${v.id}`}>
-                <div className="w-24 aspect-video rounded-md overflow-hidden bg-zinc-800 flex-shrink-0">
+                <div className="w-24 aspect-video rounded-md overflow-hidden bg-zinc-800 flex-shrink-0 relative">
                   {v.thumbnail_url && (
                     <img src={mediaUrl(v.thumbnail_url)} alt="" className="w-full h-full object-cover group-hover:scale-105 transition-transform" />
+                  )}
+                  {v.duration_sec > 0 && (
+                    <div className="absolute bottom-1 right-1 bg-black/85 text-white text-[10px] leading-none px-1 py-0.5 rounded">
+                      {formatRecDuration(v.duration_sec)}
+                    </div>
                   )}
                 </div>
                 <div className="flex-1 min-w-0">
@@ -119,4 +123,10 @@ export default function RightSidebar({ recommendations = null }) {
       )}
     </aside>
   );
+}
+
+function formatRecDuration(s) {
+  const m = Math.floor(s / 60);
+  const sec = Math.floor(s % 60);
+  return `${m}:${String(sec).padStart(2, "0")}`;
 }

@@ -38,6 +38,7 @@ from auth import (
     verify_password,
 )
 from mailer import send_verification_email
+from storage import upload_file as wasabi_upload, wasabi_configured, test_connection as wasabi_test
 from models import (
     Announcement,
     AppSettings,
@@ -206,7 +207,22 @@ async def process_video(video_id: str, src_path: str):
             thumbs = await generate_thumbnails(
                 src_path, str(thumb_dir), video_id, duration, 10
             )
-            thumb_urls = [f"thumbnails/{Path(t).name}" for t in thumbs]
+            use_wasabi = wasabi_configured(settings)
+            thumb_urls: List[str] = []
+            for tp in thumbs:
+                rel = f"thumbnails/{Path(tp).name}"
+                if use_wasabi:
+                    url = await wasabi_upload(tp, rel, settings, "image/jpeg")
+                    if url:
+                        thumb_urls.append(url)
+                        try:
+                            os.remove(tp)
+                        except Exception:
+                            pass
+                    else:
+                        thumb_urls.append(rel)  # fallback local
+                else:
+                    thumb_urls.append(rel)
             await db.videos.update_one(
                 {"id": video_id},
                 {
@@ -228,9 +244,20 @@ async def process_video(video_id: str, src_path: str):
                 ok = await transcode_to_resolution(src_path, str(out_path), res)
                 if ok:
                     w, h = RESOLUTIONS[res]
+                    final_url = out_rel
+                    if use_wasabi:
+                        uploaded = await wasabi_upload(
+                            str(out_path), out_rel, settings, "video/mp4"
+                        )
+                        if uploaded:
+                            final_url = uploaded
+                            try:
+                                os.remove(out_path)
+                            except Exception:
+                                pass
                     renditions.append(
                         VideoRendition(
-                            resolution=res, url=out_rel, width=w, height=h
+                            resolution=res, url=final_url, width=w, height=h
                         ).model_dump()
                     )
                 progress = 30 + int(65 * (i + 1) / total)
@@ -242,6 +269,11 @@ async def process_video(video_id: str, src_path: str):
                 {"id": video_id},
                 {"$set": {"status": "ready", "progress": 100}},
             )
+            # Cleanup original file regardless of storage backend
+            try:
+                os.remove(src_path)
+            except Exception:
+                pass
         except Exception as e:  # noqa: BLE001
             logger.exception("transcode failed")
             await db.videos.update_one(
@@ -356,6 +388,15 @@ async def upload_avatar(
     with open(out_path, "wb") as f:
         shutil.copyfileobj(file.file, f)
     rel = f"avatars/{fname}"
+    settings = await get_settings()
+    if wasabi_configured(settings):
+        url = await wasabi_upload(str(out_path), rel, settings)
+        if url:
+            rel = url
+            try:
+                out_path.unlink()
+            except Exception:
+                pass
     await db.users.update_one({"id": user["id"]}, {"$set": {"avatar_url": rel}})
     return {"avatar_url": rel}
 
@@ -370,6 +411,15 @@ async def upload_cover(
     with open(out_path, "wb") as f:
         shutil.copyfileobj(file.file, f)
     rel = f"covers/{fname}"
+    settings = await get_settings()
+    if wasabi_configured(settings):
+        url = await wasabi_upload(str(out_path), rel, settings)
+        if url:
+            rel = url
+            try:
+                out_path.unlink()
+            except Exception:
+                pass
     await db.users.update_one({"id": user["id"]}, {"$set": {"cover_url": rel}})
     return {"cover_url": rel}
 
@@ -571,20 +621,55 @@ async def delete_video(video_id: str, user: dict = Depends(require_user)):
         raise HTTPException(404, "Not found")
     if v["uploader_id"] != user["id"] and user.get("role") != "admin":
         raise HTTPException(403, "Not yours")
-    # cleanup files
+    settings = await get_settings()
+    # cleanup files (local) - skip http urls (Wasabi)
     for r in v.get("renditions", []):
-        try:
-            (UPLOAD_DIR / r["url"]).unlink()
-        except Exception:
-            pass
+        url = r.get("url", "")
+        if url.startswith("http"):
+            await _delete_wasabi_url(url, settings)
+        else:
+            try:
+                (UPLOAD_DIR / url).unlink()
+            except Exception:
+                pass
     for t in v.get("thumbnail_options", []):
-        try:
-            (UPLOAD_DIR / t).unlink()
-        except Exception:
-            pass
+        if t.startswith("http"):
+            await _delete_wasabi_url(t, settings)
+        else:
+            try:
+                (UPLOAD_DIR / t).unlink()
+            except Exception:
+                pass
     await db.videos.delete_one({"id": video_id})
     await db.comments.delete_many({"video_id": video_id})
     return {"ok": True}
+
+
+async def _delete_wasabi_url(url: str, settings: dict):
+    """Best-effort delete given a public URL."""
+    if not wasabi_configured(settings):
+        return
+    # extract key after bucket
+    bucket = settings.get("wasabi_bucket", "")
+    if not bucket or bucket not in url:
+        return
+    key = url.split(bucket + "/", 1)[-1]
+    try:
+        import boto3
+        from botocore.client import Config
+        def _do():
+            cli = boto3.client(
+                "s3",
+                endpoint_url=settings.get("wasabi_endpoint"),
+                aws_access_key_id=settings.get("wasabi_access_key"),
+                aws_secret_access_key=settings.get("wasabi_secret_key"),
+                region_name=settings.get("wasabi_region") or "us-east-1",
+                config=Config(signature_version="s3v4"),
+            )
+            cli.delete_object(Bucket=bucket, Key=key)
+        await asyncio.to_thread(_do)
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"wasabi delete failed: {e}")
 
 
 # ============ COMMENTS ============
@@ -704,6 +789,13 @@ async def admin_update_settings(payload: dict, admin: dict = Depends(require_adm
     await save_settings(cur)
     queue.set_concurrency(int(cur.get("ffmpeg_concurrency", 2)))
     return cur
+
+
+@api.post("/admin/wasabi/test")
+async def admin_test_wasabi(admin: dict = Depends(require_admin)):
+    s = await get_settings()
+    ok, msg = await wasabi_test(s)
+    return {"ok": ok, "message": msg}
 
 
 # ============ ADMIN: USERS ============
