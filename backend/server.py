@@ -1147,16 +1147,18 @@ async def add_subtitle(
         raise HTTPException(400, "Only .srt, .ass or .vtt allowed")
     sub_id = new_id()
     orig_name = f"{video_id}_{sub_id}{ext}"
-    orig_path = UPLOAD_DIR / "subtitles" / orig_name
-    with open(orig_path, "wb") as f:
-        shutil.copyfileobj(file.file, f)
-    # Convert to WebVTT for playback
     vtt_name = f"{video_id}_{sub_id}.vtt"
+    orig_path = UPLOAD_DIR / "subtitles" / orig_name
     vtt_path = UPLOAD_DIR / "subtitles" / vtt_name
     if ext == ".vtt":
-        # Already WebVTT — keep one file, drop the redundant duplicate
+        # Uploaded file already IS WebVTT — write directly to vtt_path, no original.
+        with open(vtt_path, "wb") as f:
+            shutil.copyfileobj(file.file, f)
+        rel_vtt = f"subtitles/{vtt_name}"
         rel_orig = None
     else:
+        with open(orig_path, "wb") as f:
+            shutil.copyfileobj(file.file, f)
         proc = await asyncio.create_subprocess_exec(
             "ffmpeg", "-y", "-i", str(orig_path), str(vtt_path),
             stdout=asyncio.subprocess.DEVNULL,
@@ -1165,20 +1167,25 @@ async def add_subtitle(
         await proc.wait()
         if not vtt_path.exists():
             raise HTTPException(500, "Subtitle conversion failed")
-    rel_vtt = f"subtitles/{vtt_name}"
-    rel_orig = f"subtitles/{orig_name}"
+        rel_vtt = f"subtitles/{vtt_name}"
+        rel_orig = f"subtitles/{orig_name}"
     settings = await get_settings()
     if wasabi_configured(settings):
         url_vtt = await wasabi_upload(str(vtt_path), rel_vtt, settings, "text/vtt")
-        url_orig = await wasabi_upload(str(orig_path), rel_orig, settings, "text/plain")
         if url_vtt:
             rel_vtt = url_vtt
-            try: vtt_path.unlink()
-            except Exception: pass
-        if url_orig:
-            rel_orig = url_orig
-            try: orig_path.unlink()
-            except Exception: pass
+            try:
+                vtt_path.unlink()
+            except Exception:
+                pass
+        if rel_orig:
+            url_orig = await wasabi_upload(str(orig_path), rel_orig, settings, "text/plain")
+            if url_orig:
+                rel_orig = url_orig
+                try:
+                    orig_path.unlink()
+                except Exception:
+                    pass
     from models import Subtitle as _Sub
     sub = _Sub(
         id=sub_id, language=language, label=label,
