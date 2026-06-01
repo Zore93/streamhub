@@ -26,8 +26,6 @@ services:
       CORS_ORIGINS: "https://${DOMAIN}"
       STRIPE_API_KEY: ${STRIPE_API_KEY}
       UPLOAD_DIR: /app/uploads
-      ADMIN_EMAIL_SEED: ${ADMIN_EMAIL}
-      ADMIN_PASSWORD_SEED: ${ADMIN_PASSWORD}
     volumes:
       - ${UPLOAD_DIR}:/app/uploads
 

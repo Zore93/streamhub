@@ -79,15 +79,18 @@ MONGO_ROOT_PASSWORD=$(openssl rand -base64 24 | tr -d '+/=' | cut -c1-28)
 STRIPE_API_KEY="${STRIPE_API_KEY:-}"
 
 # Persist in deploy/.env
+# IMPORTANT: docker-compose performs ${VAR} interpolation on .env values, so we
+# escape every literal $ to $$ on values that may contain user-supplied passwords.
+escape_dollar() { printf '%s' "$1" | sed 's/\$/$$/g'; }
 mkdir -p "$DEPLOY_DIR" "/opt/streamhub" "/opt/streamhub/data/uploads"
 cat > "$ENV_FILE" <<EOF
 DOMAIN=$DOMAIN
 LETSENCRYPT_EMAIL=$ADMIN_EMAIL
 JWT_SECRET=$JWT_SECRET
 ADMIN_EMAIL=$ADMIN_EMAIL
-ADMIN_PASSWORD=$ADMIN_PASSWORD
+ADMIN_PASSWORD=$(escape_dollar "$ADMIN_PASSWORD")
 MONGO_ROOT_USER=shadmin
-MONGO_ROOT_PASSWORD=$MONGO_ROOT_PASSWORD
+MONGO_ROOT_PASSWORD=$(escape_dollar "$MONGO_ROOT_PASSWORD")
 DB_NAME=streamhub
 STRIPE_API_KEY=$STRIPE_API_KEY
 UPLOAD_DIR=/opt/streamhub/data/uploads
@@ -204,7 +207,9 @@ docker compose --env-file "$ENV_FILE" up -d
 #─── 10) Seed admin in MongoDB ─────────────────────────────────────────────
 green "→ Seeding admin user $ADMIN_EMAIL"
 sleep 6   # let mongo come up
-docker exec sh-backend python - <<PYEOF
+# Pass credentials via `docker exec -e` (NOT through docker-compose env_file) so
+# special characters like $ ! \ ' " survive intact.
+docker exec -e SEED_EMAIL="$ADMIN_EMAIL" -e SEED_PW="$ADMIN_PASSWORD" sh-backend python - <<'PYEOF'
 import asyncio, os, sys
 sys.path.insert(0, '/app')
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -213,11 +218,11 @@ from models import User
 async def main():
     client = AsyncIOMotorClient(os.environ['MONGO_URL'])
     db = client[os.environ['DB_NAME']]
-    email = os.environ['ADMIN_EMAIL_SEED'].lower()
-    password = os.environ['ADMIN_PASSWORD_SEED']
+    email = os.environ['SEED_EMAIL'].lower()
+    password = os.environ['SEED_PW']
     existing = await db.users.find_one({'email': email})
     if existing:
-        await db.users.update_one({'email': email}, {'\$set': {
+        await db.users.update_one({'email': email}, {'$set': {
             'password_hash': hash_password(password),
             'role': 'admin', 'email_verified': True, 'is_pro': True,
         }})
