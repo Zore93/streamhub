@@ -524,6 +524,7 @@ async def get_video(video_id: str, request: Request, user: Optional[dict] = Depe
         if not user or not user.get("is_pro"):
             v["locked"] = True
             v["renditions"] = []
+            v["subtitles"] = []
             return v
         settings = await get_settings()
         ttl = int(settings.get("signed_url_ttl_seconds", 300))
