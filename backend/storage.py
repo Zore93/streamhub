@@ -78,3 +78,42 @@ async def test_connection(settings: dict) -> tuple[bool, str]:
         return True, "Connection OK"
     except Exception as e:  # noqa: BLE001
         return False, str(e)
+
+
+def extract_key_from_public_url(url: str, settings: dict) -> Optional[str]:
+    """Given a stored public Wasabi URL, return the object key (path inside bucket)."""
+    bucket = settings.get("wasabi_bucket", "")
+    if not bucket:
+        return None
+    # Match /bucket/<key>
+    marker = f"/{bucket}/"
+    if marker in url:
+        return url.split(marker, 1)[1]
+    # Match base URL: https://cdn.example.com/<key>
+    base = (settings.get("wasabi_public_base_url") or "").rstrip("/")
+    if base and url.startswith(base + "/"):
+        return url[len(base) + 1:]
+    return None
+
+
+async def presign_get_url(
+    public_url: str, settings: dict, ttl_seconds: int = 300
+) -> Optional[str]:
+    """Generate a short-lived presigned GET URL for a previously uploaded object."""
+    key = extract_key_from_public_url(public_url, settings)
+    if not key:
+        return None
+
+    def _do():
+        cli = _client(settings)
+        return cli.generate_presigned_url(
+            "get_object",
+            Params={"Bucket": settings["wasabi_bucket"], "Key": key},
+            ExpiresIn=int(ttl_seconds),
+        )
+
+    try:
+        return await asyncio.to_thread(_do)
+    except Exception as e:  # noqa: BLE001
+        print(f"[wasabi] presign failed: {e}")
+        return None

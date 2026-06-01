@@ -186,6 +186,8 @@ class AppSettings(BaseModel):
     # Stripe
     stripe_secret_key: str = ""  # if blank, uses env STRIPE_API_KEY
     stripe_publishable_key: str = ""
+    # Signed URLs (Pro content protection)
+    signed_url_ttl_seconds: int = 300
     # GitHub auto-update
     github_repo: str = ""
     github_token: str = ""

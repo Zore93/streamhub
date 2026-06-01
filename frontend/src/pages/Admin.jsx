@@ -305,6 +305,12 @@ function SettingsTab() {
         <Field label="Stripe secret key (leave blank to use env)"><Input type="password" value={s.stripe_secret_key} onChange={(e) => upd("stripe_secret_key", e.target.value)} className="bg-zinc-950 border-zinc-800" /></Field>
         <Field label="Stripe publishable key"><Input value={s.stripe_publishable_key} onChange={(e) => upd("stripe_publishable_key", e.target.value)} className="bg-zinc-950 border-zinc-800" /></Field>
       </Section>
+      <Section title="Signed URL Protection (Pro videos)">
+        <Field label="Signed URL TTL (seconds)">
+          <Input type="number" value={s.signed_url_ttl_seconds || 300} onChange={(e) => upd("signed_url_ttl_seconds", parseInt(e.target.value) || 300)} className="bg-zinc-950 border-zinc-800" />
+        </Field>
+        <p className="text-xs text-zinc-500">Pro-tier video URLs are signed/presigned and expire after this many seconds. Short TTL = more piracy protection. Recommended: 300 (5 minutes).</p>
+      </Section>
       <Section title="GitHub auto-update">
         <Field label="Repo URL"><Input value={s.github_repo} onChange={(e) => upd("github_repo", e.target.value)} className="bg-zinc-950 border-zinc-800" placeholder="https://github.com/you/repo.git" /></Field>
         <Field label="Branch"><Input value={s.github_branch} onChange={(e) => upd("github_branch", e.target.value)} className="bg-zinc-950 border-zinc-800" /></Field>

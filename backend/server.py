@@ -38,7 +38,16 @@ from auth import (
     verify_password,
 )
 from mailer import send_verification_email
-from storage import upload_file as wasabi_upload, wasabi_configured, test_connection as wasabi_test
+from storage import (
+    upload_file as wasabi_upload,
+    wasabi_configured,
+    test_connection as wasabi_test,
+    presign_get_url,
+)
+import hashlib
+import hmac
+import time
+import urllib.parse
 from models import (
     Announcement,
     AppSettings,
@@ -133,6 +142,29 @@ def media_url(request: Request, rel_path: str) -> str:
     """Build absolute URL like https://.../api/media/<rel>"""
     base = str(request.base_url).rstrip("/")
     return f"{base}/api/media/{rel_path.lstrip('/')}"
+
+
+def _sign_local(rel_path: str, exp: int) -> str:
+    msg = f"{rel_path}|{exp}".encode("utf-8")
+    return hmac.new(JWT_SECRET.encode("utf-8"), msg, hashlib.sha256).hexdigest()
+
+
+def signed_local_url(request: Request, rel_path: str, ttl_seconds: int) -> str:
+    exp = int(time.time()) + int(ttl_seconds)
+    sig = _sign_local(rel_path, exp)
+    base = str(request.base_url).rstrip("/")
+    safe_path = urllib.parse.quote(rel_path, safe="/")
+    return f"{base}/api/secure-media/{safe_path}?exp={exp}&sig={sig}"
+
+
+async def maybe_sign_url(
+    request: Request, url: str, settings: dict, ttl_seconds: int
+) -> str:
+    """Returns a signed/presigned variant of the given stored URL."""
+    if url.startswith("http://") or url.startswith("https://"):
+        signed = await presign_get_url(url, settings, ttl_seconds)
+        return signed or url
+    return signed_local_url(request, url, ttl_seconds)
 
 
 async def current_user(
@@ -483,16 +515,25 @@ async def list_videos(
 
 
 @api.get("/videos/{video_id}")
-async def get_video(video_id: str, user: Optional[dict] = Depends(current_user)):
+async def get_video(video_id: str, request: Request, user: Optional[dict] = Depends(current_user)):
     v = await db.videos.find_one({"id": video_id}, {"_id": 0})
     if not v:
         raise HTTPException(404, "Not found")
-    # access tier check
     if v.get("access_tier") == "pro":
         if not user or not user.get("is_pro"):
-            # still return metadata, but flag locked
             v["locked"] = True
             v["renditions"] = []
+            return v
+        settings = await get_settings()
+        ttl = int(settings.get("signed_url_ttl_seconds", 300))
+        signed_rends = []
+        for r in v.get("renditions", []):
+            r2 = dict(r)
+            r2["url"] = await maybe_sign_url(request, r["url"], settings, ttl)
+            signed_rends.append(r2)
+        v["renditions"] = signed_rends
+        v["signed"] = True
+        v["signed_ttl"] = ttl
     return v
 
 
@@ -1034,6 +1075,20 @@ async def shutdown():
 @api.get("/")
 async def root():
     return {"message": "StreamHub API", "status": "ok"}
+
+
+@api.get("/secure-media/{rel_path:path}")
+async def secure_media(rel_path: str, exp: int, sig: str):
+    """Serve protected local media files with HMAC-signed URL validation."""
+    if exp < int(time.time()):
+        raise HTTPException(410, "URL expired")
+    expected = _sign_local(rel_path, exp)
+    if not hmac.compare_digest(expected, sig):
+        raise HTTPException(403, "Bad signature")
+    full = UPLOAD_DIR / rel_path
+    if not full.exists() or not str(full.resolve()).startswith(str(UPLOAD_DIR.resolve())):
+        raise HTTPException(404, "Not found")
+    return FileResponse(str(full))
 
 
 app.include_router(api)
