@@ -206,6 +206,8 @@ class AppSettings(BaseModel):
     cloudfront_private_key: str = ""  # PEM body
     # Contact
     contact_email: str = ""
+    # Player
+    allow_video_download: bool = False
     # GitHub auto-update
     github_repo: str = ""
     github_token: str = ""

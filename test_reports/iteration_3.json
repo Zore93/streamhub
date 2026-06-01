@@ -1,0 +1,48 @@
+{
+  "summary": "Iteration 3 backend tests: 25/26 passed (96%). Verified grant-pro (1day/1week/1month/permanent/custom), revoke-pro, role-based 403, player-config public endpoint + admin-settings persistence, subtitle .vtt regression (no SameFileError) and .srt auto-convert, and full migration JSON output structure (users=2544, videos=1420, categories=19). One real bug discovered in /api/videos/{id}/subtitles: for .vtt uploads, rel_orig is NOT being persisted as None as intended.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "POST /api/videos/{video_id}/subtitles (.vtt upload)",
+        "issue": "BUG: rel_orig should be null for .vtt uploads per the fix intent (server.py:1158 sets rel_orig=None inside `if ext == '.vtt'`), but lines 1168-1169 unconditionally re-assign `rel_orig = f\"subtitles/{orig_name}\"`, overriding the None. Functional regression of SameFileError IS fixed (upload returns 200, format='vtt', file plays), but the DB `original_url` field is populated with the same path as `url`, so when a Wasabi upload runs (line 1170-1181), it will upload the same .vtt file twice (once as text/vtt, once as text/plain) and the second call will overwrite the first because both use the same key. In local-storage mode the duplicate URL is harmless but semantically wrong (sub.original_url should be null since there's no non-vtt 'original').",
+        "priority": "MEDIUM",
+        "fix_hint": "Move `rel_vtt = ...` / `rel_orig = ...` defaults INSIDE the else-branch, or set them before the if and only assign rel_orig when ext != '.vtt'. Suggested patch: replace lines 1153-1169 with:\n    vtt_name = f\"{video_id}_{sub_id}.vtt\"\n    vtt_path = UPLOAD_DIR / 'subtitles' / vtt_name\n    if ext == '.vtt':\n        rel_orig = None\n        rel_vtt = f'subtitles/{orig_name}'   # the uploaded file already IS the vtt\n    else:\n        proc = await asyncio.create_subprocess_exec(...)\n        await proc.wait()\n        if not vtt_path.exists():\n            raise HTTPException(500, 'Subtitle conversion failed')\n        rel_vtt = f'subtitles/{vtt_name}'\n        rel_orig = f'subtitles/{orig_name}'\n    Also gate the wasabi `url_orig` upload behind `if rel_orig:`."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration3.py",
+    "/app/test_reports/pytest/iteration3.xml"
+  ],
+  "action_items": [
+    "Fix /app/backend/server.py:1168-1169 so rel_orig stays None for .vtt uploads and the wasabi `original_url` second upload is skipped when rel_orig is None.",
+    "Optional: add a DELETE /api/admin/users/{user_id} endpoint so admins/tests can purge test accounts (none exists today; only ban/unban/role)."
+  ],
+  "critical_code_review_comments": [
+    "server.py grew to 1305 lines — close to the 700-line guideline ceiling x2. Consider splitting routers (auth, admin, videos, subtitles, payments, site) into separate modules.",
+    "Subtitle endpoint mixes local/Wasabi upload logic in one 60+ line function; refactor `wasabi_upload` branch into a helper.",
+    "Grant-pro endpoint accepts an untyped `payload: dict` — switch to a Pydantic model (e.g., GrantProReq) for input validation. `int(payload.get('custom_days') or 1)` will TypeError if a non-int string is passed.",
+    "`pro_expires_at` is stored as the literal string 'permanent' for permanent grants but as ISO datetime strings otherwise. Mixing sentinel string + datetime in same field is fragile (consumers must special-case it). Consider `pro_expires_at: Optional[datetime]` + separate `pro_lifetime: bool` field.",
+    "Migration output `legacy_id_maps.json` has correct counts metadata; user/video schemas validated (password_hash starts with $2b$, renditions list non-empty, status='ready', uploader_id/category_id mapped)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration3.py (new)",
+    "/app/test_reports/pytest/iteration3.xml (new)"
+  ],
+  "success_rate": {
+    "backend": "96%",
+    "frontend": "not tested (scope=backend only)"
+  },
+  "test_credentials": "admin@streamhub.io / Admin123! and owner@streamhub.io / Owner@2026! — both work; tokens returned under key 'token' (not 'access_token').",
+  "seed_data_creation": "Created one TEST_iter3_*@example.com regular user (random suffix) for non-admin/403 + grant/revoke flows. No DELETE-user endpoint exists, so the account remains in DB with is_pro=False, pro_expires_at=None after revoke. allow_video_download was toggled on/off but reset to false at end (verified via GET /api/site/player-config → {\"allow_video_download\":false}). Admins were NOT modified (admin@ remains is_pro=true, role=admin, verified).",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Auth tokens come back under key 'token' from /api/auth/login. Signup endpoint is /api/auth/register (NOT /auth/signup). No DELETE /api/admin/users/{id} endpoint. /api/videos?section=latest returns a LIST, not a paginated object. The .vtt subtitle bug (rel_orig not null) is the only failing test — once the main agent fixes server.py:1168-1169 the test in TestSubtitles::test_vtt_rel_orig_is_none should flip green. Run with: REACT_APP_BACKEND_URL=$(grep REACT_APP_BACKEND_URL /app/frontend/.env | cut -d= -f2) python -m pytest /app/backend/tests/test_iteration3.py -v",
+  "rca of the issue": "Bug: .vtt subtitle upload — `original_url` is wrongly populated. Reproduction: POST /api/videos/{id}/subtitles with a file whose suffix is .vtt and Content-Type text/vtt + raw 'WEBVTT\\n\\n00:00...' body. Expected per fix intent (server.py:1158): sub.original_url == None. Actual: sub.original_url == 'subtitles/{video_id}_{sub_id}.vtt' (identical to sub.url). Root cause: at server.py lines 1153-1169, the variables `rel_vtt` and `rel_orig` are assigned unconditionally AFTER the `if ext == '.vtt': rel_orig = None / else: ffmpeg-convert` block, so the None set inside the if-branch is immediately overwritten. Mitigation: move rel_vtt/rel_orig assignment into each branch (see fix_hint in backend_issues.minor[0]) and gate `await wasabi_upload(...rel_orig...)` behind `if rel_orig:`."
+}

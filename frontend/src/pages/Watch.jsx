@@ -9,6 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Heart, Eye, Crown, Lock, Send, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Link } from "react-router-dom";
+import VideoPlayer from "@/components/VideoPlayer";
 
 export default function Watch() {
   const { id } = useParams();
@@ -18,6 +19,7 @@ export default function Watch() {
   const [comments, setComments] = useState([]);
   const [comment, setComment] = useState("");
   const [resolution, setResolution] = useState(null);
+  const [allowDownload, setAllowDownload] = useState(false);
   const videoRef = useRef(null);
 
   const load = async () => {
@@ -32,6 +34,7 @@ export default function Watch() {
     load();
     api.get(`/videos/${id}/recommendations?limit=15`).then((r) => setRecs(r.data));
     api.get(`/videos/${id}/comments`).then((r) => setComments(r.data));
+    api.get("/site/player-config").then((r) => setAllowDownload(!!r.data.allow_video_download)).catch(() => {});
     api.post(`/videos/${id}/view`).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
@@ -77,27 +80,13 @@ export default function Watch() {
               <Link to="/pro"><Button className="pro-gradient text-white border-0">Upgrade Now</Button></Link>
             </div>
           ) : currentRendition ? (
-            <video
-              key={currentRendition.url}
-              ref={videoRef}
-              src={mediaUrl(currentRendition.url)}
-              controls
-              crossOrigin="anonymous"
-              className="w-full h-full"
-              data-testid="video-player"
-              poster={video.thumbnail_url ? mediaUrl(video.thumbnail_url) : undefined}
-            >
-              {(video.subtitles || []).map((s, i) => (
-                <track
-                  key={s.id}
-                  kind="subtitles"
-                  src={mediaUrl(s.url)}
-                  srcLang={s.language}
-                  label={s.label}
-                  default={i === 0}
-                />
-              ))}
-            </video>
+            <VideoPlayer
+              video={video}
+              currentRendition={currentRendition}
+              resolution={resolution}
+              setResolution={setResolution}
+              allowDownload={allowDownload}
+            />
           ) : (
             <div className="absolute inset-0 flex items-center justify-center text-zinc-500">
               Video is {video.status}... ({video.progress}%)
@@ -117,16 +106,6 @@ export default function Watch() {
             {video.likes?.length || 0}
           </button>
           <Link to={`/profile/${video.uploader_id}`} className="hover:text-zinc-200">@{video.uploader_username}</Link>
-          {video.renditions?.length > 1 && (
-            <Select value={resolution || ""} onValueChange={setResolution}>
-              <SelectTrigger className="w-32 bg-zinc-900 border-zinc-800" data-testid="resolution-picker">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {video.renditions.map((r) => <SelectItem key={r.resolution} value={r.resolution}>{r.resolution}</SelectItem>)}
-              </SelectContent>
-            </Select>
-          )}
         </div>
 
         {video.description && (

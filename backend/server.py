@@ -885,6 +885,47 @@ async def admin_unban(user_id: str, admin: dict = Depends(require_admin)):
     return {"ok": True}
 
 
+@api.post("/admin/users/{user_id}/grant-pro")
+async def admin_grant_pro(user_id: str, payload: dict, admin: dict = Depends(require_admin)):
+    """Grant PRO to a user for a chosen duration.
+
+    Body: {duration: "1day|1week|1month|permanent|custom", custom_days?: int, package_id?: str}
+    """
+    duration = (payload.get("duration") or "1month").lower()
+    now = datetime.now(timezone.utc)
+    if duration == "permanent":
+        expires = None  # treated as no expiry
+        expires_iso = "permanent"
+    elif duration == "1day":
+        expires = now + timedelta(days=1)
+        expires_iso = expires.isoformat()
+    elif duration == "1week":
+        expires = now + timedelta(days=7)
+        expires_iso = expires.isoformat()
+    elif duration == "1month":
+        expires = now + timedelta(days=30)
+        expires_iso = expires.isoformat()
+    elif duration == "custom":
+        expires = now + timedelta(days=int(payload.get("custom_days") or 1))
+        expires_iso = expires.isoformat()
+    else:
+        raise HTTPException(400, "Invalid duration")
+    upd = {"is_pro": True, "pro_expires_at": expires_iso}
+    if payload.get("package_id"):
+        upd["pro_package_id"] = payload["package_id"]
+    await db.users.update_one({"id": user_id}, {"$set": upd})
+    return {"ok": True, "pro_expires_at": expires_iso}
+
+
+@api.post("/admin/users/{user_id}/revoke-pro")
+async def admin_revoke_pro(user_id: str, admin: dict = Depends(require_admin)):
+    await db.users.update_one(
+        {"id": user_id},
+        {"$set": {"is_pro": False, "pro_expires_at": None, "pro_package_id": None}},
+    )
+    return {"ok": True}
+
+
 @api.post("/admin/users/{user_id}/role")
 async def admin_set_role(user_id: str, payload: dict, admin: dict = Depends(require_admin)):
     role = payload.get("role")
@@ -1113,7 +1154,8 @@ async def add_subtitle(
     vtt_name = f"{video_id}_{sub_id}.vtt"
     vtt_path = UPLOAD_DIR / "subtitles" / vtt_name
     if ext == ".vtt":
-        shutil.copy(orig_path, vtt_path)
+        # Already WebVTT — keep one file, drop the redundant duplicate
+        rel_orig = None
     else:
         proc = await asyncio.create_subprocess_exec(
             "ffmpeg", "-y", "-i", str(orig_path), str(vtt_path),
@@ -1229,6 +1271,12 @@ async def admin_delete_contact_message(mid: str, admin: dict = Depends(require_a
 async def public_contact_config():
     s = await get_settings()
     return {"enabled": bool(s.get("contact_email"))}
+
+
+@api.get("/site/player-config")
+async def public_player_config():
+    s = await get_settings()
+    return {"allow_video_download": bool(s.get("allow_video_download", False))}
 
 
 @api.get("/secure-media/{rel_path:path}")

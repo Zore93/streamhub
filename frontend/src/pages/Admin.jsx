@@ -102,6 +102,8 @@ function UsersTab() {
   const [users, setUsers] = useState([]);
   const [banDur, setBanDur] = useState({});
   const [banDays, setBanDays] = useState({});
+  const [proDur, setProDur] = useState({});
+  const [proDays, setProDays] = useState({});
   const load = () => api.get("/admin/users").then((r) => setUsers(r.data));
   useEffect(() => { load(); }, []);
 
@@ -114,6 +116,14 @@ function UsersTab() {
   };
   const unban = async (u) => { await api.post(`/admin/users/${u.id}/unban`); load(); };
   const setRole = async (u, role) => { await api.post(`/admin/users/${u.id}/role`, { role }); load(); };
+  const grantPro = async (u) => {
+    const duration = proDur[u.id] || "1month";
+    const body = { duration, custom_days: parseInt(proDays[u.id] || 1) };
+    await api.post(`/admin/users/${u.id}/grant-pro`, body);
+    toast.success("PRO granted");
+    load();
+  };
+  const revokePro = async (u) => { await api.post(`/admin/users/${u.id}/revoke-pro`); load(); };
 
   return (
     <div className="mt-6 space-y-2" data-testid="admin-users">
@@ -133,6 +143,17 @@ function UsersTab() {
           <Button size="sm" variant="destructive" onClick={() => ban(u)} data-testid={`ban-${u.id}`}>Ban</Button>
           <Button size="sm" variant="outline" onClick={() => unban(u)}>Unban</Button>
           <Button size="sm" variant="outline" onClick={() => setRole(u, u.role === "admin" ? "user" : "admin")}>{u.role === "admin" ? "Demote" : "Promote"}</Button>
+          <div className="flex items-center gap-1 ml-2">
+            <Select value={proDur[u.id] || "1month"} onValueChange={(v) => setProDur({ ...proDur, [u.id]: v })}>
+              <SelectTrigger className="w-32 bg-zinc-950 border-zinc-800"><SelectValue /></SelectTrigger>
+              <SelectContent>{BAN_OPTIONS.map((o) => <SelectItem key={o.v} value={o.v}>{o.l}</SelectItem>)}</SelectContent>
+            </Select>
+            {proDur[u.id] === "custom" && (
+              <Input type="number" placeholder="Days" value={proDays[u.id] || ""} onChange={(e) => setProDays({ ...proDays, [u.id]: e.target.value })} className="w-20 bg-zinc-950 border-zinc-800" />
+            )}
+            <Button size="sm" className="pro-gradient text-white border-0" onClick={() => grantPro(u)} data-testid={`grant-pro-${u.id}`}>Grant PRO</Button>
+            {u.is_pro && <Button size="sm" variant="outline" onClick={() => revokePro(u)} data-testid={`revoke-pro-${u.id}`}>Revoke</Button>}
+          </div>
         </div>
       ))}
     </div>
@@ -262,6 +283,7 @@ function SettingsTab() {
         <Field label="Concurrent transcodes"><Input type="number" value={s.ffmpeg_concurrency} onChange={(e) => upd("ffmpeg_concurrency", parseInt(e.target.value) || 1)} className="bg-zinc-950 border-zinc-800" /></Field>
         <Field label="Max upload size (MB)"><Input type="number" value={s.max_upload_size_mb} onChange={(e) => upd("max_upload_size_mb", parseInt(e.target.value) || 100)} className="bg-zinc-950 border-zinc-800" /></Field>
         <Field label="Allow user uploads"><Switch checked={s.allow_user_uploads} onCheckedChange={(v) => upd("allow_user_uploads", v)} /></Field>
+        <Field label="Allow video download (player button)"><Switch checked={!!s.allow_video_download} onCheckedChange={(v) => upd("allow_video_download", v)} data-testid="allow-download-toggle" /></Field>
         <div>
           <Label className="mb-2 block">Enabled resolutions</Label>
           <div className="flex flex-wrap gap-2">
