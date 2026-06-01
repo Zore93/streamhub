@@ -208,30 +208,32 @@ docker compose --env-file "$ENV_FILE" up -d
 green "→ Seeding admin user $ADMIN_EMAIL"
 sleep 6   # let mongo come up
 # Pass credentials via `docker exec -e` (NOT through docker-compose env_file) so
-# special characters like $ ! \ ' " survive intact.
+# special characters like $ ! \ ' " survive intact.  Quoted heredoc (<<'PYEOF')
+# prevents bash from touching anything inside.
 docker exec -e SEED_EMAIL="$ADMIN_EMAIL" -e SEED_PW="$ADMIN_PASSWORD" sh-backend python - <<'PYEOF'
-import asyncio, os, sys
+import asyncio, os, sys, uuid
+from datetime import datetime, timezone
 sys.path.insert(0, '/app')
 from motor.motor_asyncio import AsyncIOMotorClient
 from auth import hash_password
-from models import User
 async def main():
-    client = AsyncIOMotorClient(os.environ['MONGO_URL'])
-    db = client[os.environ['DB_NAME']]
+    db = AsyncIOMotorClient(os.environ['MONGO_URL'])[os.environ['DB_NAME']]
     email = os.environ['SEED_EMAIL'].lower()
-    password = os.environ['SEED_PW']
-    existing = await db.users.find_one({'email': email})
-    if existing:
-        await db.users.update_one({'email': email}, {'$set': {
-            'password_hash': hash_password(password),
-            'role': 'admin', 'email_verified': True, 'is_pro': True,
-        }})
-        print('updated existing admin', email)
-    else:
-        u = User(email=email, username=email.split('@')[0], password_hash=hash_password(password),
-                 role='admin', email_verified=True, is_pro=True)
-        await db.users.insert_one(u.model_dump())
-        print('created admin', email)
+    deleted = (await db.users.delete_many({'email': email})).deleted_count
+    doc = {
+        'id': str(uuid.uuid4()),
+        'email': email,
+        'username': email.split('@')[0],
+        'password_hash': hash_password(os.environ['SEED_PW']),
+        'role': 'admin', 'is_pro': True, 'email_verified': True,
+        'pro_package_id': None, 'pro_expires_at': None,
+        'verify_token': None, 'avatar_url': None, 'cover_url': None,
+        'bio': None, 'banned_until': None, 'banned_reason': None,
+        'created_at': datetime.now(timezone.utc).isoformat(),
+    }
+    await db.users.insert_one(doc)
+    cnt = await db.users.count_documents({'email': email})
+    print(f"seeded admin {email}  (deleted_prior={deleted}  docs_now={cnt})")
 asyncio.run(main())
 PYEOF
 
