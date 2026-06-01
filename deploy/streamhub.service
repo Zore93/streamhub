@@ -1,0 +1,18 @@
+[Unit]
+Description=StreamHub (Docker Compose stack)
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/opt/streamhub/deploy
+EnvironmentFile=/opt/streamhub/deploy/.env
+ExecStart=/usr/bin/docker compose --env-file /opt/streamhub/deploy/.env up -d
+ExecStop=/usr/bin/docker compose --env-file /opt/streamhub/deploy/.env down
+ExecReload=/usr/bin/docker compose --env-file /opt/streamhub/deploy/.env up -d --build
+TimeoutStartSec=600
+
+[Install]
+WantedBy=multi-user.target

@@ -82,10 +82,22 @@ export default function Watch() {
               ref={videoRef}
               src={mediaUrl(currentRendition.url)}
               controls
+              crossOrigin="anonymous"
               className="w-full h-full"
               data-testid="video-player"
               poster={video.thumbnail_url ? mediaUrl(video.thumbnail_url) : undefined}
-            />
+            >
+              {(video.subtitles || []).map((s, i) => (
+                <track
+                  key={s.id}
+                  kind="subtitles"
+                  src={mediaUrl(s.url)}
+                  srcLang={s.language}
+                  label={s.label}
+                  default={i === 0}
+                />
+              ))}
+            </video>
           ) : (
             <div className="absolute inset-0 flex items-center justify-center text-zinc-500">
               Video is {video.status}... ({video.progress}%)

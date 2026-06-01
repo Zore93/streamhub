@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
-import { Folder, Home as HomeIcon, Flame, Shuffle, Upload as UploadIcon, Shield } from "lucide-react";
+import { Folder, Home as HomeIcon, Flame, Shuffle, Upload as UploadIcon, Shield, Mail } from "lucide-react";
 import api from "@/lib/api";
 import { useAuth } from "@/contexts/AuthContext";
 
@@ -17,6 +17,7 @@ export default function LeftSidebar() {
     { to: "/", label: "Home", Icon: HomeIcon },
     { to: "/?section=popular", label: "Popular", Icon: Flame },
     { to: "/?section=random", label: "Discover", Icon: Shuffle },
+    { to: "/contact", label: "Contact", Icon: Mail },
   ];
   if (user) navItems.push({ to: "/upload", label: "Upload", Icon: UploadIcon });
   if (user?.role === "admin") navItems.push({ to: "/admin", label: "Admin Panel", Icon: Shield });

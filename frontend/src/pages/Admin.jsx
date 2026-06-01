@@ -311,6 +311,18 @@ function SettingsTab() {
         </Field>
         <p className="text-xs text-zinc-500">Pro-tier video URLs are signed/presigned and expire after this many seconds. Short TTL = more piracy protection. Recommended: 300 (5 minutes).</p>
       </Section>
+      <Section title="CloudFront (advanced — overrides S3 presign)">
+        <Field label="Use CloudFront"><Switch checked={!!s.cloudfront_enabled} onCheckedChange={(v) => upd("cloudfront_enabled", v)} /></Field>
+        <Field label="CloudFront domain"><Input value={s.cloudfront_domain || ""} onChange={(e) => upd("cloudfront_domain", e.target.value)} placeholder="d123abcd.cloudfront.net" className="bg-zinc-950 border-zinc-800" /></Field>
+        <Field label="Key Pair ID"><Input value={s.cloudfront_key_pair_id || ""} onChange={(e) => upd("cloudfront_key_pair_id", e.target.value)} className="bg-zinc-950 border-zinc-800" /></Field>
+        <div className="col-span-2"><Label>Private key (PEM)</Label>
+          <Textarea rows={6} value={s.cloudfront_private_key || ""} onChange={(e) => upd("cloudfront_private_key", e.target.value)} placeholder="-----BEGIN RSA PRIVATE KEY-----..." className="bg-zinc-950 border-zinc-800 font-mono text-xs" /></div>
+        <p className="text-xs text-zinc-500 col-span-2">When enabled, signed URLs are issued by CloudFront instead of S3 presign. Pair with a CloudFront distribution whose origin is your Wasabi bucket (with bucket public access restricted via OAI / signed-URL behavior). Also set <code>wasabi_public_base_url</code> to your CloudFront URL so newly uploaded assets serve through CloudFront.</p>
+      </Section>
+      <Section title="Contact form">
+        <Field label="Contact email"><Input type="email" value={s.contact_email || ""} onChange={(e) => upd("contact_email", e.target.value)} placeholder="contact@yourdomain.com" className="bg-zinc-950 border-zinc-800" data-testid="contact-email-setting" /></Field>
+        <p className="text-xs text-zinc-500">Messages from /contact are sent to this address (requires SMTP to be enabled).</p>
+      </Section>
       <Section title="GitHub auto-update">
         <Field label="Repo URL"><Input value={s.github_repo} onChange={(e) => upd("github_repo", e.target.value)} className="bg-zinc-950 border-zinc-800" placeholder="https://github.com/you/repo.git" /></Field>
         <Field label="Branch"><Input value={s.github_branch} onChange={(e) => upd("github_branch", e.target.value)} className="bg-zinc-950 border-zinc-800" /></Field>

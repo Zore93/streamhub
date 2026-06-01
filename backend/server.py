@@ -86,6 +86,7 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 (UPLOAD_DIR / "avatars").mkdir(exist_ok=True)
 (UPLOAD_DIR / "covers").mkdir(exist_ok=True)
 (UPLOAD_DIR / "originals").mkdir(exist_ok=True)
+(UPLOAD_DIR / "subtitles").mkdir(exist_ok=True)
 
 mongo_url = os.environ["MONGO_URL"]
 client = AsyncIOMotorClient(mongo_url)
@@ -532,6 +533,12 @@ async def get_video(video_id: str, request: Request, user: Optional[dict] = Depe
             r2["url"] = await maybe_sign_url(request, r["url"], settings, ttl)
             signed_rends.append(r2)
         v["renditions"] = signed_rends
+        signed_subs = []
+        for s in v.get("subtitles", []):
+            s2 = dict(s)
+            s2["url"] = await maybe_sign_url(request, s["url"], settings, ttl)
+            signed_subs.append(s2)
+        v["subtitles"] = signed_subs
         v["signed"] = True
         v["signed_ttl"] = ttl
     return v
@@ -1075,6 +1082,152 @@ async def shutdown():
 @api.get("/")
 async def root():
     return {"message": "StreamHub API", "status": "ok"}
+
+
+# ============ SUBTITLES ============
+@api.post("/videos/{video_id}/subtitles")
+async def add_subtitle(
+    video_id: str,
+    file: UploadFile = File(...),
+    language: str = Form(...),
+    label: str = Form(...),
+    user: dict = Depends(require_user),
+):
+    v = await db.videos.find_one({"id": video_id}, {"_id": 0})
+    if not v:
+        raise HTTPException(404, "Not found")
+    if v["uploader_id"] != user["id"] and user.get("role") != "admin":
+        raise HTTPException(403, "Not your video")
+    if len(v.get("subtitles", [])) >= 10:
+        raise HTTPException(400, "Max 10 subtitles per video")
+    ext = (Path(file.filename or "sub.srt").suffix or ".srt").lower()
+    if ext not in (".srt", ".ass", ".vtt"):
+        raise HTTPException(400, "Only .srt, .ass or .vtt allowed")
+    sub_id = new_id()
+    orig_name = f"{video_id}_{sub_id}{ext}"
+    orig_path = UPLOAD_DIR / "subtitles" / orig_name
+    with open(orig_path, "wb") as f:
+        shutil.copyfileobj(file.file, f)
+    # Convert to WebVTT for playback
+    vtt_name = f"{video_id}_{sub_id}.vtt"
+    vtt_path = UPLOAD_DIR / "subtitles" / vtt_name
+    if ext == ".vtt":
+        shutil.copy(orig_path, vtt_path)
+    else:
+        proc = await asyncio.create_subprocess_exec(
+            "ffmpeg", "-y", "-i", str(orig_path), str(vtt_path),
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        await proc.wait()
+        if not vtt_path.exists():
+            raise HTTPException(500, "Subtitle conversion failed")
+    rel_vtt = f"subtitles/{vtt_name}"
+    rel_orig = f"subtitles/{orig_name}"
+    settings = await get_settings()
+    if wasabi_configured(settings):
+        url_vtt = await wasabi_upload(str(vtt_path), rel_vtt, settings, "text/vtt")
+        url_orig = await wasabi_upload(str(orig_path), rel_orig, settings, "text/plain")
+        if url_vtt:
+            rel_vtt = url_vtt
+            try: vtt_path.unlink()
+            except Exception: pass
+        if url_orig:
+            rel_orig = url_orig
+            try: orig_path.unlink()
+            except Exception: pass
+    from models import Subtitle as _Sub
+    sub = _Sub(
+        id=sub_id, language=language, label=label,
+        url=rel_vtt, original_url=rel_orig, format=ext[1:],
+    ).model_dump()
+    await db.videos.update_one({"id": video_id}, {"$push": {"subtitles": sub}})
+    return sub
+
+
+@api.delete("/videos/{video_id}/subtitles/{sub_id}")
+async def delete_subtitle(video_id: str, sub_id: str, user: dict = Depends(require_user)):
+    v = await db.videos.find_one({"id": video_id}, {"_id": 0})
+    if not v:
+        raise HTTPException(404, "Not found")
+    if v["uploader_id"] != user["id"] and user.get("role") != "admin":
+        raise HTTPException(403, "Not yours")
+    subs = v.get("subtitles", [])
+    target = next((s for s in subs if s["id"] == sub_id), None)
+    if not target:
+        raise HTTPException(404, "Subtitle not found")
+    settings = await get_settings()
+    for u in (target.get("url"), target.get("original_url")):
+        if not u:
+            continue
+        if u.startswith("http"):
+            await _delete_wasabi_url(u, settings)
+        else:
+            try:
+                (UPLOAD_DIR / u).unlink()
+            except Exception:
+                pass
+    await db.videos.update_one({"id": video_id}, {"$pull": {"subtitles": {"id": sub_id}}})
+    return {"ok": True}
+
+
+# ============ CONTACT ============
+@api.post("/contact")
+async def contact_form(payload: dict):
+    title = (payload.get("title") or "").strip()
+    message = (payload.get("message") or "").strip()
+    email = (payload.get("email") or "").strip()
+    if not title or not message or not email:
+        raise HTTPException(400, "All fields required")
+    settings = await get_settings()
+    to = settings.get("contact_email")
+    if not to:
+        raise HTTPException(503, "Contact email not configured by admin")
+    # Persist
+    await db.contact_messages.insert_one({
+        "id": new_id(), "title": title, "message": message, "email": email,
+        "created_at": now_iso(),
+    })
+    # Best-effort send via SMTP
+    if settings.get("smtp_enabled") and settings.get("smtp_host"):
+        try:
+            from email.message import EmailMessage
+            import aiosmtplib
+            msg = EmailMessage()
+            msg["From"] = settings.get("smtp_from") or settings.get("smtp_user")
+            msg["To"] = to
+            msg["Reply-To"] = email
+            msg["Subject"] = f"[StreamHub Contact] {title}"
+            msg.set_content(f"From: {email}\n\n{message}")
+            await aiosmtplib.send(
+                msg,
+                hostname=settings.get("smtp_host"),
+                port=int(settings.get("smtp_port", 587)),
+                username=settings.get("smtp_user") or None,
+                password=settings.get("smtp_password") or None,
+                start_tls=bool(settings.get("smtp_use_tls", True)),
+                timeout=15,
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"contact smtp failed: {e}")
+    return {"ok": True}
+
+
+@api.get("/admin/contact-messages")
+async def admin_contact_messages(admin: dict = Depends(require_admin)):
+    return await db.contact_messages.find({}, {"_id": 0}).sort("created_at", -1).to_list(500)
+
+
+@api.delete("/admin/contact-messages/{mid}")
+async def admin_delete_contact_message(mid: str, admin: dict = Depends(require_admin)):
+    await db.contact_messages.delete_one({"id": mid})
+    return {"ok": True}
+
+
+@api.get("/site/contact-config")
+async def public_contact_config():
+    s = await get_settings()
+    return {"enabled": bool(s.get("contact_email"))}
 
 
 @api.get("/secure-media/{rel_path:path}")

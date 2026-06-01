@@ -99,7 +99,15 @@ def extract_key_from_public_url(url: str, settings: dict) -> Optional[str]:
 async def presign_get_url(
     public_url: str, settings: dict, ttl_seconds: int = 300
 ) -> Optional[str]:
-    """Generate a short-lived presigned GET URL for a previously uploaded object."""
+    """Generate a short-lived signed/presigned GET URL.
+    Uses CloudFront signed URLs when cloudfront_enabled, else native S3 presign."""
+    # CloudFront path
+    if settings.get("cloudfront_enabled") and settings.get("cloudfront_key_pair_id") and settings.get("cloudfront_private_key"):
+        try:
+            return _cloudfront_sign(public_url, settings, ttl_seconds)
+        except Exception as e:  # noqa: BLE001
+            print(f"[cloudfront] sign failed, falling back to S3 presign: {e}")
+    # S3 native presign
     key = extract_key_from_public_url(public_url, settings)
     if not key:
         return None
@@ -117,3 +125,26 @@ async def presign_get_url(
     except Exception as e:  # noqa: BLE001
         print(f"[wasabi] presign failed: {e}")
         return None
+
+
+def _cloudfront_sign(public_url: str, settings: dict, ttl_seconds: int) -> str:
+    """Generate a CloudFront canned signed URL pointing at the configured CF domain."""
+    import datetime as _dt
+    from botocore.signers import CloudFrontSigner
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import padding
+
+    key = extract_key_from_public_url(public_url, settings)
+    if not key:
+        return public_url
+    cf_domain = (settings.get("cloudfront_domain") or "").replace("https://", "").replace("http://", "").rstrip("/")
+    cf_url = f"https://{cf_domain}/{key}"
+    pem = settings["cloudfront_private_key"].encode()
+    pk = serialization.load_pem_private_key(pem, password=None)
+
+    def rsa_signer(message: bytes) -> bytes:
+        return pk.sign(message, padding.PKCS1v15(), hashes.SHA1())
+
+    signer = CloudFrontSigner(settings["cloudfront_key_pair_id"], rsa_signer)
+    expire = _dt.datetime.now(_dt.timezone.utc) + _dt.timedelta(seconds=int(ttl_seconds))
+    return signer.generate_presigned_url(cf_url, date_less_than=expire)

@@ -4,7 +4,8 @@ import api, { mediaUrl } from "@/lib/api";
 import { useAuth } from "@/contexts/AuthContext";
 import VideoCard from "@/components/VideoCard";
 import { Button } from "@/components/ui/button";
-import { Camera, Crown, Trash2 } from "lucide-react";
+import { Camera, Crown, Trash2, Pencil } from "lucide-react";
+import { Link } from "react-router-dom";
 import { toast } from "sonner";
 
 export default function Profile() {
@@ -82,9 +83,14 @@ export default function Profile() {
           <div key={v.id} className="relative">
             <VideoCard v={v} />
             {isMe && (
-              <Button size="sm" variant="destructive" onClick={() => deleteVideo(v.id)} className="absolute top-2 left-2 h-7" data-testid={`delete-video-${v.id}`}>
-                <Trash2 size={12} />
-              </Button>
+              <div className="absolute top-2 left-2 flex gap-1">
+                <Link to={`/edit-video/${v.id}`}>
+                  <Button size="sm" variant="secondary" className="h-7" data-testid={`edit-video-${v.id}`}><Pencil size={12} /></Button>
+                </Link>
+                <Button size="sm" variant="destructive" onClick={() => deleteVideo(v.id)} className="h-7" data-testid={`delete-video-${v.id}`}>
+                  <Trash2 size={12} />
+                </Button>
+              </div>
             )}
           </div>
         ))}

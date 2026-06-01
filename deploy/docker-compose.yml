@@ -1,0 +1,71 @@
+services:
+  mongo:
+    image: mongo:7
+    container_name: sh-mongo
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USER}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD}
+    volumes:
+      - mongo_data:/data/db
+    ports:
+      - "127.0.0.1:27017:27017"   # bind to localhost ONLY (Navicat via SSH tunnel)
+
+  backend:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.backend
+    container_name: sh-backend
+    restart: unless-stopped
+    depends_on:
+      - mongo
+    environment:
+      MONGO_URL: "mongodb://${MONGO_ROOT_USER}:${MONGO_ROOT_PASSWORD}@mongo:27017/${DB_NAME}?authSource=admin"
+      DB_NAME: ${DB_NAME}
+      JWT_SECRET: ${JWT_SECRET}
+      CORS_ORIGINS: "https://${DOMAIN}"
+      STRIPE_API_KEY: ${STRIPE_API_KEY}
+      UPLOAD_DIR: /app/uploads
+      ADMIN_EMAIL_SEED: ${ADMIN_EMAIL}
+      ADMIN_PASSWORD_SEED: ${ADMIN_PASSWORD}
+    volumes:
+      - ${UPLOAD_DIR}:/app/uploads
+
+  frontend:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.frontend
+      args:
+        REACT_APP_BACKEND_URL: "https://${DOMAIN}"
+    container_name: sh-frontend
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: sh-nginx
+    restart: unless-stopped
+    depends_on:
+      - backend
+      - frontend
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/streamhub.conf:/etc/nginx/conf.d/streamhub.conf:ro
+      - ./nginx/ssl-params.conf:/etc/nginx/conf.d/ssl-params.conf:ro
+      - letsencrypt:/etc/letsencrypt
+      - certbot_www:/var/www/certbot
+
+  certbot:
+    image: certbot/certbot:latest
+    container_name: sh-certbot
+    restart: unless-stopped
+    entrypoint: /bin/sh -c "trap exit TERM; while :; do certbot renew --webroot -w /var/www/certbot --quiet --deploy-hook 'nginx -s reload'; sleep 12h; done"
+    volumes:
+      - letsencrypt:/etc/letsencrypt
+      - certbot_www:/var/www/certbot
+
+volumes:
+  mongo_data:
+  letsencrypt:
+  certbot_www:

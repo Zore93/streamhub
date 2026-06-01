@@ -13,6 +13,8 @@ import Profile from "@/pages/Profile";
 import Pro from "@/pages/Pro";
 import Admin from "@/pages/Admin";
 import Category from "@/pages/Category";
+import Contact from "@/pages/Contact";
+import EditVideo from "@/pages/EditVideo";
 
 function App() {
   return (
@@ -32,6 +34,8 @@ function App() {
             <Route path="/pro" element={<Pro />} />
             <Route path="/pro/success" element={<Pro />} />
             <Route path="/category/:id" element={<Category />} />
+            <Route path="/contact" element={<Contact />} />
+            <Route path="/edit-video/:id" element={<EditVideo />} />
             <Route path="/admin" element={<Admin />} />
           </Route>
         </Routes>

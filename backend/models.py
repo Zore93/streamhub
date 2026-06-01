@@ -77,6 +77,16 @@ class VideoRendition(BaseModel):
     height: int = 0
 
 
+class Subtitle(BaseModel):
+    id: str = Field(default_factory=new_id)
+    language: str  # e.g. "en", "ro"
+    label: str  # display name e.g. "English"
+    url: str  # WebVTT URL (for playback)
+    original_url: Optional[str] = None  # original .srt/.ass
+    format: str = "vtt"  # vtt | srt | ass
+    created_at: str = Field(default_factory=now_iso)
+
+
 class Video(BaseModel):
     id: str = Field(default_factory=new_id)
     title: str
@@ -96,6 +106,7 @@ class Video(BaseModel):
     progress: int = 0
     error: Optional[str] = None
     renditions: List[VideoRendition] = []
+    subtitles: List[Subtitle] = []
     access_tier: str = "free"  # free | pro
     views: int = 0
     likes: List[str] = []  # user ids
@@ -188,6 +199,13 @@ class AppSettings(BaseModel):
     stripe_publishable_key: str = ""
     # Signed URLs (Pro content protection)
     signed_url_ttl_seconds: int = 300
+    # CloudFront signed URLs (optional - takes precedence over S3 presign when enabled)
+    cloudfront_enabled: bool = False
+    cloudfront_domain: str = ""  # e.g. d123.cloudfront.net  (no protocol)
+    cloudfront_key_pair_id: str = ""
+    cloudfront_private_key: str = ""  # PEM body
+    # Contact
+    contact_email: str = ""
     # GitHub auto-update
     github_repo: str = ""
     github_token: str = ""

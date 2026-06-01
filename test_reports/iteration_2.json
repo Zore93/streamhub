@@ -1,0 +1,45 @@
+{
+  "summary": "Backend-only testing of 4 new StreamHub features: CloudFront signed-URL settings, subtitle upload (.srt -> WebVTT) with limits/validation/owner-check, public Contact endpoint + admin messages CRUD, and signed subtitle URLs for Pro videos. All 20/20 pytest cases passed (100%). Smoke tests on categories, packages, announcements, admin stats, video listings, and primary+owner admin logins also pass. Settings reset to support@example.com / cloudfront_enabled=false after run.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/contact", "issue": "Accepts untyped dict payload (no Pydantic model). Recommend a typed ContactReq model with EmailStr validation; current code only checks truthiness."},
+      {"endpoint": "POST /api/contact", "issue": "No rate limiting / captcha; public endpoint can be abused to spam contact_messages collection and SMTP."},
+      {"endpoint": "POST /api/videos/{id}/subtitles", "issue": "Extension-only validation (.srt/.ass/.vtt). A file masquerading as .srt with invalid contents will still attempt ffmpeg conversion; fail message returned is generic 500 ('Subtitle conversion failed'). Consider validating content."},
+      {"endpoint": "POST /api/videos/{id}/subtitles", "issue": "Subtitle file size is not bounded server-side; large uploads could exhaust disk."},
+      {"endpoint": "GET /api/admin/contact-messages", "issue": "Hard-coded .to_list(500) limit; no pagination."},
+      {"endpoint": "DELETE /api/admin/contact-messages/{id}", "issue": "Returns {ok: true} even when no document matched (idempotent but silent on missing id). Consider 404 for unknown id."}
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_new_features.py",
+    "/app/test_reports/pytest/pytest_results_iter2.xml"
+  ],
+  "action_items": [
+    "Add typed Pydantic request model for POST /api/contact (title/message/email with EmailStr).",
+    "Add IP-based rate limit and/or captcha on POST /api/contact to prevent spam.",
+    "Bound subtitle file size and validate file magic, not just extension.",
+    "Consider paginating GET /api/admin/contact-messages (currently caps at 500)."
+  ],
+  "critical_code_review_comments": [
+    "storage.py _cloudfront_sign uses SHA1 with PKCS1v15 - this is the correct algorithm CloudFront requires for canned signed URLs, but unit-testing this path was not possible without a real RSA key pair. Code path is structurally correct; if PEM is malformed, presign_get_url silently falls back to S3 presign (good defensive behaviour).",
+    "server.py subtitle upload uses shutil.copyfileobj synchronously inside async handler (blocks event loop on large files). Same issue exists in original avatar/cover upload paths.",
+    "server.py /api/contact embeds SMTP send inline in the request handler; on slow/failed SMTP this blocks the response up to 15s. Consider a background task / fire-and-forget.",
+    "server.py is now ~1255 lines; subtitle + contact endpoints further bloat it. Suggest splitting into routers/{contact,subtitles,videos,admin}.py.",
+    "Settings PATCH whitelists keys via AppSettings.model_fields but does not coerce/validate types - e.g. a client could PATCH signed_url_ttl_seconds with a string and break later int(...) casts.",
+    "Subtitle URL signing in get_video is good (covers both renditions and subtitles), but the locked-pro branch returns the video with empty renditions yet still includes raw subtitles list - non-Pro users could still see original subtitle URLs in the response. Recommend also clearing/redacting subtitles[] when locked.",
+    "/api/admin/contact-messages requires admin (good), but the list is unauthenticated-readable risk only if require_admin is bypassed; verified 403 for non-admin user.",
+    "POST /api/contact returns 503 when contact_email is blank - semantically 'service unavailable' is fine, but documenting this status to frontend is important."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_new_features.py"
+  ],
+  "success_rate": {"backend": "100% (20/20)", "frontend": "N/A (skipped per request)"},
+  "test_credentials": "admin@streamhub.io / Admin123! (primary), owner@streamhub.io / Owner@2026! (owner) - both verified working",
+  "seed_data_creation": "Each run creates 2 ephemeral users (test_a_<uuid>, test_b_<uuid>), one TEST_SubVideo (deleted by user via /api/videos), and contact message rows with TEST_ prefixed titles. Contact messages from earlier runs are still visible in admin list (only the test-created one is deleted explicitly).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "All four new feature areas verified end-to-end: (1) settings round-trip for contact_email + cloudfront_* fields persists, (2) /api/site/contact-config toggles based on contact_email, (3) /api/contact validates fields + 503 when not configured + admin CRUD works, (4) subtitle .srt is FFmpeg-converted to .vtt (WEBVTT header verified by fetching /api/media/<path>), 10-subtitle limit enforced (11th returns 400), .txt rejected with 400, cross-owner upload returns 403, delete works. Pro-tier subtitle URLs are signed (contain ?exp=&sig= for local storage). Settings reset to support@example.com / cloudfront_enabled=false at end. CloudFront actual signed URL generation could not be E2E-tested without a real key pair, but code path is structurally validated and falls back gracefully on bad PEM.",
+  "rca of the issue": "N/A - no bugs blocking the listed features."
+}
