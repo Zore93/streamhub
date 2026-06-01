@@ -3,9 +3,19 @@ FROM node:20-alpine AS build
 
 WORKDIR /app
 
-COPY frontend/package.json frontend/yarn.lock ./
-RUN yarn install --frozen-lockfile
+# Copy package.json (required) and yarn.lock (optional — glob avoids "not found")
+COPY frontend/package.json ./
+COPY frontend/yarn.lock* ./
 
+# If yarn.lock is present, do a frozen install (fast, reproducible);
+# otherwise fall back to a normal install that generates one.
+RUN if [ -f yarn.lock ]; then \
+        yarn install --frozen-lockfile --network-timeout 600000 ; \
+    else \
+        yarn install --network-timeout 600000 ; \
+    fi
+
+# Copy the rest of the frontend source
 COPY frontend ./
 
 # Inject backend URL at build time so React picks it up

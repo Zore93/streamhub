@@ -1,0 +1,18 @@
+# Files NOT to send to the Docker build context.
+# (yarn.lock and package.json MUST be sent — do not list them here.)
+**/.git
+**/.gitignore
+**/node_modules
+**/__pycache__
+**/.venv
+**/venv
+**/.env
+**/.env.local
+**/build
+**/dist
+**/.next
+deploy/.env
+data/
+uploads/
+*.log
+.DS_Store

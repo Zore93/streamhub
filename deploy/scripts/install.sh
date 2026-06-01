@@ -117,6 +117,16 @@ ufw allow 80/tcp  >/dev/null
 ufw allow 443/tcp >/dev/null
 ufw --force enable >/dev/null
 
+#─── 4.5) Sanity-check repository contents ──────────────────────────────────
+green "→ Verifying repository contents"
+for must in "$ROOT_DIR/frontend/package.json" "$ROOT_DIR/backend/requirements.txt" "$ROOT_DIR/backend/server.py"; do
+    [[ -f "$must" ]] || die "Required file missing from repo: $must  — push the full repo and re-run"
+done
+if [[ ! -f "$ROOT_DIR/frontend/yarn.lock" ]]; then
+    yellow "⚠ frontend/yarn.lock is missing — the Docker build will generate one (slower, but fine)."
+    yellow "  For reproducible builds, run 'cd frontend && yarn install' locally and commit yarn.lock."
+fi
+
 #─── 5) Docker ──────────────────────────────────────────────────────────────
 if ! command -v docker >/dev/null 2>&1; then
     green "→ Installing Docker Engine"
