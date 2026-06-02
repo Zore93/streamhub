@@ -110,7 +110,17 @@ export default function LiveChat({ enabled = true, guestAllowed = true, maxLen =
     return () => {
       cancelled = true;
       if (retryTimer) clearTimeout(retryTimer);
-      try { wsRef.current?.close(); } catch {}
+      const ws = wsRef.current;
+      if (!ws) return;
+      // If the socket is still in CONNECTING (StrictMode double-mount, fast
+      // navigation, etc.) calling .close() raises a noisy console warning.
+      // Defer until the socket is OPEN, then close cleanly.
+      if (ws.readyState === WebSocket.CONNECTING) {
+        ws.addEventListener("open", () => { try { ws.close(); } catch {} }, { once: true });
+        ws.addEventListener("error", () => {}, { once: true });
+      } else {
+        try { ws.close(); } catch {}
+      }
     };
   }, [enabled, scrollToBottom]);
 

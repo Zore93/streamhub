@@ -926,9 +926,15 @@ async def admin_get_settings(admin: dict = Depends(require_admin)):
 @api.patch("/admin/settings")
 async def admin_update_settings(payload: dict, admin: dict = Depends(require_admin)):
     cur = await get_settings()
-    # whitelist keys
     allowed = set(AppSettings.model_fields.keys())
     upd = {k: v for k, v in payload.items() if k in allowed}
+    # Type-validate by running the merged dict through AppSettings — anything
+    # that can't be coerced raises 422 instead of being silently stored.
+    try:
+        merged = {**cur, **upd}
+        AppSettings(**{k: merged[k] for k in allowed if k in merged})
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(422, f"Invalid setting value: {e}")
     cur.update(upd)
     await save_settings(cur)
     queue.set_concurrency(int(cur.get("ffmpeg_concurrency", 2)))
