@@ -218,6 +218,7 @@ class AppSettings(BaseModel):
     site_title: str = "StreamHub"
     site_description: str = "A premium video-sharing community."
     site_favicon_url: str = ""
+    site_logo_url: str = ""   # left-sidebar brand logo; replaces the "S" + name when set
     site_seo_keywords: str = ""
     site_seo_meta: str = ""  # raw additional <meta> tags
     # Auth security

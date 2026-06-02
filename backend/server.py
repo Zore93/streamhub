@@ -1760,6 +1760,7 @@ async def public_site_config():
         "title": s.get("site_title") or "StreamHub",
         "description": s.get("site_description") or "",
         "favicon_url": s.get("site_favicon_url") or "",
+        "logo_url": s.get("site_logo_url") or "",
         "keywords": s.get("site_seo_keywords") or "",
         "meta": s.get("site_seo_meta") or "",
         "default_language": s.get("default_language") or "ro",
@@ -1768,6 +1769,53 @@ async def public_site_config():
         "live_chat_guest_allowed": bool(s.get("live_chat_guest_allowed", True)),
         "live_chat_max_message_length": int(s.get("live_chat_max_message_length", 500)),
     }
+
+
+# ============ Admin: site logo upload ============
+(UPLOAD_DIR / "branding").mkdir(exist_ok=True)
+
+
+@api.post("/admin/site/logo")
+async def admin_upload_logo(
+    file: UploadFile = File(...), admin: dict = Depends(require_admin)
+):
+    """Upload the left-sidebar / brand logo image.
+
+    Accepts any image; saved to /uploads/branding/site_logo.<ext> with a
+    cache-busting suffix so the browser picks up the new file immediately.
+    Falls back to local disk if Wasabi isn't configured.
+    """
+    ext = (Path(file.filename or "img").suffix or ".png").lower()
+    if ext not in {".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg"}:
+        raise HTTPException(400, "Unsupported image format")
+    import time as _t
+    fname = f"site_logo_{int(_t.time())}{ext}"
+    out_path = UPLOAD_DIR / "branding" / fname
+    with open(out_path, "wb") as f:
+        shutil.copyfileobj(file.file, f)
+    rel = f"branding/{fname}"
+    settings = await get_settings()
+    if wasabi_configured(settings):
+        url = await wasabi_upload(str(out_path), rel, settings)
+        if url:
+            rel = url
+            try:
+                out_path.unlink()
+            except Exception:
+                pass
+    cur = await get_settings()
+    cur["site_logo_url"] = rel
+    await save_settings(cur)
+    return {"site_logo_url": rel}
+
+
+@api.delete("/admin/site/logo")
+async def admin_delete_logo(admin: dict = Depends(require_admin)):
+    """Reset to the default 'S' + StreamHub text mark."""
+    cur = await get_settings()
+    cur["site_logo_url"] = ""
+    await save_settings(cur)
+    return {"ok": True}
 
 
 # ============ LIVE CHAT ============

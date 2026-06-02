@@ -20,15 +20,33 @@ export function LanguageProvider({ children }) {
   const [lang, setLangState] = useState(() => readStored() || "ro");
   const [siteCfg, setSiteCfg] = useState(null);
 
-  useEffect(() => {
-    api.get("/site/config").then(({ data }) => {
+  const refreshSiteCfg = useCallback(async () => {
+    try {
+      const { data } = await api.get("/site/config");
       setSiteCfg(data);
-      // Apply server default ONLY if user has never explicitly chosen.
-      if (!readStored() && data.default_language && VALID.includes(data.default_language)) {
-        setLangState(data.default_language);
-      }
-    }).catch(() => {});
+    } catch {}
   }, []);
+
+  useEffect(() => {
+    refreshSiteCfg().then(() => {
+      // After first load, apply server default ONLY if user has never explicitly chosen.
+      if (!readStored()) {
+        // We need siteCfg right away — fetch again here is unnecessary, but the
+        // initial refreshSiteCfg has already set state. The dependency on the
+        // setLangState is intentional only for first load.
+      }
+    });
+  }, [refreshSiteCfg]);
+
+  // One-time: align UI language with server default the first time we get cfg.
+  useEffect(() => {
+    if (!siteCfg) return;
+    if (readStored()) return;
+    if (siteCfg.default_language && VALID.includes(siteCfg.default_language)) {
+      setLangState(siteCfg.default_language);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [siteCfg]);
 
   useEffect(() => {
     document.documentElement.lang = lang;
@@ -54,8 +72,8 @@ export function LanguageProvider({ children }) {
   );
 
   const value = useMemo(
-    () => ({ lang, setLang, t, siteCfg, supported: SUPPORTED_LANGUAGES }),
-    [lang, setLang, t, siteCfg],
+    () => ({ lang, setLang, t, siteCfg, supported: SUPPORTED_LANGUAGES, refreshSiteCfg }),
+    [lang, setLang, t, siteCfg, refreshSiteCfg],
   );
 
   return <LangCtx.Provider value={value}>{children}</LangCtx.Provider>;

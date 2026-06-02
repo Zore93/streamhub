@@ -3,13 +3,13 @@ import { Outlet } from "react-router-dom";
 import { Menu, X } from "lucide-react";
 import LeftSidebar from "./LeftSidebar";
 import RightSidebar from "./RightSidebar";
-import api from "@/lib/api";
+import api, { mediaUrl } from "@/lib/api";
 import { Dialog, DialogContent, DialogTitle, DialogDescription, DialogHeader } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { useT } from "@/contexts/LanguageContext";
 
 export function Layout({ recommendations = null, children }) {
-  const { t } = useT();
+  const { t, siteCfg } = useT();
   const [announcements, setAnnouncements] = useState([]);
   const [activeAnn, setActiveAnn] = useState(null);
   const [navOpen, setNavOpen] = useState(false);
@@ -48,9 +48,15 @@ export function Layout({ recommendations = null, children }) {
         >
           <Menu size={22} />
         </button>
-        <a href="/" className="flex items-center gap-2 mx-auto" data-testid="mobile-brand">
-          <div className="h-7 w-7 rounded-md pro-gradient flex items-center justify-center font-heading font-bold text-white text-sm">S</div>
-          <span className="font-heading font-bold text-base">StreamHub</span>
+        <a href="/" className="flex items-center gap-2 mx-auto min-w-0" data-testid="mobile-brand">
+          {siteCfg?.logo_url ? (
+            <img src={mediaUrl(siteCfg.logo_url)} alt={siteCfg.title || "StreamHub"} className="h-7 max-w-[150px] object-contain" />
+          ) : (
+            <>
+              <div className="h-7 w-7 rounded-md pro-gradient flex items-center justify-center font-heading font-bold text-white text-sm">S</div>
+              <span className="font-heading font-bold text-base truncate">{siteCfg?.title || "StreamHub"}</span>
+            </>
+          )}
         </a>
         <div className="w-9" /> {/* spacer to keep brand centered */}
       </header>

@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import api from "@/lib/api";
+import api, { mediaUrl } from "@/lib/api";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,9 +10,10 @@ import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
 import { useAuth } from "@/contexts/AuthContext";
+import { useT } from "@/contexts/LanguageContext";
 import {
   Trash2, Plus, RefreshCw, Eye, Heart, MessageCircle, Users, Video as VideoIcon, Crown,
-  Pencil, Ban, ShieldOff,
+  Pencil, Ban, ShieldOff, Upload as UploadIcon, ImageOff,
 } from "lucide-react";
 
 const RES_OPTIONS = ["360p", "720p", "1080p", "2048p", "4096p"];
@@ -489,6 +490,10 @@ function SettingsTab() {
         <Field label="Site title"><Input value={s.site_title || ""} onChange={(e) => upd("site_title", e.target.value)} className="bg-zinc-950 border-zinc-800" data-testid="site-title-input" /></Field>
         <Field label="Description"><Input value={s.site_description || ""} onChange={(e) => upd("site_description", e.target.value)} className="bg-zinc-950 border-zinc-800" /></Field>
         <Field label="Favicon URL"><Input value={s.site_favicon_url || ""} onChange={(e) => upd("site_favicon_url", e.target.value)} className="bg-zinc-950 border-zinc-800" placeholder="https://.../favicon.ico" /></Field>
+        <SiteLogoControls
+          current={s.site_logo_url}
+          onChange={(url) => upd("site_logo_url", url)}
+        />
         <Field label="SEO keywords"><Input value={s.site_seo_keywords || ""} onChange={(e) => upd("site_seo_keywords", e.target.value)} className="bg-zinc-950 border-zinc-800" placeholder="videos, streaming, ..." /></Field>
         <div className="col-span-2"><Label>Additional &lt;meta&gt; tags (raw HTML)</Label>
           <Textarea rows={3} value={s.site_seo_meta || ""} onChange={(e) => upd("site_seo_meta", e.target.value)} className="bg-zinc-950 border-zinc-800 font-mono text-xs" placeholder='<meta property="og:image" content="...">' /></div>
@@ -512,6 +517,103 @@ function Section({ title, children }) {
     <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5 space-y-4">
       <div className="font-heading font-semibold text-lg">{title}</div>
       {children}
+    </div>
+  );
+}
+
+function SiteLogoControls({ current, onChange }) {
+  const { refreshSiteCfg } = useT();
+  const [busy, setBusy] = useState(false);
+  const [file, setFile] = useState(null);
+
+  const upload = async (e) => {
+    e?.preventDefault();
+    if (!file) return;
+    setBusy(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const { data } = await api.post("/admin/site/logo", fd, {
+        headers: { "Content-Type": "multipart/form-data" },
+      });
+      onChange?.(data.site_logo_url);
+      await refreshSiteCfg();
+      toast.success("Logo updated");
+      setFile(null);
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Upload failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const reset = async () => {
+    if (!window.confirm("Reset to the default 'S + StreamHub' wordmark?")) return;
+    setBusy(true);
+    try {
+      await api.delete("/admin/site/logo");
+      onChange?.("");
+      await refreshSiteCfg();
+      toast.success("Logo reset");
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="col-span-2 bg-zinc-950 border border-zinc-800 rounded-md p-4 space-y-3" data-testid="site-logo-controls">
+      <Label className="m-0 block">Brand logo (replaces "S + StreamHub" in the left sidebar)</Label>
+      <div className="flex items-center gap-4">
+        <div
+          className="h-16 w-44 bg-zinc-900 border border-zinc-800 rounded-md flex items-center justify-center overflow-hidden"
+          data-testid="site-logo-preview"
+        >
+          {current ? (
+            <img src={mediaUrl(current)} alt="Logo preview" className="max-h-full max-w-full object-contain" />
+          ) : (
+            <div className="flex items-center gap-2 text-zinc-500 text-sm">
+              <div className="h-7 w-7 rounded-md pro-gradient flex items-center justify-center font-heading font-bold text-white">S</div>
+              <span className="font-heading font-bold">StreamHub</span>
+            </div>
+          )}
+        </div>
+        <form onSubmit={upload} className="flex-1 flex flex-wrap items-center gap-2">
+          <Input
+            type="file"
+            accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml"
+            onChange={(e) => setFile(e.target.files?.[0] || null)}
+            className="bg-zinc-900 border-zinc-800 flex-1 min-w-[200px]"
+            data-testid="site-logo-file"
+          />
+          <Button
+            type="submit"
+            disabled={busy || !file}
+            className="pro-gradient text-white border-0 disabled:opacity-50"
+            data-testid="site-logo-upload"
+          >
+            <UploadIcon size={14} className="mr-1" />
+            {busy ? "Uploading…" : "Upload"}
+          </Button>
+          {current && (
+            <Button
+              type="button"
+              variant="outline"
+              onClick={reset}
+              disabled={busy}
+              className="border-zinc-700 hover:bg-zinc-800"
+              data-testid="site-logo-reset"
+            >
+              <ImageOff size={14} className="mr-1" /> Reset
+            </Button>
+          )}
+        </form>
+      </div>
+      <p className="text-xs text-zinc-500">
+        Recommended: a horizontal PNG/SVG with transparent background, ~600×120px. The sidebar
+        renders it at 36 px tall (h-9) and caps width at 180 px.
+      </p>
     </div>
   );
 }

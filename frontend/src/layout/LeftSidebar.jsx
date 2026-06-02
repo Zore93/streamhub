@@ -4,7 +4,7 @@ import {
   Folder, Home as HomeIcon, Flame, Shuffle, Smartphone, ListVideo,
   Upload as UploadIcon, Shield, Mail, X, Languages,
 } from "lucide-react";
-import api from "@/lib/api";
+import api, { mediaUrl } from "@/lib/api";
 import { useAuth } from "@/contexts/AuthContext";
 import { useT } from "@/contexts/LanguageContext";
 
@@ -12,7 +12,7 @@ export default function LeftSidebar({ mobileOpen = false, onClose }) {
   const [cats, setCats] = useState([]);
   const { pathname } = useLocation();
   const { user } = useAuth();
-  const { t, lang, setLang, supported } = useT();
+  const { t, lang, setLang, supported, siteCfg } = useT();
 
   useEffect(() => {
     api.get("/categories").then((r) => setCats(r.data)).catch(() => {});
@@ -38,9 +38,20 @@ export default function LeftSidebar({ mobileOpen = false, onClose }) {
   const sidebarInner = (
     <>
       <div className="flex items-center justify-between px-2 py-3 mb-2">
-        <Link to="/" className="flex items-center gap-2" data-testid="brand-link">
-          <div className="h-8 w-8 rounded-md pro-gradient flex items-center justify-center font-heading font-bold text-white">S</div>
-          <span className="font-heading font-bold text-xl tracking-tight">StreamHub</span>
+        <Link to="/" className="flex items-center gap-2 min-w-0" data-testid="brand-link">
+          {siteCfg?.logo_url ? (
+            <img
+              src={mediaUrl(siteCfg.logo_url)}
+              alt={siteCfg.title || "StreamHub"}
+              className="h-9 max-w-[180px] object-contain"
+              data-testid="brand-logo-img"
+            />
+          ) : (
+            <>
+              <div className="h-8 w-8 rounded-md pro-gradient flex items-center justify-center font-heading font-bold text-white">S</div>
+              <span className="font-heading font-bold text-xl tracking-tight truncate">{siteCfg?.title || "StreamHub"}</span>
+            </>
+          )}
         </Link>
         <button
           onClick={onClose}
