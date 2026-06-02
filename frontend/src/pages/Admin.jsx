@@ -417,6 +417,7 @@ function SettingsTab() {
           <Switch checked={!!s.legacy_videos_pro_only} onCheckedChange={(v) => upd("legacy_videos_pro_only", v)} data-testid="legacy-pro-toggle" />
         </Field>
         <p className="text-xs text-zinc-500">When importing legacy databases via the migration tool, the imported videos default to PRO-only access.</p>
+        <LegacyShortsControls />
       </Section>
       <Section title="FFmpeg & Uploads">
         <Field label="Concurrent transcodes"><Input type="number" value={s.ffmpeg_concurrency} onChange={(e) => upd("ffmpeg_concurrency", parseInt(e.target.value) || 1)} className="bg-zinc-950 border-zinc-800" /></Field>
@@ -515,10 +516,89 @@ function Section({ title, children }) {
   );
 }
 
+function LegacyShortsControls() {
+  const [stats, setStats] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  const load = async () => {
+    try {
+      const { data } = await api.get("/admin/videos/legacy-stats");
+      setStats(data);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+  useEffect(() => { load(); }, []);
+
+  const mark = async (asShorts) => {
+    const verb = asShorts ? "Shorts" : "regular Videos";
+    if (!window.confirm(`Mark ALL migrated legacy videos (${stats?.total_legacy ?? 0}) as ${verb}? This affects every video that came from your legacy DB migration.`)) return;
+    setBusy(true);
+    try {
+      const url = asShorts
+        ? "/admin/videos/mark-legacy-as-shorts"
+        : "/admin/videos/mark-legacy-as-videos";
+      const { data } = await api.post(url);
+      toast.success(`Updated ${data.modified} of ${data.matched} legacy videos`);
+      await load();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Failed");
+    } finally { setBusy(false); }
+  };
+
+  if (!stats) return null;
+  return (
+    <div className="bg-zinc-950 border border-zinc-800 rounded-md p-3 space-y-3 mt-3" data-testid="legacy-shorts-controls">
+      <div className="text-sm">
+        <span className="font-semibold">Migrated catalogue:</span>{" "}
+        <span className="text-zinc-300">{stats.total_legacy} total</span>{" "}
+        <span className="text-zinc-500">·</span>{" "}
+        <span className="text-fuchsia-300">{stats.legacy_as_shorts} as Shorts</span>{" "}
+        <span className="text-zinc-500">·</span>{" "}
+        <span className="text-zinc-300">{stats.legacy_as_videos} as long-form videos</span>
+      </div>
+      {stats.total_legacy > 0 && (
+        <div className="flex flex-wrap gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={busy}
+            onClick={() => mark(true)}
+            className="border-zinc-700 hover:bg-zinc-800"
+            data-testid="mark-legacy-shorts"
+          >
+            Mark all legacy as Shorts
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={busy}
+            onClick={() => mark(false)}
+            className="border-zinc-700 hover:bg-zinc-800"
+            data-testid="mark-legacy-videos"
+          >
+            Mark all legacy as long-form videos
+          </Button>
+        </div>
+      )}
+      <p className="text-xs text-zinc-500">
+        Use the first button when the migrated catalogue is exclusively short-form content that
+        should live in the Shorts section of the sidebar. Toggle back any time.
+      </p>
+    </div>
+  );
+}
+
 function GithubUpdateControls() {
   const [status, setStatus] = useState(null);
   const [busy, setBusy] = useState(false);
+  // Mode: "token" (default — paste URL + PAT) vs "url" (raw URL with embedded creds)
+  const [mode, setMode] = useState("token");
   const [showRemoteForm, setShowRemoteForm] = useState(false);
+  // Token-mode fields
+  const [repoUrl, setRepoUrl] = useState("");
+  const [pat, setPat] = useState("");
+  // URL-mode fields
   const [remoteUrl, setRemoteUrl] = useState("");
   const [remoteBranch, setRemoteBranch] = useState("main");
 
@@ -540,7 +620,28 @@ function GithubUpdateControls() {
       toast.error(e.response?.data?.detail || "Update failed");
     } finally { setBusy(false); }
   };
-  const saveRemote = async (e) => {
+  const saveWithToken = async (e) => {
+    e?.preventDefault();
+    if (!repoUrl.trim() || !pat.trim()) {
+      toast.error("Repo URL and Token are both required");
+      return;
+    }
+    setBusy(true);
+    try {
+      await api.post("/admin/github/set-remote-with-token", {
+        repo_url: repoUrl.trim(),
+        token: pat.trim(),
+        branch: remoteBranch.trim() || "main",
+      });
+      toast.success("Remote configured — connectivity verified");
+      setShowRemoteForm(false);
+      setPat("");
+      await check();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Failed to set remote");
+    } finally { setBusy(false); }
+  };
+  const saveRawUrl = async (e) => {
     e?.preventDefault();
     if (!remoteUrl.trim()) return;
     setBusy(true);
@@ -574,7 +675,7 @@ function GithubUpdateControls() {
       {status && (
         <div className="text-sm text-zinc-400 space-y-1">
           <div>Repo path: <code className="text-zinc-200">{status.repo_path}</code></div>
-          <div>Remote: <code className="text-zinc-200">{status.remote_url || "—"}</code></div>
+          <div>Remote: <code className="text-zinc-200 break-all">{status.remote_url || "—"}</code></div>
           <div>Branch: <code className="text-zinc-200">{status.branch}</code></div>
           <div>Current: <code className="text-zinc-200">{status.local_commit || "?"}</code> · Latest on origin: <code className="text-zinc-200">{status.remote_commit || "?"}</code></div>
           <div>
@@ -614,33 +715,100 @@ function GithubUpdateControls() {
         )}
       </div>
       {showRemoteForm && (
-        <form onSubmit={saveRemote} className="bg-zinc-950 border border-zinc-800 rounded-md p-3 space-y-2" data-testid="gh-remote-form">
-          <Label>Remote URL (https://github.com/owner/repo.git or git@…)</Label>
-          <Input
-            value={remoteUrl}
-            onChange={(e) => setRemoteUrl(e.target.value)}
-            placeholder="https://github.com/your-org/streamhub.git"
-            className="bg-zinc-900 border-zinc-800"
-            data-testid="gh-remote-url"
-          />
-          <Label>Branch</Label>
-          <Input
-            value={remoteBranch}
-            onChange={(e) => setRemoteBranch(e.target.value)}
-            placeholder="main"
-            className="bg-zinc-900 border-zinc-800"
-            data-testid="gh-remote-branch"
-          />
-          <div className="flex gap-2">
-            <Button type="submit" disabled={busy || !remoteUrl.trim()} className="pro-gradient text-white border-0" data-testid="gh-remote-save">
-              Save remote
-            </Button>
-            <Button type="button" variant="outline" onClick={() => setShowRemoteForm(false)}>Cancel</Button>
+        <div className="bg-zinc-950 border border-zinc-800 rounded-md p-3 space-y-3" data-testid="gh-remote-form">
+          <div className="flex gap-2" data-testid="gh-mode-tabs">
+            <button
+              type="button"
+              onClick={() => setMode("token")}
+              className={`px-3 py-1.5 text-xs rounded-md border ${mode === "token" ? "bg-rose-500 border-rose-500 text-white" : "bg-zinc-900 border-zinc-800 text-zinc-300"}`}
+              data-testid="gh-mode-token"
+            >
+              Repo URL + Personal Access Token (recommended)
+            </button>
+            <button
+              type="button"
+              onClick={() => setMode("url")}
+              className={`px-3 py-1.5 text-xs rounded-md border ${mode === "url" ? "bg-rose-500 border-rose-500 text-white" : "bg-zinc-900 border-zinc-800 text-zinc-300"}`}
+              data-testid="gh-mode-url"
+            >
+              Raw URL
+            </button>
           </div>
-          <p className="text-xs text-zinc-500">Sets the git origin URL on the host clone. For private repos, embed a Personal Access Token in the URL: <code>https://USER:TOKEN@github.com/owner/repo.git</code>.</p>
-        </form>
+
+          {mode === "token" ? (
+            <form onSubmit={saveWithToken} className="space-y-2" data-testid="gh-token-form">
+              <Label>Repository URL</Label>
+              <Input
+                value={repoUrl}
+                onChange={(e) => setRepoUrl(e.target.value)}
+                placeholder="https://github.com/<owner>/<repo>.git"
+                className="bg-zinc-900 border-zinc-800"
+                data-testid="gh-token-repo"
+              />
+              <Label>Personal Access Token (ghp_…)</Label>
+              <Input
+                type="password"
+                autoComplete="new-password"
+                value={pat}
+                onChange={(e) => setPat(e.target.value)}
+                placeholder="ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+                className="bg-zinc-900 border-zinc-800 font-mono text-xs"
+                data-testid="gh-token-pat"
+              />
+              <Label>Branch</Label>
+              <Input
+                value={remoteBranch}
+                onChange={(e) => setRemoteBranch(e.target.value)}
+                placeholder="main"
+                className="bg-zinc-900 border-zinc-800"
+                data-testid="gh-token-branch"
+              />
+              <div className="flex gap-2">
+                <Button type="submit" disabled={busy || !repoUrl.trim() || !pat.trim()} className="pro-gradient text-white border-0" data-testid="gh-token-save">
+                  Save & verify
+                </Button>
+                <Button type="button" variant="outline" onClick={() => setShowRemoteForm(false)}>Cancel</Button>
+              </div>
+              <p className="text-xs text-zinc-500">
+                The token is embedded into git's on-disk config (never shown back in the UI). We
+                fire one <code>git fetch</code> to verify the token before saving, so an invalid
+                token gets rejected here instead of failing silently later.
+              </p>
+              <p className="text-xs text-zinc-500">
+                Generate a fine-grained PAT at <code>github.com → Settings → Developer settings →
+                Personal access tokens → Fine-grained</code>. Permissions needed: <em>Repository
+                contents: Read</em>.
+              </p>
+            </form>
+          ) : (
+            <form onSubmit={saveRawUrl} className="space-y-2" data-testid="gh-url-form">
+              <Label>Full remote URL (SSH or HTTPS, may embed user:token)</Label>
+              <Input
+                value={remoteUrl}
+                onChange={(e) => setRemoteUrl(e.target.value)}
+                placeholder="git@github.com:owner/repo.git  or  https://USER:TOKEN@github.com/owner/repo.git"
+                className="bg-zinc-900 border-zinc-800"
+                data-testid="gh-remote-url"
+              />
+              <Label>Branch</Label>
+              <Input
+                value={remoteBranch}
+                onChange={(e) => setRemoteBranch(e.target.value)}
+                placeholder="main"
+                className="bg-zinc-900 border-zinc-800"
+                data-testid="gh-remote-branch"
+              />
+              <div className="flex gap-2">
+                <Button type="submit" disabled={busy || !remoteUrl.trim()} className="pro-gradient text-white border-0" data-testid="gh-remote-save">
+                  Save remote
+                </Button>
+                <Button type="button" variant="outline" onClick={() => setShowRemoteForm(false)}>Cancel</Button>
+              </div>
+            </form>
+          )}
+        </div>
       )}
-      <p className="text-xs text-zinc-500">If diagnostics report "could not read Username", the backend can't auth to GitHub. Use a PAT-embedded HTTPS URL or an SSH URL with the host's deploy key.</p>
+      <p className="text-xs text-zinc-500">If diagnostics report "could not read Username", the backend can't auth to GitHub. Use the token form above (recommended) — the PAT is embedded into the on-disk git remote URL.</p>
     </div>
   );
 }

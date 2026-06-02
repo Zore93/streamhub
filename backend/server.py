@@ -1099,6 +1099,42 @@ async def admin_list_videos(admin: dict = Depends(require_admin)):
     return await db.videos.find({}, {"_id": 0}).sort("created_at", -1).to_list(500)
 
 
+@api.get("/admin/videos/legacy-stats")
+async def admin_legacy_stats(admin: dict = Depends(require_admin)):
+    """How many migrated (legacy_id present) videos exist, and what their is_short split is."""
+    total = await db.videos.count_documents({"legacy_id": {"$exists": True, "$ne": None}})
+    as_shorts = await db.videos.count_documents({"legacy_id": {"$exists": True, "$ne": None}, "is_short": True})
+    return {
+        "total_legacy": total,
+        "legacy_as_shorts": as_shorts,
+        "legacy_as_videos": total - as_shorts,
+    }
+
+
+@api.post("/admin/videos/mark-legacy-as-shorts")
+async def admin_mark_legacy_as_shorts(admin: dict = Depends(require_admin)):
+    """Force `is_short=True` on every video that originated from the legacy
+    migration (i.e. has a `legacy_id`).  Useful when the migrated catalogue is
+    short-form by nature and the heuristic didn't have enough metadata
+    (orientation/dimensions) to auto-detect it during parsing.
+    """
+    r = await db.videos.update_many(
+        {"legacy_id": {"$exists": True, "$ne": None}},
+        {"$set": {"is_short": True}},
+    )
+    return {"matched": r.matched_count, "modified": r.modified_count}
+
+
+@api.post("/admin/videos/mark-legacy-as-videos")
+async def admin_mark_legacy_as_videos(admin: dict = Depends(require_admin)):
+    """Inverse of the above — moves all legacy items back to long-form video listings."""
+    r = await db.videos.update_many(
+        {"legacy_id": {"$exists": True, "$ne": None}},
+        {"$set": {"is_short": False}},
+    )
+    return {"matched": r.matched_count, "modified": r.modified_count}
+
+
 # ============ STRIPE PAYMENTS ============
 @api.post("/payments/checkout")
 async def create_checkout(payload: dict, request: Request, user: dict = Depends(require_user)):
@@ -1240,6 +1276,17 @@ def _git_or_err(cwd, *args) -> tuple[str, str]:
     return r.stdout.strip(), ""
 
 
+def _strip_token_from_url(url: str) -> str:
+    """Return a copy of `url` with any embedded user:password@ removed."""
+    if not url or "@" not in url or "://" not in url:
+        return url
+    scheme, rest = url.split("://", 1)
+    if "@" not in rest:
+        return url
+    _creds, host_path = rest.rsplit("@", 1)
+    return f"{scheme}://{host_path}"
+
+
 @api.get("/admin/github/check")
 async def github_check(admin: dict = Depends(require_admin)):
     """Check whether a new commit is available on the configured branch.
@@ -1297,7 +1344,7 @@ async def github_check(admin: dict = Depends(require_admin)):
 
     return {
         "repo_path": repo_path,
-        "remote_url": remote_url,
+        "remote_url": _strip_token_from_url(remote_url),
         "branch": branch,
         "local_commit": (local_sha or "")[:12],
         "remote_commit": (remote_sha or "")[:12],
@@ -1386,8 +1433,101 @@ async def admin_github_unset_remote(admin: dict = Depends(require_admin)):
         _git(repo_path, "remote", "remove", "origin")
     cur = await get_settings()
     cur["github_repo"] = ""
+    cur["github_token"] = ""
     await save_settings(cur)
     return {"ok": True}
+
+
+class GithubTokenReq(BaseModel):
+    """Friendlier form-driven remote configuration that avoids asking the admin
+    to hand-craft a PAT-embedded HTTPS URL.
+
+    Accepts either `repo_url` (e.g. https://github.com/owner/repo.git) OR the
+    decomposed `owner` + `repo` fields, plus a Personal Access Token.  The PAT
+    is embedded server-side into the git remote URL on disk (git config) and
+    NEVER returned in API responses or stored in settings.
+    """
+    repo_url: Optional[str] = None
+    owner: Optional[str] = None
+    repo: Optional[str] = None
+    username: Optional[str] = None  # optional, falls back to "x-access-token" or owner
+    token: str
+    branch: str = "main"
+
+
+@api.post("/admin/github/set-remote-with-token")
+async def admin_github_set_remote_with_token(
+    req: GithubTokenReq, admin: dict = Depends(require_admin)
+):
+    """Configure git origin using a GitHub Personal Access Token.
+
+    Builds `https://<user>:<token>@github.com/<owner>/<repo>.git` and writes it
+    to the host clone's git config.  The token is also persisted in
+    AppSettings (`github_token`) so it survives container rebuilds — the
+    public-facing URL stored in `github_repo` is the SCRUBBED variant.
+    """
+    token = (req.token or "").strip()
+    if not token:
+        raise HTTPException(400, "token is required")
+    # Resolve owner/repo
+    owner = (req.owner or "").strip()
+    repo = (req.repo or "").strip()
+    if req.repo_url:
+        # Accept full HTTPS or owner/repo strings
+        url_in = req.repo_url.strip()
+        if url_in.startswith("http://") or url_in.startswith("https://"):
+            # Parse https://github.com/<owner>/<repo>(.git)
+            try:
+                tail = url_in.split("github.com/", 1)[1]
+                parts = tail.rstrip("/").split("/")
+                if len(parts) >= 2:
+                    owner = owner or parts[0]
+                    repo = repo or parts[1].removesuffix(".git")
+            except Exception:
+                raise HTTPException(400, "Could not parse repo_url; expected https://github.com/<owner>/<repo>(.git)")
+        elif "/" in url_in:
+            o, r = url_in.split("/", 1)
+            owner = owner or o
+            repo = repo or r.removesuffix(".git")
+    if not owner or not repo:
+        raise HTTPException(400, "Provide either repo_url or both owner+repo")
+    username = (req.username or owner or "x-access-token").strip()
+    branch = (req.branch or "main").strip() or "main"
+
+    # PAT-embedded URL (lives only in git config on disk)
+    auth_url = f"https://{username}:{token}@github.com/{owner}/{repo}.git"
+    display_url = f"https://github.com/{owner}/{repo}.git"
+
+    repo_path, path_err = _detect_repo_path()
+    if path_err:
+        raise HTTPException(400, path_err)
+    existing, _ = _git_or_err(repo_path, "config", "--get", "remote.origin.url")
+    if existing:
+        r = _git(repo_path, "remote", "set-url", "origin", auth_url)
+    else:
+        r = _git(repo_path, "remote", "add", "origin", auth_url)
+    if r.returncode != 0:
+        # Make sure we don't echo the token back even if git embeds it in errors
+        raise HTTPException(400, f"git remote: {(r.stderr or r.stdout).strip().replace(token, '***')}")
+    # Verify connectivity right away so we surface auth failures while the admin
+    # is still on the form — far better UX than a successful save followed by a
+    # silent "Check for updates" failure.
+    fetch = _git(repo_path, "fetch", "origin", branch)
+    if fetch.returncode != 0:
+        err = (fetch.stderr or fetch.stdout).strip().replace(token, "***")
+        # Roll back so we don't leave a broken remote in git config
+        if existing:
+            _git(repo_path, "remote", "set-url", "origin", existing)
+        else:
+            _git(repo_path, "remote", "remove", "origin")
+        raise HTTPException(400, f"GitHub auth/fetch failed: {err}")
+
+    cur = await get_settings()
+    cur["github_repo"] = display_url  # scrubbed — safe to show in UI
+    cur["github_token"] = token  # used by future rebuilds / reset-remote-after-pull flows
+    cur["github_branch"] = branch
+    await save_settings(cur)
+    return {"ok": True, "remote_url": display_url, "branch": branch}
 
 
 # ============ STARTUP ============

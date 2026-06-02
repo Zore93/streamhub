@@ -36,7 +36,17 @@ Build a full-stack video-sharing platform inspired by hentairosub.ro with:
 - ✅ Site config (title, favicon, SEO meta) stored in DB
 - ✅ Secrets (JWT, Stripe, SMTP, Wasabi, CloudFront) in MongoDB site_config
 - ✅ One-command VPS installer + self-diagnostic + bundle collector
-- ✅ Auto-update via Admin → Settings → GitHub (fixed Feb 2026): rich diagnostics, Configure/Change/Unset remote buttons, dubious-ownership safe.directory workaround, surfaced git stderr
+- ✅ Auto-update via Admin → Settings → GitHub (Feb 2026 v3):
+   * Rich diagnostics (`errors[]` array surfaces git stderr instead of "?")
+   * `safe.directory=*` bypasses dubious-ownership rejection in docker
+   * **Dual-mode "Configure remote" form**: friendly Repo-URL+PAT (recommended) or raw URL
+   * `POST /admin/github/set-remote-with-token` verifies the token via `git fetch` BEFORE saving (rolls back on failure)
+   * Token NEVER leaves the server — UI shows scrubbed URL; PAT stored in settings.github_token
+   * `DELETE /admin/github/remote` cleans both git config + DB settings
+- ✅ **Legacy → Shorts bulk action** (Admin → Settings → Legacy migration):
+   * `GET /admin/videos/legacy-stats` — total / as-Shorts / as-videos counts
+   * `POST /admin/videos/mark-legacy-as-shorts` — flip `is_short=True` on every migrated doc
+   * `POST /admin/videos/mark-legacy-as-videos` — reverse
 - ✅ Watch page: WebSocket /api/videos/{id}/status push channel replaces 4-second polling (saves bandwidth + battery)
 - ✅ EditVideo subtitles: language Select with 14 common locales + "Other" custom code, "Make default" reorder via PATCH, is_short toggle, srt/ass auto-conversion to WebVTT
 
