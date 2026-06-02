@@ -221,31 +221,31 @@ docker compose --env-file "$ENV_FILE" up -d
 
 #─── 10) Seed admin in MongoDB ─────────────────────────────────────────────
 green "→ Seeding admin user $ADMIN_EMAIL"
-# Wait for the backend to be reachable. Print progress so the script doesn't
-# look hung.  Fall back to a forced restart if backend stays unhealthy >60 s.
-backend_ready=""
-for i in $(seq 1 60); do
+# Wait briefly for the backend to print "Application startup complete", then
+# attempt the seed directly with retries.  We do NOT use a separate ping check
+# (it was hiding real errors) — the seed itself is the authoritative test.
+
+# Quick "is the container running" check
+for i in $(seq 1 30); do
     state=$(docker inspect -f '{{.State.Status}}' sh-backend 2>/dev/null || echo "missing")
-    if [[ "$state" == "running" ]]; then
-        if docker exec sh-backend python -c "import asyncio,os; from motor.motor_asyncio import AsyncIOMotorClient; asyncio.run(AsyncIOMotorClient(os.environ['MONGO_URL']).admin.command('ping'))" >/dev/null 2>&1; then
-            backend_ready="yes"
-            break
-        fi
-    fi
-    [[ $((i % 5)) -eq 0 ]] && echo "  waiting for backend... ($i/60, state=$state)"
+    [[ "$state" == "running" ]] && break
+    [[ $((i % 5)) -eq 0 ]] && echo "  waiting for sh-backend to be 'running'... ($i/30, state=$state)"
     sleep 2
 done
 
-if [[ -z "$backend_ready" ]]; then
-    red "✘ Backend never became healthy. Last 40 log lines:"
-    docker logs --tail 40 sh-backend 2>&1 || true
-    red "  Aborting seed. Once the cause is fixed, re-run: sudo bash $DEPLOY_DIR/scripts/reset-admin.sh"
+if [[ "$state" != "running" ]]; then
+    red "✘ sh-backend container never reached 'running'. Last 60 log lines:"
+    docker logs --tail 60 sh-backend 2>&1 || true
     exit 1
 fi
 
-# Quoted heredoc keeps bash from touching anything inside.  Credentials go in
-# through `docker exec -e`, so special chars survive byte-perfect.
-docker exec -e SEED_EMAIL="$ADMIN_EMAIL" -e SEED_PW="$ADMIN_PASSWORD" sh-backend python - <<'PYEOF'
+# Give uvicorn a couple of seconds to finish initializing routes
+sleep 5
+
+seed_ok=""
+for attempt in 1 2 3 4 5; do
+    echo "  seed attempt $attempt/5..."
+    if SEED_OUT=$(docker exec -e SEED_EMAIL="$ADMIN_EMAIL" -e SEED_PW="$ADMIN_PASSWORD" sh-backend python - <<'PYEOF' 2>&1
 import asyncio, os, sys, uuid
 from datetime import datetime, timezone
 sys.path.insert(0, '/app')
@@ -253,6 +253,8 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from auth import hash_password
 async def main():
     db = AsyncIOMotorClient(os.environ['MONGO_URL'])[os.environ['DB_NAME']]
+    # explicit ping so motor surfaces auth/network errors clearly
+    await db.command('ping')
     email = os.environ['SEED_EMAIL'].lower()
     deleted = (await db.users.delete_many({'email': email})).deleted_count
     doc = {
@@ -271,6 +273,23 @@ async def main():
     print(f"seeded admin {email}  (deleted_prior={deleted}  docs_now={cnt})")
 asyncio.run(main())
 PYEOF
+    ); then
+        echo "$SEED_OUT"
+        seed_ok="yes"
+        break
+    else
+        echo "  ✘ attempt $attempt failed:"
+        echo "$SEED_OUT" | sed 's/^/    /'
+        sleep 5
+    fi
+done
+
+if [[ -z "$seed_ok" ]]; then
+    red "✘ All seed attempts failed. Last 40 backend log lines:"
+    docker logs --tail 40 sh-backend 2>&1 || true
+    red "  Once the cause is fixed, re-run: sudo bash $DEPLOY_DIR/scripts/reset-admin.sh"
+    exit 1
+fi
 
 #─── 11) systemd ────────────────────────────────────────────────────────────
 cp "$DEPLOY_DIR/streamhub.service" /etc/systemd/system/streamhub.service
