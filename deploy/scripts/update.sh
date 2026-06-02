@@ -86,19 +86,24 @@ else
 fi
 
 # ─── 3) post-update health check ────────────────────────────────────────────
+# Backend isn't exposed on the host; it's proxied by nginx.  We check both:
+#  - direct container exec (works even if nginx is down)
+#  - the public URL (sanity)
 blue "→ Waiting for backend to come back…"
+ok=0
 for i in $(seq 1 30); do
-    if curl -fsS --max-time 2 http://127.0.0.1:8001/api/site/config >/dev/null 2>&1; then
+    if docker exec sh-backend curl -fsS --max-time 2 http://127.0.0.1:8001/api/site/config >/dev/null 2>&1; then
         green "✓ Backend healthy"
+        ok=1
         break
     fi
     sleep 2
-    if [[ $i -eq 30 ]]; then
-        red "Backend did not respond after 60s. Check logs:"
-        red "  $DC logs --tail=80 backend"
-        exit 1
-    fi
 done
+if [[ $ok -eq 0 ]]; then
+    red "Backend did not respond after 60s. Check logs:"
+    red "  $DC logs --tail=80 backend"
+    exit 1
+fi
 
 green ""
 green "✓ Update complete."
