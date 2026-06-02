@@ -50,17 +50,37 @@ blue "→ git pull origin"
 cd "$REPO_DIR"
 # safe.directory=* prevents 'dubious ownership' errors when the repo is owned
 # by a different uid than the user running sudo.
-git -c safe.directory=* fetch --all --prune
-BEFORE=$(git -c safe.directory=* rev-parse HEAD)
-git -c safe.directory=* pull --ff-only
-AFTER=$(git -c safe.directory=* rev-parse HEAD)
+GIT="git -c safe.directory=*"
+$GIT fetch --all --prune
+BEFORE=$($GIT rev-parse HEAD)
+
+# Determine branch: env var BRANCH wins, else current checked-out branch, else main
+BRANCH="${BRANCH:-$($GIT rev-parse --abbrev-ref HEAD 2>/dev/null || echo main)}"
+if [[ "$BRANCH" == "HEAD" || -z "$BRANCH" ]]; then
+    BRANCH=main
+fi
+blue "→ branch: $BRANCH"
+
+# Make sure upstream tracking is set so future plain `git pull` works
+$GIT branch --set-upstream-to="origin/$BRANCH" "$BRANCH" 2>/dev/null || true
+
+# Pull explicitly by branch — survives any missing upstream config
+if ! $GIT pull --ff-only origin "$BRANCH"; then
+    red "Fast-forward pull failed.  Likely a local divergence (someone edited"
+    red "files on the VPS).  Options:"
+    red "  - inspect:    cd $REPO_DIR && git status"
+    red "  - force:      cd $REPO_DIR && git -c safe.directory=* fetch origin && git reset --hard origin/$BRANCH"
+    red "                (CAUTION: this discards local edits — they should be in .env / data/ instead)"
+    exit 1
+fi
+AFTER=$($GIT rev-parse HEAD)
 
 if [[ "$BEFORE" == "$AFTER" ]]; then
     green "Already up-to-date (HEAD = ${BEFORE:0:12})."
 else
     green "Updated ${BEFORE:0:12} → ${AFTER:0:12}"
     blue  "Changed files since last update:"
-    git -c safe.directory=* --no-pager diff --name-only "$BEFORE" "$AFTER"
+    $GIT --no-pager diff --name-only "$BEFORE" "$AFTER"
 fi
 
 # ─── 2) rebuild + restart ───────────────────────────────────────────────────
@@ -116,6 +136,6 @@ fi
 
 green ""
 green "✓ Update complete."
-green "  New HEAD: $(git -c safe.directory=* rev-parse --short HEAD)"
+green "  New HEAD: $($GIT rev-parse --short HEAD)"
 green ""
 blue  "Tip: tail logs with:  $DC logs -f"
