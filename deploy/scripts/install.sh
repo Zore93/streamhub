@@ -221,18 +221,27 @@ docker compose --env-file "$ENV_FILE" up -d
 
 #─── 10) Seed admin in MongoDB ─────────────────────────────────────────────
 green "→ Seeding admin user $ADMIN_EMAIL"
-# Wait for the backend container to become healthy (mongo healthcheck makes
-# the backend wait for mongo, but we still need to wait for the backend itself).
+# Wait for the backend to be reachable. Print progress so the script doesn't
+# look hung.  Fall back to a forced restart if backend stays unhealthy >60 s.
+backend_ready=""
 for i in $(seq 1 60); do
     state=$(docker inspect -f '{{.State.Status}}' sh-backend 2>/dev/null || echo "missing")
     if [[ "$state" == "running" ]]; then
-        # Try a real ping to be sure FastAPI started:
         if docker exec sh-backend python -c "import asyncio,os; from motor.motor_asyncio import AsyncIOMotorClient; asyncio.run(AsyncIOMotorClient(os.environ['MONGO_URL']).admin.command('ping'))" >/dev/null 2>&1; then
+            backend_ready="yes"
             break
         fi
     fi
+    [[ $((i % 5)) -eq 0 ]] && echo "  waiting for backend... ($i/60, state=$state)"
     sleep 2
 done
+
+if [[ -z "$backend_ready" ]]; then
+    red "✘ Backend never became healthy. Last 40 log lines:"
+    docker logs --tail 40 sh-backend 2>&1 || true
+    red "  Aborting seed. Once the cause is fixed, re-run: sudo bash $DEPLOY_DIR/scripts/reset-admin.sh"
+    exit 1
+fi
 
 # Quoted heredoc keeps bash from touching anything inside.  Credentials go in
 # through `docker exec -e`, so special chars survive byte-perfect.
