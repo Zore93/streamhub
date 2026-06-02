@@ -116,7 +116,7 @@ function VideosTab() {
 
   // Reset + fetch on every filter change
   const filterKey = `${debouncedQ}|${tier}|${statusF}|${shortF}`;
-  const lastKey = useRef("");
+  const lastKey = useRef(null);
   useEffect(() => {
     if (lastKey.current === filterKey) return;
     lastKey.current = filterKey;
@@ -244,7 +244,7 @@ function UsersTab() {
     } finally { setLoading(false); }
   };
 
-  const lastKey = useRef("");
+  const lastKey = useRef(null);
   useEffect(() => {
     if (lastKey.current === debouncedQ) return;
     lastKey.current = debouncedQ;
