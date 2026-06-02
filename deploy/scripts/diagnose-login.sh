@@ -23,9 +23,17 @@ echo " ADMIN_PASSWORD  = $PASSWORD   ← literal value as stored in .env"
 echo
 echo "1) Container & DB state"
 echo "──────────────────────────────────────────────────────"
-docker inspect -f '{{.State.Status}}' sh-backend 2>/dev/null \
-    && echo "   sh-backend container: $(docker inspect -f '{{.State.Status}}' sh-backend)" \
-    || { echo "   ✘ sh-backend container not found"; exit 1; }
+status=$(docker inspect -f '{{.State.Status}}' sh-backend 2>/dev/null || echo "missing")
+echo "   sh-backend container: $status"
+if [[ "$status" != "running" ]]; then
+    echo
+    echo "   ✘ Backend is not running. Last 60 lines of logs:"
+    echo "──────────────────────────────────────────────────────"
+    docker logs --tail 60 sh-backend 2>&1 || true
+    echo
+    echo "   Try: cd $DEPLOY_DIR && sudo docker compose --env-file .env logs -f backend"
+    exit 1
+fi
 
 docker exec sh-backend python - <<'PY' 2>&1 || true
 import asyncio, os

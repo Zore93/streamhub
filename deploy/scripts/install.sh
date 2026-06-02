@@ -81,14 +81,14 @@ STRIPE_API_KEY="${STRIPE_API_KEY:-}"
 # Persist in deploy/.env
 # IMPORTANT: docker-compose performs ${VAR} interpolation on .env values, so we
 # escape every literal $ to $$ on values that may contain user-supplied passwords.
+# NOTE: We deliberately DO NOT write ADMIN_PASSWORD to .env — it's only used once
+# (below) to bootstrap the admin user via `docker exec -e`.
 escape_dollar() { printf '%s' "$1" | sed 's/\$/$$/g'; }
 mkdir -p "$DEPLOY_DIR" "/opt/streamhub" "/opt/streamhub/data/uploads"
 cat > "$ENV_FILE" <<EOF
 DOMAIN=$DOMAIN
 LETSENCRYPT_EMAIL=$ADMIN_EMAIL
-JWT_SECRET=$JWT_SECRET
 ADMIN_EMAIL=$ADMIN_EMAIL
-ADMIN_PASSWORD=$(escape_dollar "$ADMIN_PASSWORD")
 MONGO_ROOT_USER=shadmin
 MONGO_ROOT_PASSWORD=$(escape_dollar "$MONGO_ROOT_PASSWORD")
 DB_NAME=streamhub
@@ -96,7 +96,7 @@ STRIPE_API_KEY=$STRIPE_API_KEY
 UPLOAD_DIR=/opt/streamhub/data/uploads
 EOF
 chmod 600 "$ENV_FILE"
-green "✓ Wrote $ENV_FILE"
+green "✓ Wrote $ENV_FILE (admin password kept OUT of disk)"
 
 #─── 3) DNS check ───────────────────────────────────────────────────────────
 green "→ Checking DNS for $DOMAIN"
@@ -221,10 +221,21 @@ docker compose --env-file "$ENV_FILE" up -d
 
 #─── 10) Seed admin in MongoDB ─────────────────────────────────────────────
 green "→ Seeding admin user $ADMIN_EMAIL"
-sleep 6   # let mongo come up
-# Pass credentials via `docker exec -e` (NOT through docker-compose env_file) so
-# special characters like $ ! \ ' " survive intact.  Quoted heredoc (<<'PYEOF')
-# prevents bash from touching anything inside.
+# Wait for the backend container to become healthy (mongo healthcheck makes
+# the backend wait for mongo, but we still need to wait for the backend itself).
+for i in $(seq 1 60); do
+    state=$(docker inspect -f '{{.State.Status}}' sh-backend 2>/dev/null || echo "missing")
+    if [[ "$state" == "running" ]]; then
+        # Try a real ping to be sure FastAPI started:
+        if docker exec sh-backend python -c "import asyncio,os; from motor.motor_asyncio import AsyncIOMotorClient; asyncio.run(AsyncIOMotorClient(os.environ['MONGO_URL']).admin.command('ping'))" >/dev/null 2>&1; then
+            break
+        fi
+    fi
+    sleep 2
+done
+
+# Quoted heredoc keeps bash from touching anything inside.  Credentials go in
+# through `docker exec -e`, so special chars survive byte-perfect.
 docker exec -e SEED_EMAIL="$ADMIN_EMAIL" -e SEED_PW="$ADMIN_PASSWORD" sh-backend python - <<'PYEOF'
 import asyncio, os, sys, uuid
 from datetime import datetime, timezone

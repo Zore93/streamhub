@@ -1202,34 +1202,53 @@ async def github_update(admin: dict = Depends(require_admin)):
 # ============ STARTUP ============
 @app.on_event("startup")
 async def startup():
+    # Wait for MongoDB to be reachable (it may still be initialising on first boot).
+    # This is critical on a fresh VPS install where the backend & mongo containers
+    # come up together — without it, the backend would crash and restart-loop.
+    for attempt in range(30):
+        try:
+            await client.admin.command("ping")
+            break
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"[startup] Mongo not ready yet (try {attempt + 1}/30): {e}")
+            await asyncio.sleep(2)
+    else:
+        logger.error("[startup] Mongo never became reachable — failing fast")
+        raise RuntimeError("MongoDB unreachable after 60 s")
     # Ensure settings exist
-    s = await get_settings()
-    # Bootstrap JWT secret: prefer DB value, else generate-and-persist one. This
-    # makes the deployment self-contained — `.env` only needs MONGO_URL + DB_NAME.
-    db_jwt = (s.get("jwt_secret") or "").strip()
-    if not db_jwt:
-        db_jwt = secrets.token_urlsafe(64)
-        await save_settings({**s, "jwt_secret": db_jwt})
-    # Inject into auth module so create_token / decode_token use it
-    set_jwt_secret(db_jwt)
-    # Seed admin
-    existing = await db.users.find_one({"email": "admin@streamhub.io"})
-    if not existing:
-        admin = User(
-            email="admin@streamhub.io",
-            username="admin",
-            password_hash=hash_password("Admin123!"),
-            role="admin",
-            email_verified=True,
-            is_pro=True,
-        )
-        await db.users.insert_one(admin.model_dump())
-        logger.info("Seeded admin: admin@streamhub.local / Admin123!")
-    # Seed default categories
-    if await db.categories.count_documents({}) == 0:
-        for name in ["Music", "Gaming", "Tech", "Education", "Comedy", "Travel"]:
-            c = Category(name=name, slug=slugify(name))
-            await db.categories.insert_one(c.model_dump())
+    try:
+        s = await get_settings()
+        # Bootstrap JWT secret: prefer DB value, else generate-and-persist one. This
+        # makes the deployment self-contained — `.env` only needs MONGO_URL + DB_NAME.
+        db_jwt = (s.get("jwt_secret") or "").strip()
+        if not db_jwt:
+            db_jwt = secrets.token_urlsafe(64)
+            await save_settings({**s, "jwt_secret": db_jwt})
+        # Inject into auth module so create_token / decode_token use it
+        set_jwt_secret(db_jwt)
+        # Seed default categories if empty
+        if await db.categories.count_documents({}) == 0:
+            for name in ["Music", "Gaming", "Tech", "Education", "Comedy", "Travel"]:
+                c = Category(name=name, slug=slugify(name))
+                await db.categories.insert_one(c.model_dump())
+        # Bootstrap an admin only from explicit env (ADMIN_BOOTSTRAP_EMAIL/PASSWORD),
+        # never write admin password to .env. Removes the auto-fallback that used
+        # to insert a hardcoded "admin@streamhub.io / Admin123!" account.
+        be = os.environ.get("ADMIN_BOOTSTRAP_EMAIL", "").strip().lower()
+        bp = os.environ.get("ADMIN_BOOTSTRAP_PASSWORD", "")
+        if be and bp:
+            existing = await db.users.find_one({"email": be})
+            if not existing:
+                admin = User(
+                    email=be, username=be.split("@")[0],
+                    password_hash=hash_password(bp),
+                    role="admin", email_verified=True, is_pro=True,
+                )
+                await db.users.insert_one(admin.model_dump())
+                logger.info(f"[startup] Bootstrapped admin {be} from ADMIN_BOOTSTRAP_* env")
+    except Exception as e:  # noqa: BLE001
+        # Don't let a bad/missing default crash the whole app on startup.
+        logger.exception(f"[startup] non-fatal: {e}")
 
 
 @app.on_event("shutdown")
