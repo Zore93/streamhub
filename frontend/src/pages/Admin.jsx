@@ -518,6 +518,9 @@ function Section({ title, children }) {
 function GithubUpdateControls() {
   const [status, setStatus] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [showRemoteForm, setShowRemoteForm] = useState(false);
+  const [remoteUrl, setRemoteUrl] = useState("");
+  const [remoteBranch, setRemoteBranch] = useState("main");
 
   const check = async () => {
     setBusy(true);
@@ -530,32 +533,98 @@ function GithubUpdateControls() {
     setBusy(true);
     try {
       const { data } = await api.post("/admin/github/update");
-      if (data.pull_rc === 0) toast.success("Update applied. Rebuilding…");
-      else toast.error("git pull failed — see console"); console.log(data);
+      if (data.pull_rc === 0) toast.success("Update applied. Rebuilding…"); else toast.error("git pull failed — see console");
+      console.log("[github/update]", data);
       setTimeout(check, 4000);
-    } catch (e) { toast.error(e.response?.data?.detail || "Update failed"); }
-    finally { setBusy(false); }
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Update failed");
+    } finally { setBusy(false); }
+  };
+  const saveRemote = async (e) => {
+    e?.preventDefault();
+    if (!remoteUrl.trim()) return;
+    setBusy(true);
+    try {
+      await api.post("/admin/github/set-remote", { url: remoteUrl.trim(), branch: remoteBranch.trim() || "main" });
+      toast.success("Remote configured");
+      setShowRemoteForm(false);
+      await check();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Failed to set remote");
+    } finally { setBusy(false); }
   };
   useEffect(() => { check(); }, []);
+
+  const hasErrors = status?.errors?.length > 0;
+  const needsRemote = !status?.remote_url;
 
   return (
     <div className="space-y-3" data-testid="github-update-controls">
       {status && (
         <div className="text-sm text-zinc-400 space-y-1">
+          <div>Repo path: <code className="text-zinc-200">{status.repo_path}</code></div>
+          <div>Remote: <code className="text-zinc-200">{status.remote_url || "—"}</code></div>
           <div>Branch: <code className="text-zinc-200">{status.branch}</code></div>
           <div>Current: <code className="text-zinc-200">{status.local_commit || "?"}</code> · Latest on origin: <code className="text-zinc-200">{status.remote_commit || "?"}</code></div>
-          <div>{status.has_update ? <span className="text-rose-400">▲ {status.behind} commit(s) behind — update available</span> : <span className="text-emerald-400">✓ Up-to-date</span>}</div>
+          <div>
+            {status.has_update
+              ? <span className="text-rose-400">▲ {status.behind} commit(s) behind — update available</span>
+              : status.local_commit && status.remote_commit
+                ? <span className="text-emerald-400">✓ Up-to-date</span>
+                : <span className="text-zinc-500">Status unknown — see diagnostics below</span>}
+          </div>
         </div>
       )}
-      <div className="flex gap-2">
+      {hasErrors && (
+        <div className="bg-red-950/40 border border-red-900 rounded-md p-3 text-xs text-red-300 space-y-1" data-testid="github-errors">
+          <div className="font-semibold text-red-200">Diagnostics</div>
+          {status.errors.map((e, i) => <div key={i} className="font-mono break-all">• {e}</div>)}
+        </div>
+      )}
+      <div className="flex flex-wrap gap-2">
         <Button variant="outline" disabled={busy} onClick={check} data-testid="gh-check">
           <RefreshCw size={14} className={`mr-2 ${busy ? "animate-spin" : ""}`} /> Check for updates
         </Button>
-        <Button disabled={busy || !status?.has_update} onClick={update} className="pro-gradient text-white border-0 disabled:opacity-50" data-testid="gh-update">
+        <Button
+          disabled={busy || !status?.has_update}
+          onClick={update}
+          className="pro-gradient text-white border-0 disabled:opacity-50"
+          data-testid="gh-update"
+        >
           Update
         </Button>
+        <Button variant="outline" onClick={() => setShowRemoteForm((s) => !s)} data-testid="gh-config-remote-toggle">
+          {needsRemote ? "Configure remote" : "Change remote"}
+        </Button>
       </div>
-      <p className="text-xs text-zinc-500">Pulls from the same git remote this server was deployed from. No repo URL or token needed — uses the local clone's <code>origin</code>.</p>
+      {showRemoteForm && (
+        <form onSubmit={saveRemote} className="bg-zinc-950 border border-zinc-800 rounded-md p-3 space-y-2" data-testid="gh-remote-form">
+          <Label>Remote URL (https://github.com/owner/repo.git or git@…)</Label>
+          <Input
+            value={remoteUrl}
+            onChange={(e) => setRemoteUrl(e.target.value)}
+            placeholder="https://github.com/your-org/streamhub.git"
+            className="bg-zinc-900 border-zinc-800"
+            data-testid="gh-remote-url"
+          />
+          <Label>Branch</Label>
+          <Input
+            value={remoteBranch}
+            onChange={(e) => setRemoteBranch(e.target.value)}
+            placeholder="main"
+            className="bg-zinc-900 border-zinc-800"
+            data-testid="gh-remote-branch"
+          />
+          <div className="flex gap-2">
+            <Button type="submit" disabled={busy || !remoteUrl.trim()} className="pro-gradient text-white border-0" data-testid="gh-remote-save">
+              Save remote
+            </Button>
+            <Button type="button" variant="outline" onClick={() => setShowRemoteForm(false)}>Cancel</Button>
+          </div>
+          <p className="text-xs text-zinc-500">Sets the git origin URL on the host clone. For private repos, embed a Personal Access Token in the URL: <code>https://USER:TOKEN@github.com/owner/repo.git</code>.</p>
+        </form>
+      )}
+      <p className="text-xs text-zinc-500">If diagnostics report "could not read Username", the backend can't auth to GitHub. Use a PAT-embedded HTTPS URL or an SSH URL with the host's deploy key.</p>
     </div>
   );
 }

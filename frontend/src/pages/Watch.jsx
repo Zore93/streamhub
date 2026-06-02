@@ -1,6 +1,6 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import api, { mediaUrl } from "@/lib/api";
+import api, { mediaUrl, BACKEND_URL } from "@/lib/api";
 import { useAuth } from "@/contexts/AuthContext";
 import { useT } from "@/contexts/LanguageContext";
 import { Layout } from "@/layout/Layout";
@@ -40,25 +40,61 @@ export default function Watch() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
-  // Poll status while the video is still being transcoded so the player
-  // appears automatically the moment the first rendition is ready.
+  // Real-time status updates via WebSocket (replaces HTTP polling).  Open a
+  // /api/videos/{id}/status socket whenever the video isn't fully ready and
+  // merge incoming `video.status` packets into local state.  When playback is
+  // already possible we skip the socket entirely.
+  const wsRef = useRef(null);
   useEffect(() => {
     if (!video) return;
     const hasPlayable = (video.renditions || []).length > 0;
     if (video.status === "ready" && hasPlayable) return;
     if (video.status === "failed") return;
-    const i = setInterval(async () => {
-      try {
-        const data = await load();
-        if (data.status === "ready" && (data.renditions || []).length > 0) {
-          clearInterval(i);
-        }
-        if (data.status === "failed") clearInterval(i);
-      } catch {}
-    }, 4000);
-    return () => clearInterval(i);
+
+    const base = BACKEND_URL || window.location.origin;
+    const url = new URL(`/api/videos/${id}/status`, base);
+    url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+    let cancelled = false;
+    let reconnectTimer = null;
+
+    const connect = () => {
+      let ws;
+      try { ws = new WebSocket(url.toString()); } catch { return; }
+      wsRef.current = ws;
+      ws.onmessage = (ev) => {
+        try {
+          const payload = JSON.parse(ev.data);
+          if (payload.type === "video.status" && payload.data) {
+            setVideo((prev) => (prev ? { ...prev, ...payload.data } : prev));
+            // Promote default resolution as soon as first rendition lands.
+            const r = payload.data.renditions || [];
+            if (r.length && !resolution) {
+              setResolution(r[r.length - 1].resolution);
+            }
+          }
+        } catch {}
+      };
+      ws.onclose = () => {
+        if (cancelled) return;
+        reconnectTimer = setTimeout(connect, 3000);
+      };
+      ws.onerror = () => { try { ws.close(); } catch {} };
+    };
+    connect();
+
+    return () => {
+      cancelled = true;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      const ws = wsRef.current;
+      if (!ws) return;
+      if (ws.readyState === WebSocket.CONNECTING) {
+        ws.addEventListener("open", () => { try { ws.close(); } catch {} }, { once: true });
+      } else {
+        try { ws.close(); } catch {}
+      }
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [video?.status, video?.renditions?.length]);
+  }, [id, video?.status, video?.renditions?.length]);
 
   const currentRendition = video?.renditions?.find((r) => r.resolution === resolution) || video?.renditions?.[0];
 

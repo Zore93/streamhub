@@ -1,0 +1,67 @@
+{
+  "summary": "Iteration 5 — Validated the 4-fix follow-up batch (admin GitHub diagnostics + set-remote, WebSocket video.status, EditVideo subtitle UX, Home hero spacing) plus live-chat regression. 10/10 backend tests PASS; 11/11 frontend assertions PASS after correcting the StrictMode double-fetch heuristic.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration5.py",
+    "/app/test_reports/pytest/iteration5.xml"
+  ],
+  "tests_executed": {
+    "backend": [
+      "GET /api/admin/github/check with no remote → 200, local_commit populated, errors[] array present — PASS (baseline)",
+      "POST /api/admin/github/set-remote {url:'https://example.invalid/tmp.git'} → 200, then GET /check reports remote_url + errors[] contains 'fetch origin main' — PASS",
+      "POST /api/admin/github/update with unreachable remote → 400 with git pull failure message — PASS",
+      "POST /api/admin/github/set-remote {url:'foo/bar'} → 400 (must start with https://, http://, git@) — PASS",
+      "POST /api/admin/github/set-remote {url:'https://github.com/example/streamhub.git'} → 200 {ok:true, remote_url, branch:'main'}; GET /check reflects new remote — PASS",
+      "GET /api/admin/github/check after set-remote with bogus host → errors[] non-empty (fetch failure) — PASS",
+      "WebSocket /api/videos/{vid}/status connect → immediate {type:'video.status', video_id, data:{status,...}} packet within 10s — PASS",
+      "PATCH /api/videos/{vid} {subtitles:[{id:'nonexistent'}]} → 400 with reorder/unknown detail — PASS",
+      "PATCH /api/videos/{vid} with subset of existing subs → 400 'Reorder must include all subtitles' — PASS (skipped on videos with 0 subs)",
+      "Live chat regression: POST /api/chat/send (guest) → 200 + WS /api/chat/ws broadcast of {type:'message', data:{content}} — PASS"
+    ],
+    "frontend": [
+      "Home hero h1 bounding box y=88 (≥50px from top, below header) — PASS",
+      "Watch.jsx — exactly 2 /api/videos/{id} fetches over 15s, both at t≈0 (React StrictMode double-mount). NO polling (a 4s setInterval would yield ≥4 evenly-spaced calls). — PASS",
+      "Admin → Settings → gh-config-remote-toggle visible — PASS",
+      "Toggle reveals gh-remote-url + gh-remote-branch + gh-remote-save — PASS",
+      "EditVideo edit-is-short switch present — PASS",
+      "EditVideo sub-lang Select present with options Română, English, Other/custom — PASS",
+      "Selecting 'Other / custom' reveals sub-lang-custom text input — PASS",
+      "Admin → Videos tab edit-vid-* buttons (2 found, matching 2 seeded videos) — PASS",
+      "Existing subs show 'default' badge on first item + 1 'Make default' button on the other (1 sub-default-* button rendered as expected with 2 subs) — PASS"
+    ]
+  },
+  "action_items": [
+    "Nothing blocking. The Watch page emits 2 initial fetches because of React.StrictMode in dev — harmless in production but worth noting if you ever observe doubled telemetry. No fix required.",
+    "Consider adding a DELETE /api/admin/github/set-remote (or accept empty url) so admins can unset a wrong remote without shell access. Currently the only way to clean up is `git remote remove origin` from the host.",
+    "After test_set_remote_valid, /app retains a remote pointing at https://github.com/example/streamhub.git in DB settings as well as the on-disk git config. The test agent cleaned the git remote via `git remote remove origin`, but settings.github_repo still stores the URL. Backend tolerates this (GET /check falls back to git config which is now empty), but it is worth wiping settings.github_repo too for cleanliness."
+  ],
+  "critical_code_review_comments": [
+    "/app/backend/server.py:1352 admin_github_set_remote — URL validation is prefix-only; 'https://' followed by garbage still passes. Could optionally `git ls-remote` to validate connectivity. Low priority.",
+    "/app/backend/server.py:776 subtitles reorder — request validation correctly ensures shape, but the response sends back the full video doc which can be large; for a reorder action a smaller {subtitles:[...]} ack would suffice. Cosmetic.",
+    "/app/backend/server.py:1733 video_status_ws — `await websocket.receive_text()` loop keeps the connection alive but never acts on incoming text; that's fine for a one-way push channel. Consider sending ping frames or relying on the WS protocol's built-in ping/pong to detect dead clients.",
+    "Frontend Watch page: please confirm that the WebSocket subscription is closed on unmount (cleanup function in useEffect). The two initial fetches in dev StrictMode suggest the effect runs twice — verify no zombie WS connections accumulate after navigating away/back.",
+    "/app/backend/server.py is now 1855 lines — long-overdue refactor into routers/ (mentioned in iter4, still applies)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration5.py (new)",
+    "/app/test_reports/pytest/iteration5.xml (junit output)"
+  ],
+  "success_rate": {
+    "backend": "100% (10/10)",
+    "frontend": "100% (11/11)"
+  },
+  "test_credentials": "admin@streamhub.io / Admin123! — works.",
+  "seed_data_creation": "One TEST_iter5_* chat message via guest send (auto-pruned by chat rolling-500 cap). Git remote was set to https://github.com/example/streamhub.git during testing and removed via `git remote remove origin` at the end. AppSettings.github_repo may still contain that URL in Mongo — non-blocking.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iteration 5 backend suite at /app/backend/tests/test_iteration5.py is green (10/10). Re-run with `pytest /app/backend/tests/test_iteration5.py -v`. For frontend WS testing, /api/videos/{id}/status WS sends one snapshot then idles — consume the first packet and close. WebSockets lib v15+ is installed. /app currently has NO git remote configured (cleanup done). Tests rely on at least 1 ready video being seeded (Player Demo or TEST_SubVideo); if those are removed, the subtitle-reorder + WS tests will skip/fail.",
+  "rca_of_the_issue": "N/A — all features behaving as designed. Initial test failure on chat-broadcast was due to wrong payload field names in MY test (`guest_session_id` vs `guest_session`, `chat.message` vs `message`); fixed in test, no backend bug."
+}

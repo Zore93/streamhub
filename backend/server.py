@@ -30,6 +30,7 @@ from fastapi import (
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from motor.motor_asyncio import AsyncIOMotorClient
+from pydantic import BaseModel
 from starlette.middleware.cors import CORSMiddleware
 
 from auth import (
@@ -77,7 +78,7 @@ from models import (
     new_id,
     now_iso,
 )
-from chat import hub as chat_hub
+from chat import hub as chat_hub, video_status_hub
 from transcoder import (
     RESOLUTIONS,
     filter_resolutions_for_source,
@@ -258,6 +259,17 @@ def slugify(s: str) -> str:
 
 
 # ============ Background transcode task ============
+async def _publish_status(video_id: str) -> None:
+    """Push the current minimal status snapshot to subscribed WebSocket clients."""
+    doc = await db.videos.find_one(
+        {"id": video_id},
+        {"_id": 0, "status": 1, "progress": 1, "renditions": 1, "error": 1,
+         "thumbnail_url": 1, "is_short": 1, "duration_sec": 1},
+    )
+    if doc:
+        await video_status_hub.publish(video_id, doc)
+
+
 async def process_video(video_id: str, src_path: str):
     settings = await get_settings()
     queue.set_concurrency(int(settings.get("ffmpeg_concurrency", 2)))
@@ -266,6 +278,7 @@ async def process_video(video_id: str, src_path: str):
             await db.videos.update_one(
                 {"id": video_id}, {"$set": {"status": "processing", "progress": 5}}
             )
+            await _publish_status(video_id)
             info = await probe_video(src_path)
             duration = info["duration"]
             src_h = info["height"]
@@ -295,6 +308,7 @@ async def process_video(video_id: str, src_path: str):
                     }
                 },
             )
+            await _publish_status(video_id)
             # Generate 10 thumbnails
             thumb_dir = UPLOAD_DIR / "thumbnails"
             thumbs = await generate_thumbnails(
@@ -326,6 +340,7 @@ async def process_video(video_id: str, src_path: str):
                     }
                 },
             )
+            await _publish_status(video_id)
             # Decide which resolutions
             enabled = settings.get("enabled_resolutions", ["360p", "720p", "1080p"])
             target_resolutions = filter_resolutions_for_source(src_h or 1080, enabled)
@@ -360,10 +375,12 @@ async def process_video(video_id: str, src_path: str):
                 if renditions and i == 0:
                     upd["status"] = "ready"
                 await db.videos.update_one({"id": video_id}, {"$set": upd})
+                await _publish_status(video_id)
             await db.videos.update_one(
                 {"id": video_id},
                 {"$set": {"status": "ready", "progress": 100}},
             )
+            await _publish_status(video_id)
             # Cleanup original file regardless of storage backend
             try:
                 os.remove(src_path)
@@ -375,6 +392,7 @@ async def process_video(video_id: str, src_path: str):
                 {"id": video_id},
                 {"$set": {"status": "failed", "error": str(e)}},
             )
+            await _publish_status(video_id)
 
 
 # ============ AUTH ============
@@ -752,6 +770,23 @@ async def update_video(
     if v["uploader_id"] != user["id"] and user.get("role") != "admin":
         raise HTTPException(403, "Not your video")
     upd = {k: val for k, val in req.model_dump(exclude_unset=True).items() if val is not None}
+    # Subtitles update is reorder-only: caller may rearrange existing entries
+    # but cannot inject new ones or alter URLs (those go through the dedicated
+    # POST endpoint that performs ffmpeg conversion + storage upload).
+    if "subtitles" in upd:
+        existing_by_id = {s["id"]: s for s in (v.get("subtitles") or [])}
+        rebuilt: list[dict] = []
+        for item in upd["subtitles"]:
+            if not isinstance(item, dict) or "id" not in item:
+                raise HTTPException(400, "Subtitle item missing id")
+            cur = existing_by_id.get(item["id"])
+            if not cur:
+                raise HTTPException(400, f"Unknown subtitle id {item['id']}")
+            rebuilt.append(cur)
+        # Must include every existing subtitle (no deletes via reorder)
+        if {s["id"] for s in rebuilt} != set(existing_by_id):
+            raise HTTPException(400, "Reorder must include all subtitles. Use DELETE to remove.")
+        upd["subtitles"] = rebuilt
     if upd:
         await db.videos.update_one({"id": video_id}, {"$set": upd})
     v = await db.videos.find_one({"id": video_id}, {"_id": 0})
@@ -1172,41 +1207,85 @@ async def stripe_webhook(request: Request):
 
 
 # ============ GITHUB AUTO-UPDATE ============
-def _detect_repo_path() -> str:
-    """Try common locations for the host clone of this repo (when running in docker)."""
-    for cand in ("/host_app", "/opt/streamhub", "/app"):
+def _detect_repo_path() -> tuple[str, Optional[str]]:
+    """Find a directory that contains a usable .git folder.
+
+    Returns (path, error). When `error` is set, no .git was found in the
+    candidate list and the caller should surface the diagnostic instead of
+    blindly running git against /app.
+    """
+    candidates = ["/host_app", "/opt/streamhub", "/app"]
+    for cand in candidates:
         if os.path.isdir(os.path.join(cand, ".git")):
-            return cand
-    return "/app"
+            return cand, None
+    return "/app", f"No .git directory found in any of: {', '.join(candidates)}"
 
 
 def _git(cwd, *args):
-    return subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, timeout=30)
+    # `safe.directory=*` bypasses Git 2.35+ dubious-ownership rejection that
+    # routinely fires when a docker container (uid 0) inspects a host bind-mount
+    # owned by another uid.  Without it, every git call silently fails with
+    # "fatal: detected dubious ownership in repository" and the UI shows "?".
+    env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
+    return subprocess.run(
+        ["git", "-c", "safe.directory=*", *args],
+        cwd=cwd, capture_output=True, text=True, timeout=60, env=env,
+    )
+
+
+def _git_or_err(cwd, *args) -> tuple[str, str]:
+    r = _git(cwd, *args)
+    if r.returncode != 0:
+        return "", (r.stderr or r.stdout or f"git {' '.join(args)} → rc={r.returncode}").strip()
+    return r.stdout.strip(), ""
 
 
 @api.get("/admin/github/check")
 async def github_check(admin: dict = Depends(require_admin)):
-    """Check whether a new commit is available on the configured branch."""
+    """Check whether a new commit is available on the configured branch.
+
+    Returns rich diagnostics on failure so the admin UI can surface the real
+    git error (missing remote, network unreachable, dubious ownership, etc.)
+    instead of silently displaying "?".
+    """
     settings = await get_settings()
-    repo_path = _detect_repo_path()
+    repo_path, path_err = _detect_repo_path()
     branch = settings.get("github_branch") or "main"
+    errors: list[str] = []
+    if path_err:
+        errors.append(path_err)
+
     # local commit
-    r = _git(repo_path, "rev-parse", "HEAD")
-    local_sha = r.stdout.strip() if r.returncode == 0 else None
-    # try to read remote URL from git itself first (avoids needing repo URL setting)
-    remote_url = ""
-    r2 = _git(repo_path, "config", "--get", "remote.origin.url")
-    if r2.returncode == 0:
-        remote_url = r2.stdout.strip()
+    local_sha, e = _git_or_err(repo_path, "rev-parse", "HEAD")
+    if e:
+        errors.append(f"rev-parse HEAD: {e}")
+
+    # remote URL — prefer git's own config, fall back to admin setting only if
+    # it looks like a real URL (avoids "x/y" garbage that used to be seeded).
+    remote_url, _ = _git_or_err(repo_path, "config", "--get", "remote.origin.url")
     if not remote_url:
-        remote_url = settings.get("github_repo") or ""
-    # fetch and compare
+        setting_url = (settings.get("github_repo") or "").strip()
+        if setting_url and ("://" in setting_url or setting_url.startswith("git@")):
+            remote_url = setting_url
+
+    # fetch (best effort)
     fetch_ok = False
+    fetch_err = ""
     if remote_url and local_sha:
         r3 = _git(repo_path, "fetch", "origin", branch)
         fetch_ok = r3.returncode == 0
-    r4 = _git(repo_path, "rev-parse", f"origin/{branch}")
-    remote_sha = r4.stdout.strip() if r4.returncode == 0 else None
+        if not fetch_ok:
+            fetch_err = (r3.stderr or r3.stdout or "fetch failed").strip()
+            errors.append(f"fetch origin {branch}: {fetch_err}")
+    elif not remote_url:
+        errors.append("No `remote.origin.url` configured — git clone the repo with HTTPS/SSH to /opt/streamhub first.")
+
+    remote_sha, e = _git_or_err(repo_path, "rev-parse", f"origin/{branch}")
+    if e and remote_url:
+        # Only treat this as an error if we actually had a remote — otherwise the
+        # missing ref is just a consequence of "no remote configured".
+        errors.append(f"rev-parse origin/{branch}: {e}")
+
     behind = 0
     if local_sha and remote_sha:
         r5 = _git(repo_path, "rev-list", "--count", f"{local_sha}..{remote_sha}")
@@ -1215,6 +1294,7 @@ async def github_check(admin: dict = Depends(require_admin)):
                 behind = int(r5.stdout.strip())
             except ValueError:
                 pass
+
     return {
         "repo_path": repo_path,
         "remote_url": remote_url,
@@ -1224,6 +1304,7 @@ async def github_check(admin: dict = Depends(require_admin)):
         "behind": behind,
         "has_update": bool(remote_sha and local_sha and remote_sha != local_sha),
         "fetched": fetch_ok,
+        "errors": errors,
     }
 
 
@@ -1231,10 +1312,22 @@ async def github_check(admin: dict = Depends(require_admin)):
 async def github_update(admin: dict = Depends(require_admin)):
     """Pull latest from origin and (best-effort) trigger a rebuild via docker.sock."""
     settings = await get_settings()
-    repo_path = _detect_repo_path()
+    repo_path, path_err = _detect_repo_path()
     branch = settings.get("github_branch") or "main"
+    if path_err:
+        raise HTTPException(400, path_err)
+    remote_url, _ = _git_or_err(repo_path, "config", "--get", "remote.origin.url")
+    if not remote_url:
+        raise HTTPException(
+            400,
+            "No git remote configured. Use the 'Configure remote' button below "
+            "or run `git remote add origin <url>` in the host clone "
+            "(typically /opt/streamhub) and retry.",
+        )
     pull = _git(repo_path, "pull", "origin", branch)
     out = {"pull_rc": pull.returncode, "stdout": pull.stdout, "stderr": pull.stderr}
+    if pull.returncode != 0:
+        raise HTTPException(400, f"git pull failed: {(pull.stderr or pull.stdout).strip()}")
     # If docker socket is mounted in this container, kick off a rebuild
     if os.path.exists("/var/run/docker.sock"):
         compose_file = os.path.join(repo_path, "deploy/docker-compose.yml")
@@ -1249,6 +1342,37 @@ async def github_update(admin: dict = Depends(require_admin)):
             out["rebuild_stdout"] = r.stdout[-2000:]
             out["rebuild_stderr"] = r.stderr[-2000:]
     return out
+
+
+class GithubRemoteReq(BaseModel):
+    url: str  # https://github.com/user/repo.git OR git@github.com:user/repo.git
+    branch: str = "main"
+
+
+@api.post("/admin/github/set-remote")
+async def admin_github_set_remote(req: GithubRemoteReq, admin: dict = Depends(require_admin)):
+    """Configure (or replace) the git remote on the host clone — no shell access required."""
+    url = req.url.strip()
+    if not url:
+        raise HTTPException(400, "Empty URL")
+    if not (url.startswith("https://") or url.startswith("git@") or url.startswith("http://")):
+        raise HTTPException(400, "URL must start with https://, http://, or git@")
+    repo_path, path_err = _detect_repo_path()
+    if path_err:
+        raise HTTPException(400, path_err)
+    existing, _ = _git_or_err(repo_path, "config", "--get", "remote.origin.url")
+    if existing:
+        r = _git(repo_path, "remote", "set-url", "origin", url)
+    else:
+        r = _git(repo_path, "remote", "add", "origin", url)
+    if r.returncode != 0:
+        raise HTTPException(400, f"git remote: {(r.stderr or r.stdout).strip()}")
+    # Persist branch + remote-as-mirror-of-truth in settings for diagnostics
+    cur = await get_settings()
+    cur["github_repo"] = url
+    cur["github_branch"] = req.branch or "main"
+    await save_settings(cur)
+    return {"ok": True, "remote_url": url, "branch": cur["github_branch"]}
 
 
 # ============ STARTUP ============
@@ -1604,6 +1728,37 @@ async def chat_ws(websocket: WebSocket):
         logger.debug("chat ws closed: %s", e)
     finally:
         await chat_hub.disconnect(cid)
+
+
+@api.websocket("/videos/{video_id}/status")
+async def video_status_ws(websocket: WebSocket, video_id: str):
+    """Push live progress / status updates for one video while it's transcoding.
+
+    The client receives an immediate snapshot on connect, then incremental
+    `{type: 'video.status', video_id, data}` packets whenever process_video
+    flips its progress.  Replaces the older HTTP polling loop on the watch page.
+    """
+    cid = await video_status_hub.connect(video_id, websocket)
+    try:
+        # Send an initial snapshot so the UI doesn't need a separate fetch.
+        snap = await db.videos.find_one(
+            {"id": video_id},
+            {"_id": 0, "status": 1, "progress": 1, "renditions": 1, "error": 1,
+             "thumbnail_url": 1, "is_short": 1, "duration_sec": 1},
+        )
+        if snap:
+            import json as _json
+            await websocket.send_text(_json.dumps(
+                {"type": "video.status", "video_id": video_id, "data": snap}, default=str,
+            ))
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        pass
+    except Exception as e:  # noqa: BLE001
+        logger.debug("video.status ws closed: %s", e)
+    finally:
+        await video_status_hub.disconnect(video_id, cid)
 
 
 def _ban_until_from_req(req: ChatBanReq) -> str:

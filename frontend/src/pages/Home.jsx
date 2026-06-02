@@ -64,8 +64,8 @@ export default function Home() {
 
   return (
     <div data-testid="home-page">
-      <header className="mb-10">
-        <h1 className="text-3xl sm:text-5xl lg:text-6xl font-bold tracking-tight text-zinc-50 font-heading">
+      <header className="pt-6 sm:pt-10 lg:pt-14 mb-10">
+        <h1 className="text-3xl sm:text-5xl lg:text-6xl font-bold tracking-tight text-zinc-50 font-heading max-w-4xl">
           {t("site.tagline")}
         </h1>
       </header>

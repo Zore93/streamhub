@@ -49,3 +49,56 @@ class ChatHub:
 
 
 hub = ChatHub()
+
+
+class VideoStatusHub:
+    """Topic-based broadcaster: one subscriber set per `video_id`.
+
+    Used by the watch page to receive realtime `{progress, status, renditions}`
+    updates while a freshly uploaded video is still transcoding.  Replaces the
+    old HTTP polling loop entirely.
+    """
+
+    def __init__(self) -> None:
+        self._topics: Dict[str, Dict[int, WebSocket]] = {}
+        self._lock = asyncio.Lock()
+        self._next_id = 0
+
+    async def connect(self, video_id: str, ws: WebSocket) -> int:
+        await ws.accept()
+        async with self._lock:
+            self._next_id += 1
+            cid = self._next_id
+            self._topics.setdefault(video_id, {})[cid] = ws
+        return cid
+
+    async def disconnect(self, video_id: str, cid: int) -> None:
+        async with self._lock:
+            topic = self._topics.get(video_id)
+            if not topic:
+                return
+            topic.pop(cid, None)
+            if not topic:
+                self._topics.pop(video_id, None)
+
+    async def publish(self, video_id: str, payload: dict) -> None:
+        msg = json.dumps({"type": "video.status", "video_id": video_id, "data": payload}, default=str)
+        topic = self._topics.get(video_id)
+        if not topic:
+            return
+        dead: list[int] = []
+        for cid, ws in list(topic.items()):
+            try:
+                await ws.send_text(msg)
+            except Exception as e:  # noqa: BLE001
+                logger.debug("video.status send failed cid=%s: %s", cid, e)
+                dead.append(cid)
+        if dead:
+            async with self._lock:
+                for cid in dead:
+                    topic.pop(cid, None)
+                if not topic:
+                    self._topics.pop(video_id, None)
+
+
+video_status_hub = VideoStatusHub()

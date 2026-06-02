@@ -134,6 +134,7 @@ class VideoUpdateReq(BaseModel):
     access_tier: Optional[str] = None
     thumbnail_url: Optional[str] = None
     is_short: Optional[bool] = None
+    subtitles: Optional[List[dict]] = None  # allow reordering (set default) only — items must already exist
 
 
 # ============ COMMENT ============
