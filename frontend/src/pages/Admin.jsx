@@ -632,14 +632,18 @@ function LegacyShortsControls() {
   };
   useEffect(() => { load(); }, []);
 
-  const mark = async (asShorts) => {
-    const verb = asShorts ? "Shorts" : "regular Videos";
-    if (!window.confirm(`Mark ALL migrated legacy videos (${stats?.total_legacy ?? 0}) as ${verb}? This affects every video that came from your legacy DB migration.`)) return;
+  const mark = async (mode, on) => {
+    // mode: "shorts" | "pro" ; on: boolean
+    const labels = {
+      "shorts-true":  ["Shorts", "/admin/videos/mark-legacy-as-shorts"],
+      "shorts-false": ["regular Videos", "/admin/videos/mark-legacy-as-videos"],
+      "pro-true":     ["PRO-only", "/admin/videos/mark-legacy-as-pro"],
+      "pro-false":    ["free", "/admin/videos/mark-legacy-as-free"],
+    };
+    const [verb, url] = labels[`${mode}-${on}`];
+    if (!window.confirm(`Mark ALL ${stats?.total_legacy ?? 0} migrated legacy videos as ${verb}? This affects every video that came from your legacy DB migration.`)) return;
     setBusy(true);
     try {
-      const url = asShorts
-        ? "/admin/videos/mark-legacy-as-shorts"
-        : "/admin/videos/mark-legacy-as-videos";
       const { data } = await api.post(url);
       toast.success(`Updated ${data.modified} of ${data.matched} legacy videos`);
       await load();
@@ -651,41 +655,74 @@ function LegacyShortsControls() {
   if (!stats) return null;
   return (
     <div className="bg-zinc-950 border border-zinc-800 rounded-md p-3 space-y-3 mt-3" data-testid="legacy-shorts-controls">
-      <div className="text-sm">
-        <span className="font-semibold">Migrated catalogue:</span>{" "}
-        <span className="text-zinc-300">{stats.total_legacy} total</span>{" "}
-        <span className="text-zinc-500">·</span>{" "}
-        <span className="text-fuchsia-300">{stats.legacy_as_shorts} as Shorts</span>{" "}
-        <span className="text-zinc-500">·</span>{" "}
-        <span className="text-zinc-300">{stats.legacy_as_videos} as long-form videos</span>
+      <div className="text-sm space-y-1">
+        <div>
+          <span className="font-semibold">Migrated catalogue:</span>{" "}
+          <span className="text-zinc-300">{stats.total_legacy} total</span>
+        </div>
+        {stats.total_legacy > 0 && (
+          <div className="text-xs text-zinc-400">
+            <span className="text-fuchsia-300">{stats.legacy_as_shorts} as Shorts</span>{" "}
+            <span className="text-zinc-600">·</span>{" "}
+            <span>{stats.legacy_as_videos} as long-form videos</span>{" "}
+            <span className="text-zinc-600">·</span>{" "}
+            <span className="text-amber-300">{stats.legacy_as_pro} PRO-only</span>{" "}
+            <span className="text-zinc-600">·</span>{" "}
+            <span>{stats.legacy_as_free} free</span>
+          </div>
+        )}
       </div>
       {stats.total_legacy > 0 && (
-        <div className="flex flex-wrap gap-2">
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={busy}
-            onClick={() => mark(true)}
-            className="border-zinc-700 hover:bg-zinc-800"
-            data-testid="mark-legacy-shorts"
-          >
-            Mark all legacy as Shorts
-          </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={busy}
-            onClick={() => mark(false)}
-            className="border-zinc-700 hover:bg-zinc-800"
-            data-testid="mark-legacy-videos"
-          >
-            Mark all legacy as long-form videos
-          </Button>
-        </div>
+        <>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={busy}
+              onClick={() => mark("shorts", true)}
+              className="border-zinc-700 hover:bg-zinc-800"
+              data-testid="mark-legacy-shorts"
+            >
+              Mark all legacy as Shorts
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={busy}
+              onClick={() => mark("shorts", false)}
+              className="border-zinc-700 hover:bg-zinc-800"
+              data-testid="mark-legacy-videos"
+            >
+              Mark all legacy as long-form videos
+            </Button>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              size="sm"
+              disabled={busy}
+              onClick={() => mark("pro", true)}
+              className="pro-gradient text-white border-0 disabled:opacity-50"
+              data-testid="mark-legacy-pro"
+            >
+              <Crown size={12} className="mr-1" /> Mark all legacy as PRO-only
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={busy}
+              onClick={() => mark("pro", false)}
+              className="border-zinc-700 hover:bg-zinc-800"
+              data-testid="mark-legacy-free"
+            >
+              Make all legacy free
+            </Button>
+          </div>
+        </>
       )}
       <p className="text-xs text-zinc-500">
-        Use the first button when the migrated catalogue is exclusively short-form content that
-        should live in the Shorts section of the sidebar. Toggle back any time.
+        Use the PRO button to gate every imported video behind the subscription paywall —
+        same effect as running the migration with the <code>--all-pro</code> flag, but applied
+        retroactively. Toggle back any time.
       </p>
     </div>
   );

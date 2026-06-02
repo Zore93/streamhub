@@ -1125,13 +1125,18 @@ async def admin_list_videos(admin: dict = Depends(require_admin)):
 
 @api.get("/admin/videos/legacy-stats")
 async def admin_legacy_stats(admin: dict = Depends(require_admin)):
-    """How many migrated (legacy_id present) videos exist, and what their is_short split is."""
-    total = await db.videos.count_documents({"legacy_id": {"$exists": True, "$ne": None}})
-    as_shorts = await db.videos.count_documents({"legacy_id": {"$exists": True, "$ne": None}, "is_short": True})
+    """How many migrated (legacy_id present) videos exist, their is_short split,
+    and their access-tier split."""
+    base = {"legacy_id": {"$exists": True, "$ne": None}}
+    total = await db.videos.count_documents(base)
+    as_shorts = await db.videos.count_documents({**base, "is_short": True})
+    as_pro = await db.videos.count_documents({**base, "access_tier": "pro"})
     return {
         "total_legacy": total,
         "legacy_as_shorts": as_shorts,
         "legacy_as_videos": total - as_shorts,
+        "legacy_as_pro": as_pro,
+        "legacy_as_free": total - as_pro,
     }
 
 
@@ -1155,6 +1160,29 @@ async def admin_mark_legacy_as_videos(admin: dict = Depends(require_admin)):
     r = await db.videos.update_many(
         {"legacy_id": {"$exists": True, "$ne": None}},
         {"$set": {"is_short": False}},
+    )
+    return {"matched": r.matched_count, "modified": r.modified_count}
+
+
+@api.post("/admin/videos/mark-legacy-as-pro")
+async def admin_mark_legacy_as_pro(admin: dict = Depends(require_admin)):
+    """Force `access_tier=pro` on every video that originated from the legacy
+    migration (i.e. has a `legacy_id`).  Use this after a migration if you
+    forgot the `--all-pro` flag on `parse_legacy_dump.py` and want to gate the
+    whole legacy catalogue behind the PRO subscription."""
+    r = await db.videos.update_many(
+        {"legacy_id": {"$exists": True, "$ne": None}},
+        {"$set": {"access_tier": "pro"}},
+    )
+    return {"matched": r.matched_count, "modified": r.modified_count}
+
+
+@api.post("/admin/videos/mark-legacy-as-free")
+async def admin_mark_legacy_as_free(admin: dict = Depends(require_admin)):
+    """Inverse: open the entire legacy catalogue to free users."""
+    r = await db.videos.update_many(
+        {"legacy_id": {"$exists": True, "$ne": None}},
+        {"$set": {"access_tier": "free"}},
     )
     return {"matched": r.matched_count, "modified": r.modified_count}
 
