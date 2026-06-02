@@ -1375,6 +1375,21 @@ async def admin_github_set_remote(req: GithubRemoteReq, admin: dict = Depends(re
     return {"ok": True, "remote_url": url, "branch": cur["github_branch"]}
 
 
+@api.delete("/admin/github/remote")
+async def admin_github_unset_remote(admin: dict = Depends(require_admin)):
+    """Remove the git origin remote — useful when admin entered a wrong URL."""
+    repo_path, path_err = _detect_repo_path()
+    if path_err:
+        raise HTTPException(400, path_err)
+    existing, _ = _git_or_err(repo_path, "config", "--get", "remote.origin.url")
+    if existing:
+        _git(repo_path, "remote", "remove", "origin")
+    cur = await get_settings()
+    cur["github_repo"] = ""
+    await save_settings(cur)
+    return {"ok": True}
+
+
 # ============ STARTUP ============
 @app.on_event("startup")
 async def startup():

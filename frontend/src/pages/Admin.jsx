@@ -553,6 +553,17 @@ function GithubUpdateControls() {
       toast.error(e.response?.data?.detail || "Failed to set remote");
     } finally { setBusy(false); }
   };
+  const unsetRemote = async () => {
+    if (!window.confirm("Remove the configured git remote?")) return;
+    setBusy(true);
+    try {
+      await api.delete("/admin/github/remote");
+      toast.success("Remote removed");
+      await check();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Failed");
+    } finally { setBusy(false); }
+  };
   useEffect(() => { check(); }, []);
 
   const hasErrors = status?.errors?.length > 0;
@@ -596,6 +607,11 @@ function GithubUpdateControls() {
         <Button variant="outline" onClick={() => setShowRemoteForm((s) => !s)} data-testid="gh-config-remote-toggle">
           {needsRemote ? "Configure remote" : "Change remote"}
         </Button>
+        {!needsRemote && (
+          <Button variant="outline" onClick={unsetRemote} disabled={busy} data-testid="gh-unset-remote">
+            Unset remote
+          </Button>
+        )}
       </div>
       {showRemoteForm && (
         <form onSubmit={saveRemote} className="bg-zinc-950 border border-zinc-800 rounded-md p-3 space-y-2" data-testid="gh-remote-form">

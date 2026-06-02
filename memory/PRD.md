@@ -26,27 +26,27 @@ Build a full-stack video-sharing platform inspired by hentairosub.ro with:
 - ✅ Admin panel: dashboard, videos (Edit + delete), users (ban/unban/grant-pro/role), categories, packages, announcements, live-chat moderation, settings (Localization, Shorts, Live Chat, Legacy migration, FFmpeg, Storage, SMTP, Stripe, Signed URLs, CloudFront, Contact, SEO, Auth security, GitHub auto-update)
 - ✅ Profile (avatar, cover, owned videos, inline Edit/Delete)
 - ✅ Custom HTML5 video player with resolution selector, CC, download toggle
-- ✅ **Mobile responsive layout** with hamburger drawer
-- ✅ **Live Chat** via native FastAPI WebSocket, with per-message rate-limiting, guest support, admin ban/delete moderation, chat_banned_until separate from site ban
-- ✅ **RO/EN bilingual UI** with admin-configurable default + per-visitor override (LanguageContext + i18n.js)
-- ✅ **Shorts**: auto-detected (vertical + duration ≤ configurable max) + manual toggle on upload, dedicated /shorts route + vertical grid + Home "Last Shorts added" section
-- ✅ **Homepage**: 12 videos per section + "See more" buttons + new hero text "Vezi hentai subtitrat în limba română la calitate 1080P - 4096P"
-- ✅ **Legacy migration tool**: `--all-pro` flag forces imported catalogue to PRO; vertical-aspect short auto-detection
-- ✅ **Pagination** ("Load more") on Category, Popular, Discover, Shorts, All-Episodes pages
-- ✅ Site config (title, favicon, SEO meta) stored in DB and editable from Admin → Settings
-- ✅ Secrets (JWT, Stripe, SMTP, Wasabi, CloudFront) moved from .env to MongoDB site_config
-- ✅ One-command VPS installer (`/app/deploy/scripts/install.sh`) with self-diagnostic + bundle collector
-- ✅ Auto-update via Admin → Settings → GitHub
-- ✅ Watch page processing overlay with status polling
+- ✅ Mobile responsive layout with hamburger drawer
+- ✅ Live Chat via native FastAPI WebSocket
+- ✅ RO/EN bilingual UI with admin-configurable default + per-visitor override
+- ✅ Shorts (vertical + duration auto-detect + manual toggle), dedicated /shorts route, Home "Last Shorts added" section
+- ✅ Homepage: 12 videos per section + "See more" buttons + new hero text positioned lower
+- ✅ Legacy migration tool: `--all-pro` + `--shorts-max-seconds` flags
+- ✅ Pagination ("Load more") on Category + Popular + Discover + Shorts + All-Episodes
+- ✅ Site config (title, favicon, SEO meta) stored in DB
+- ✅ Secrets (JWT, Stripe, SMTP, Wasabi, CloudFront) in MongoDB site_config
+- ✅ One-command VPS installer + self-diagnostic + bundle collector
+- ✅ Auto-update via Admin → Settings → GitHub (fixed Feb 2026): rich diagnostics, Configure/Change/Unset remote buttons, dubious-ownership safe.directory workaround, surfaced git stderr
+- ✅ Watch page: WebSocket /api/videos/{id}/status push channel replaces 4-second polling (saves bandwidth + battery)
+- ✅ EditVideo subtitles: language Select with 14 common locales + "Other" custom code, "Make default" reorder via PATCH, is_short toggle, srt/ass auto-conversion to WebVTT
 
 ## Roadmap / Future improvements
-- P2 — Subtitles upload flow in EditVideo page (model fields exist, UI partial)
-- P2 — Multi-language metadata (currently `description` is a single string)
-- P2 — Per-user playlist / favourites
-- P2 — Notification system (in-app bell for new messages, replies, video ready)
-- P3 — Refactor `server.py` (currently 1700 lines) into `routes/auth.py`, `routes/videos.py`, `routes/admin.py`, `routes/chat.py`, `routes/billing.py`. Add `models/` package. Move chat/storage helpers under `/app/backend/services/`.
-- P3 — Replace polling on Watch page with WebSocket "video.status" channel
-- P3 — Migration tool: backfill `is_short` from existing thumbnails by inspecting actual rendition dimensions
+- P2 — Multi-language metadata (currently `description` is single string)
+- P2 — Per-user playlists / favourites
+- P3 — Refactor `server.py` (now ~1860 lines) into `routes/` package
+- P3 — Notification system (in-app bell for video ready / replies)
+- P3 — `git ls-remote` validation in /admin/github/set-remote for connectivity check
+- P3 — Refactor models.py into `models/` package; move chat/storage helpers to `services/`
 
 ## Test data
 - Admin: `admin@streamhub.io` / `Admin123!`
