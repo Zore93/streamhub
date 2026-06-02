@@ -15,11 +15,13 @@ import Admin from "@/pages/Admin";
 import Category from "@/pages/Category";
 import Contact from "@/pages/Contact";
 import EditVideo from "@/pages/EditVideo";
+import SiteHead from "@/components/SiteHead";
 
 function App() {
   return (
     <AuthProvider>
       <BrowserRouter>
+        <SiteHead />
         <Toaster theme="dark" position="bottom-right" richColors />
         <Routes>
           {/* Watch page uses its own Layout (with recommendations) */}

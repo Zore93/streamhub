@@ -208,6 +208,17 @@ class AppSettings(BaseModel):
     contact_email: str = ""
     # Player
     allow_video_download: bool = False
+    # Site / SEO
+    site_title: str = "StreamHub"
+    site_description: str = "A premium video-sharing community."
+    site_favicon_url: str = ""
+    site_seo_keywords: str = ""
+    site_seo_meta: str = ""  # raw additional <meta> tags
+    # Auth security
+    min_password_length: int = 8
+    require_password_complexity: bool = True
+    login_rate_limit_max: int = 5     # attempts
+    login_rate_limit_window: int = 300  # seconds
     # GitHub auto-update
     github_repo: str = ""
     github_token: str = ""

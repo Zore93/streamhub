@@ -274,7 +274,8 @@ function SettingsTab() {
     upd("enabled_resolutions", cur.includes(r) ? cur.filter((x) => x !== r) : [...cur, r]);
   };
   const githubUpdate = async () => {
-    try { const { data } = await api.post("/admin/github/update"); toast.success("Pull executed"); console.log(data); }
+    if (!window.confirm("This will pull the latest code and rebuild the containers. Continue?")) return;
+    try { const { data } = await api.post("/admin/github/update"); toast.success("Update triggered"); console.log(data); }
     catch (e) { toast.error(e.response?.data?.detail || "Failed"); }
   };
   return (
@@ -345,11 +346,22 @@ function SettingsTab() {
         <Field label="Contact email"><Input type="email" value={s.contact_email || ""} onChange={(e) => upd("contact_email", e.target.value)} placeholder="contact@yourdomain.com" className="bg-zinc-950 border-zinc-800" data-testid="contact-email-setting" /></Field>
         <p className="text-xs text-zinc-500">Messages from /contact are sent to this address (requires SMTP to be enabled).</p>
       </Section>
+      <Section title="Site / SEO">
+        <Field label="Site title"><Input value={s.site_title || ""} onChange={(e) => upd("site_title", e.target.value)} className="bg-zinc-950 border-zinc-800" data-testid="site-title-input" /></Field>
+        <Field label="Description"><Input value={s.site_description || ""} onChange={(e) => upd("site_description", e.target.value)} className="bg-zinc-950 border-zinc-800" /></Field>
+        <Field label="Favicon URL"><Input value={s.site_favicon_url || ""} onChange={(e) => upd("site_favicon_url", e.target.value)} className="bg-zinc-950 border-zinc-800" placeholder="https://.../favicon.ico" /></Field>
+        <Field label="SEO keywords"><Input value={s.site_seo_keywords || ""} onChange={(e) => upd("site_seo_keywords", e.target.value)} className="bg-zinc-950 border-zinc-800" placeholder="videos, streaming, ..." /></Field>
+        <div className="col-span-2"><Label>Additional &lt;meta&gt; tags (raw HTML)</Label>
+          <Textarea rows={3} value={s.site_seo_meta || ""} onChange={(e) => upd("site_seo_meta", e.target.value)} className="bg-zinc-950 border-zinc-800 font-mono text-xs" placeholder='<meta property="og:image" content="...">' /></div>
+      </Section>
+      <Section title="Auth security">
+        <Field label="Min password length"><Input type="number" value={s.min_password_length || 8} onChange={(e) => upd("min_password_length", parseInt(e.target.value) || 8)} className="bg-zinc-950 border-zinc-800" /></Field>
+        <Field label="Require complexity (letter+digit+symbol)"><Switch checked={!!s.require_password_complexity} onCheckedChange={(v) => upd("require_password_complexity", v)} /></Field>
+        <Field label="Login attempts before lockout"><Input type="number" value={s.login_rate_limit_max || 5} onChange={(e) => upd("login_rate_limit_max", parseInt(e.target.value) || 5)} className="bg-zinc-950 border-zinc-800" /></Field>
+        <Field label="Lockout window (seconds)"><Input type="number" value={s.login_rate_limit_window || 300} onChange={(e) => upd("login_rate_limit_window", parseInt(e.target.value) || 300)} className="bg-zinc-950 border-zinc-800" /></Field>
+      </Section>
       <Section title="GitHub auto-update">
-        <Field label="Repo URL"><Input value={s.github_repo} onChange={(e) => upd("github_repo", e.target.value)} className="bg-zinc-950 border-zinc-800" placeholder="https://github.com/you/repo.git" /></Field>
-        <Field label="Branch"><Input value={s.github_branch} onChange={(e) => upd("github_branch", e.target.value)} className="bg-zinc-950 border-zinc-800" /></Field>
-        <Field label="Token"><Input type="password" value={s.github_token} onChange={(e) => upd("github_token", e.target.value)} className="bg-zinc-950 border-zinc-800" /></Field>
-        <Button variant="outline" onClick={githubUpdate} data-testid="gh-update"><RefreshCw size={14} className="mr-2" /> Pull updates</Button>
+        <GithubUpdateControls />
       </Section>
       <Button onClick={save} className="pro-gradient text-white border-0" data-testid="save-settings">Save All Settings</Button>
     </div>
@@ -361,6 +373,51 @@ function Section({ title, children }) {
     <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5 space-y-4">
       <div className="font-heading font-semibold text-lg">{title}</div>
       {children}
+    </div>
+  );
+}
+
+function GithubUpdateControls() {
+  const [status, setStatus] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  const check = async () => {
+    setBusy(true);
+    try { const { data } = await api.get("/admin/github/check"); setStatus(data); }
+    catch (e) { toast.error(e.response?.data?.detail || "Check failed"); }
+    finally { setBusy(false); }
+  };
+  const update = async () => {
+    if (!window.confirm("Pull latest code and rebuild containers? The site may be briefly unavailable.")) return;
+    setBusy(true);
+    try {
+      const { data } = await api.post("/admin/github/update");
+      if (data.pull_rc === 0) toast.success("Update applied. Rebuilding…");
+      else toast.error("git pull failed — see console"); console.log(data);
+      setTimeout(check, 4000);
+    } catch (e) { toast.error(e.response?.data?.detail || "Update failed"); }
+    finally { setBusy(false); }
+  };
+  useEffect(() => { check(); }, []);
+
+  return (
+    <div className="space-y-3" data-testid="github-update-controls">
+      {status && (
+        <div className="text-sm text-zinc-400 space-y-1">
+          <div>Branch: <code className="text-zinc-200">{status.branch}</code></div>
+          <div>Current: <code className="text-zinc-200">{status.local_commit || "?"}</code> · Latest on origin: <code className="text-zinc-200">{status.remote_commit || "?"}</code></div>
+          <div>{status.has_update ? <span className="text-rose-400">▲ {status.behind} commit(s) behind — update available</span> : <span className="text-emerald-400">✓ Up-to-date</span>}</div>
+        </div>
+      )}
+      <div className="flex gap-2">
+        <Button variant="outline" disabled={busy} onClick={check} data-testid="gh-check">
+          <RefreshCw size={14} className={`mr-2 ${busy ? "animate-spin" : ""}`} /> Check for updates
+        </Button>
+        <Button disabled={busy || !status?.has_update} onClick={update} className="pro-gradient text-white border-0 disabled:opacity-50" data-testid="gh-update">
+          Update
+        </Button>
+      </div>
+      <p className="text-xs text-zinc-500">Pulls from the same git remote this server was deployed from. No repo URL or token needed — uses the local clone's <code>origin</code>.</p>
     </div>
   );
 }

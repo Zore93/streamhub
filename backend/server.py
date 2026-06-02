@@ -48,6 +48,8 @@ import hashlib
 import hmac
 import time
 import urllib.parse
+import subprocess
+from collections import defaultdict, deque
 from models import (
     Announcement,
     AppSettings,
@@ -118,6 +120,42 @@ class TranscodeQueue:
 
 
 queue = TranscodeQueue()
+
+
+# ============ Rate limiting (in-memory; per-IP+email login) ============
+_login_attempts: dict[str, deque] = defaultdict(deque)
+
+
+def _rate_limit_check(key: str, max_attempts: int, window: int):
+    now = time.time()
+    dq = _login_attempts[key]
+    while dq and now - dq[0] > window:
+        dq.popleft()
+    if len(dq) >= max_attempts:
+        raise HTTPException(429, f"Too many login attempts. Try again in {window} seconds.")
+
+
+def _rate_limit_record(key: str):
+    _login_attempts[key].append(time.time())
+
+
+def _rate_limit_reset(key: str):
+    _login_attempts.pop(key, None)
+
+
+def _validate_password(pw: str, settings: dict):
+    min_len = int(settings.get("min_password_length", 8))
+    if len(pw) < min_len:
+        raise HTTPException(400, f"Password must be at least {min_len} characters")
+    if settings.get("require_password_complexity", True):
+        has_letter = any(c.isalpha() for c in pw)
+        has_digit = any(c.isdigit() for c in pw)
+        has_symbol = any(not c.isalnum() for c in pw)
+        if not (has_letter and has_digit and has_symbol):
+            raise HTTPException(
+                400,
+                "Password must contain letters, digits and at least one symbol",
+            )
 
 
 # ============ Helpers ============
@@ -319,6 +357,7 @@ async def process_video(video_id: str, src_path: str):
 @api.post("/auth/register")
 async def register(req: RegisterReq, request: Request):
     settings = await get_settings()
+    _validate_password(req.password, settings)
     if await db.users.find_one({"email": req.email.lower()}):
         raise HTTPException(400, "Email already registered")
     if await db.users.find_one({"username": req.username}):
@@ -344,9 +383,17 @@ async def register(req: RegisterReq, request: Request):
 
 
 @api.post("/auth/login")
-async def login(req: LoginReq):
+async def login(req: LoginReq, request: Request):
+    settings = await get_settings()
+    rate_key = f"{request.client.host if request.client else 'unknown'}|{req.email.lower()}"
+    _rate_limit_check(
+        rate_key,
+        int(settings.get("login_rate_limit_max", 5)),
+        int(settings.get("login_rate_limit_window", 300)),
+    )
     u = await db.users.find_one({"email": req.email.lower()}, {"_id": 0})
     if not u or not verify_password(req.password, u["password_hash"]):
+        _rate_limit_record(rate_key)
         raise HTTPException(401, "Invalid credentials")
     if not u.get("email_verified"):
         raise HTTPException(403, "Email not verified. Check your inbox.")
@@ -368,6 +415,7 @@ async def login(req: LoginReq):
         except ValueError:
             pass
     token = create_token(u["id"])
+    _rate_limit_reset(rate_key)
     return {"token": token, "user": public_user(u)}
 
 
@@ -1070,25 +1118,84 @@ async def stripe_webhook(request: Request):
     return {"ok": True}
 
 
-# ============ GITHUB AUTO-UPDATE (stub) ============
+# ============ GITHUB AUTO-UPDATE ============
+def _detect_repo_path() -> str:
+    """Try common locations for the host clone of this repo (when running in docker)."""
+    for cand in ("/host_app", "/opt/streamhub", "/app"):
+        if os.path.isdir(os.path.join(cand, ".git")):
+            return cand
+    return "/app"
+
+
+def _git(cwd, *args):
+    return subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, timeout=30)
+
+
+@api.get("/admin/github/check")
+async def github_check(admin: dict = Depends(require_admin)):
+    """Check whether a new commit is available on the configured branch."""
+    settings = await get_settings()
+    repo_path = _detect_repo_path()
+    branch = settings.get("github_branch") or "main"
+    # local commit
+    r = _git(repo_path, "rev-parse", "HEAD")
+    local_sha = r.stdout.strip() if r.returncode == 0 else None
+    # try to read remote URL from git itself first (avoids needing repo URL setting)
+    remote_url = ""
+    r2 = _git(repo_path, "config", "--get", "remote.origin.url")
+    if r2.returncode == 0:
+        remote_url = r2.stdout.strip()
+    if not remote_url:
+        remote_url = settings.get("github_repo") or ""
+    # fetch and compare
+    fetch_ok = False
+    if remote_url and local_sha:
+        r3 = _git(repo_path, "fetch", "origin", branch)
+        fetch_ok = r3.returncode == 0
+    r4 = _git(repo_path, "rev-parse", f"origin/{branch}")
+    remote_sha = r4.stdout.strip() if r4.returncode == 0 else None
+    behind = 0
+    if local_sha and remote_sha:
+        r5 = _git(repo_path, "rev-list", "--count", f"{local_sha}..{remote_sha}")
+        if r5.returncode == 0:
+            try:
+                behind = int(r5.stdout.strip())
+            except ValueError:
+                pass
+    return {
+        "repo_path": repo_path,
+        "remote_url": remote_url,
+        "branch": branch,
+        "local_commit": (local_sha or "")[:12],
+        "remote_commit": (remote_sha or "")[:12],
+        "behind": behind,
+        "has_update": bool(remote_sha and local_sha and remote_sha != local_sha),
+        "fetched": fetch_ok,
+    }
+
+
 @api.post("/admin/github/update")
 async def github_update(admin: dict = Depends(require_admin)):
+    """Pull latest from origin and (best-effort) trigger a rebuild via docker.sock."""
     settings = await get_settings()
-    repo = settings.get("github_repo")
-    if not repo:
-        raise HTTPException(400, "GitHub repo not configured")
-    import subprocess
-    try:
-        result = subprocess.run(
-            ["git", "pull", "origin", settings.get("github_branch", "main")],
-            cwd="/app",
-            capture_output=True,
-            text=True,
-            timeout=60,
-        )
-        return {"ok": result.returncode == 0, "stdout": result.stdout, "stderr": result.stderr}
-    except Exception as e:
-        raise HTTPException(500, f"Update failed: {e}")
+    repo_path = _detect_repo_path()
+    branch = settings.get("github_branch") or "main"
+    pull = _git(repo_path, "pull", "origin", branch)
+    out = {"pull_rc": pull.returncode, "stdout": pull.stdout, "stderr": pull.stderr}
+    # If docker socket is mounted in this container, kick off a rebuild
+    if os.path.exists("/var/run/docker.sock"):
+        compose_file = os.path.join(repo_path, "deploy/docker-compose.yml")
+        env_file = os.path.join(repo_path, "deploy/.env")
+        if os.path.exists(compose_file):
+            r = subprocess.run(
+                ["docker", "compose", "-f", compose_file, "--env-file", env_file,
+                 "up", "-d", "--build"],
+                capture_output=True, text=True, timeout=600,
+            )
+            out["rebuild_rc"] = r.returncode
+            out["rebuild_stdout"] = r.stdout[-2000:]
+            out["rebuild_stderr"] = r.stderr[-2000:]
+    return out
 
 
 # ============ STARTUP ============
@@ -1284,6 +1391,19 @@ async def public_contact_config():
 async def public_player_config():
     s = await get_settings()
     return {"allow_video_download": bool(s.get("allow_video_download", False))}
+
+
+@api.get("/site/config")
+async def public_site_config():
+    """Public site identity / SEO config consumed by frontend index.html and Layout."""
+    s = await get_settings()
+    return {
+        "title": s.get("site_title") or "StreamHub",
+        "description": s.get("site_description") or "",
+        "favicon_url": s.get("site_favicon_url") or "",
+        "keywords": s.get("site_seo_keywords") or "",
+        "meta": s.get("site_seo_meta") or "",
+    }
 
 
 @api.get("/secure-media/{rel_path:path}")

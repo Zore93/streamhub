@@ -15,6 +15,9 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile.backend
+    # For faster installs, pull the prebuilt image from GHCR by removing the
+    # `build:` block above and uncommenting the line below (set GHCR_OWNER in .env):
+    #   image: ghcr.io/${GHCR_OWNER}/streamhub-backend:latest
     container_name: sh-backend
     restart: unless-stopped
     depends_on:
@@ -28,6 +31,12 @@ services:
       UPLOAD_DIR: /app/uploads
     volumes:
       - ${UPLOAD_DIR}:/app/uploads
+      # Mount the host repository (so the backend can git pull) + docker socket
+      # (so it can trigger a docker-compose rebuild on "Update" click). Read-only
+      # bind mount is intentional — only the .git pull operation needs write access
+      # which we promote via a separate writable mount below.
+      - /opt/streamhub:/host_app
+      - /var/run/docker.sock:/var/run/docker.sock
 
   frontend:
     build:
@@ -35,6 +44,8 @@ services:
       dockerfile: deploy/Dockerfile.frontend
       args:
         REACT_APP_BACKEND_URL: "https://${DOMAIN}"
+    # Or use the prebuilt image:
+    #   image: ghcr.io/${GHCR_OWNER}/streamhub-frontend:latest
     container_name: sh-frontend
     restart: unless-stopped
 

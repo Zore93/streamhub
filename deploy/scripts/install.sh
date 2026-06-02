@@ -158,8 +158,23 @@ fi
 #─── 7) Issue Let's Encrypt cert (HTTP-01 via webroot) ──────────────────────
 green "→ Issuing Let's Encrypt cert for $DOMAIN (HTTP-01)"
 mkdir -p /opt/streamhub/data/letsencrypt /opt/streamhub/data/certbot-www
+# Free port 80 / 443: stop any prior stack + any container/process holding them
+docker rm -f sh-bootstrap-nginx sh-nginx 2>/dev/null || true
+if [[ -f "$DEPLOY_DIR/docker-compose.yml" ]]; then
+    docker compose --env-file "$ENV_FILE" -f "$DEPLOY_DIR/docker-compose.yml" down 2>/dev/null || true
+fi
+# Anything else still holding port 80 in docker? Stop it.
+for cid in $(docker ps --filter "publish=80" -q 2>/dev/null); do
+    yellow "  stopping container $cid holding :80"
+    docker stop "$cid" >/dev/null 2>&1 || true
+done
+# Kill any host process bound to :80 (apache, system nginx) so certbot can bind
+if ss -ltn 'sport = :80' 2>/dev/null | grep -q LISTEN; then
+    yellow "  port 80 still busy — stopping system nginx/apache if present"
+    systemctl stop nginx 2>/dev/null || true
+    systemctl stop apache2 2>/dev/null || true
+fi
 # Bootstrap a temp nginx on :80 to serve ACME challenge
-docker rm -f sh-bootstrap-nginx >/dev/null 2>&1 || true
 cat > /tmp/bootstrap.conf <<EOF
 server {
   listen 80 default_server;
