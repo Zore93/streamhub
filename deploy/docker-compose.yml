@@ -67,8 +67,12 @@ services:
     volumes:
       - ./nginx/streamhub.conf:/etc/nginx/conf.d/streamhub.conf:ro
       - ./nginx/ssl-params.conf:/etc/nginx/conf.d/ssl-params.conf:ro
-      - letsencrypt:/etc/letsencrypt
-      - certbot_www:/var/www/certbot
+      # Bind-mount certs from host so they persist across `git reset --hard`
+      # and survive recreating the docker volume.  install.sh writes them to
+      # /opt/streamhub/data/letsencrypt via certbot; override with env vars
+      # if you keep certs elsewhere.
+      - ${LETSENCRYPT_DIR:-/opt/streamhub/data/letsencrypt}:/etc/letsencrypt
+      - ${CERTBOT_WWW_DIR:-/opt/streamhub/data/certbot-www}:/var/www/certbot
 
   certbot:
     image: certbot/certbot:latest
@@ -76,10 +80,8 @@ services:
     restart: unless-stopped
     entrypoint: /bin/sh -c "trap exit TERM; while :; do certbot renew --webroot -w /var/www/certbot --quiet --deploy-hook 'nginx -s reload'; sleep 12h; done"
     volumes:
-      - letsencrypt:/etc/letsencrypt
-      - certbot_www:/var/www/certbot
+      - ${LETSENCRYPT_DIR:-/opt/streamhub/data/letsencrypt}:/etc/letsencrypt
+      - ${CERTBOT_WWW_DIR:-/opt/streamhub/data/certbot-www}:/var/www/certbot
 
 volumes:
   mongo_data:
-  letsencrypt:
-  certbot_www:

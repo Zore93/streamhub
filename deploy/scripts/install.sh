@@ -201,12 +201,10 @@ docker run --rm \
 
 docker rm -f sh-bootstrap-nginx >/dev/null 2>&1 || true
 
-# Hardlink the host letsencrypt dir into the named volume that compose uses
-# Easier: switch compose to bind-mount /opt/streamhub/data/letsencrypt
-sed -i 's|letsencrypt:/etc/letsencrypt|/opt/streamhub/data/letsencrypt:/etc/letsencrypt|g' "$DEPLOY_DIR/docker-compose.yml" || true
-sed -i 's|certbot_www:/var/www/certbot|/opt/streamhub/data/certbot-www:/var/www/certbot|g' "$DEPLOY_DIR/docker-compose.yml" || true
-# Remove the now-unused named volumes
-sed -i '/^  letsencrypt:/d;/^  certbot_www:/d' "$DEPLOY_DIR/docker-compose.yml" || true
+# Note: docker-compose.yml already bind-mounts /opt/streamhub/data/letsencrypt
+# (and certbot-www) into nginx + certbot, so no further patching is needed.
+# These paths can be overridden via LETSENCRYPT_DIR / CERTBOT_WWW_DIR in
+# deploy/.env if your certs live elsewhere.
 
 #─── 8) Render nginx config ────────────────────────────────────────────────
 sed "s|__DOMAIN__|$DOMAIN|g" "$DEPLOY_DIR/nginx/streamhub.conf.template" > "$DEPLOY_DIR/nginx/streamhub.conf"
