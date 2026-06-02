@@ -221,11 +221,21 @@ docker compose --env-file "$ENV_FILE" up -d
 
 #─── 10) Seed admin in MongoDB ─────────────────────────────────────────────
 green "→ Seeding admin user $ADMIN_EMAIL"
-# Wait briefly for the backend to print "Application startup complete", then
-# attempt the seed directly with retries.  We do NOT use a separate ping check
-# (it was hiding real errors) — the seed itself is the authoritative test.
+# Error log destination (also referenced by collect-bundle.sh)
+ERR_LOG=/opt/streamhub/data/install-errors.log
+mkdir -p "$(dirname "$ERR_LOG")"
+log_err() {
+    {
+        echo "═══════════════════════════════════════════════════════════════"
+        echo "  $(date -Iseconds)  $1"
+        echo "═══════════════════════════════════════════════════════════════"
+        shift
+        printf '%s\n' "$@"
+    } >> "$ERR_LOG"
+}
 
-# Quick "is the container running" check
+# Wait briefly for the backend to print "Application startup complete", then
+# attempt the seed directly with retries.
 for i in $(seq 1 30); do
     state=$(docker inspect -f '{{.State.Status}}' sh-backend 2>/dev/null || echo "missing")
     [[ "$state" == "running" ]] && break
@@ -235,11 +245,12 @@ done
 
 if [[ "$state" != "running" ]]; then
     red "✘ sh-backend container never reached 'running'. Last 60 log lines:"
-    docker logs --tail 60 sh-backend 2>&1 || true
+    LOGS=$(docker logs --tail 60 sh-backend 2>&1 || true)
+    echo "$LOGS"
+    log_err "BACKEND_NOT_RUNNING (state=$state)" "$LOGS"
     exit 1
 fi
 
-# Give uvicorn a couple of seconds to finish initializing routes
 sleep 5
 
 seed_ok=""
@@ -253,7 +264,6 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from auth import hash_password
 async def main():
     db = AsyncIOMotorClient(os.environ['MONGO_URL'])[os.environ['DB_NAME']]
-    # explicit ping so motor surfaces auth/network errors clearly
     await db.command('ping')
     email = os.environ['SEED_EMAIL'].lower()
     deleted = (await db.users.delete_many({'email': email})).deleted_count
@@ -280,13 +290,18 @@ PYEOF
     else
         echo "  ✘ attempt $attempt failed:"
         echo "$SEED_OUT" | sed 's/^/    /'
+        log_err "SEED_ATTEMPT_${attempt}_FAILED" "$SEED_OUT"
         sleep 5
     fi
 done
 
 if [[ -z "$seed_ok" ]]; then
     red "✘ All seed attempts failed. Last 40 backend log lines:"
-    docker logs --tail 40 sh-backend 2>&1 || true
+    LOGS=$(docker logs --tail 40 sh-backend 2>&1 || true)
+    echo "$LOGS"
+    log_err "ALL_SEED_ATTEMPTS_FAILED — backend logs follow" "$LOGS"
+    red "  Full error log: $ERR_LOG"
+    red "  For support, run:  sudo bash $DEPLOY_DIR/scripts/collect-bundle.sh"
     red "  Once the cause is fixed, re-run: sudo bash $DEPLOY_DIR/scripts/reset-admin.sh"
     exit 1
 fi
