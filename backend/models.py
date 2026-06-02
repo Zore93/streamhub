@@ -108,6 +108,7 @@ class Video(BaseModel):
     renditions: List[VideoRendition] = []
     subtitles: List[Subtitle] = []
     access_tier: str = "free"  # free | pro
+    is_short: bool = False  # True for vertical / short-form clips
     views: int = 0
     likes: List[str] = []  # user ids
     created_at: str = Field(default_factory=now_iso)
@@ -129,6 +130,7 @@ class VideoUpdateReq(BaseModel):
     category_id: Optional[str] = None
     access_tier: Optional[str] = None
     thumbnail_url: Optional[str] = None
+    is_short: Optional[bool] = None
 
 
 # ============ COMMENT ============

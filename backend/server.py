@@ -547,21 +547,42 @@ async def delete_category(cat_id: str, admin: dict = Depends(require_admin)):
 async def list_videos(
     section: str = "latest",
     category_id: Optional[str] = None,
+    kind: Optional[str] = None,  # "video" (long) | "short" | None (all)
     limit: int = 20,
+    skip: int = 0,
 ):
     q = {"status": "ready"}
     if category_id:
         q["category_id"] = category_id
+    if kind == "short":
+        q["is_short"] = True
+    elif kind == "video":
+        q["is_short"] = {"$ne": True}
     if section == "popular":
-        cur = db.videos.find(q, {"_id": 0}).sort("views", -1).limit(limit)
+        cur = db.videos.find(q, {"_id": 0}).sort("views", -1).skip(skip).limit(limit)
         return await cur.to_list(limit)
     if section == "random":
-        # mongo sample
-        pipeline = [{"$match": q}, {"$sample": {"size": limit}}, {"$project": {"_id": 0}}]
+        pipeline = [{"$match": q}, {"$sample": {"size": limit + skip}},
+                    {"$project": {"_id": 0}}, {"$skip": skip}, {"$limit": limit}]
         return await db.videos.aggregate(pipeline).to_list(limit)
-    # latest
-    cur = db.videos.find(q, {"_id": 0}).sort("created_at", -1).limit(limit)
+    cur = db.videos.find(q, {"_id": 0}).sort("created_at", -1).skip(skip).limit(limit)
     return await cur.to_list(limit)
+
+
+@api.get("/videos/count")
+async def count_videos(
+    section: str = "latest",
+    category_id: Optional[str] = None,
+    kind: Optional[str] = None,
+):
+    q = {"status": "ready"}
+    if category_id:
+        q["category_id"] = category_id
+    if kind == "short":
+        q["is_short"] = True
+    elif kind == "video":
+        q["is_short"] = {"$ne": True}
+    return {"count": await db.videos.count_documents(q)}
 
 
 @api.get("/videos/{video_id}")
@@ -652,6 +673,7 @@ async def upload_video(
     tags: str = Form(""),
     category_id: Optional[str] = Form(None),
     access_tier: str = Form("free"),
+    is_short: bool = Form(False),
     user: dict = Depends(require_user),
 ):
     settings = await get_settings()
