@@ -25,7 +25,7 @@ if ! docker inspect sh-backend >/dev/null 2>&1; then
 fi
 
 set +e
-OUT=$(docker exec -e EMAIL="$email" -e PW="$pw" sh-backend python - <<'PYEOF' 2>&1
+OUT=$(docker exec -i -e EMAIL="$email" -e PW="$pw" sh-backend python - <<'PYEOF' 2>&1
 import asyncio, os, sys, uuid
 from datetime import datetime, timezone
 sys.path.insert(0, '/app')

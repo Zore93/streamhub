@@ -70,7 +70,7 @@ if [[ -f "$ENV_FILE" ]]; then
 fi
 
 # 4) MongoDB settings (REDACTED) ────────────────────────────────────────────
-docker exec sh-backend python - > "$WORK/mongo-settings.json" 2>&1 <<'PY' || true
+docker exec -i sh-backend python - > "$WORK/mongo-settings.json" 2>&1 <<'PY' || true
 import asyncio, json, os
 from motor.motor_asyncio import AsyncIOMotorClient
 REDACT = {"jwt_secret","stripe_secret_key","cloudfront_private_key",

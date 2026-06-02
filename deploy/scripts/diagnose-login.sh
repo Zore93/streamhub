@@ -35,7 +35,7 @@ if [[ "$status" != "running" ]]; then
     exit 1
 fi
 
-docker exec sh-backend python - <<'PY' 2>&1 || true
+docker exec -i sh-backend python - <<'PY' 2>&1 || true
 import asyncio, os
 from motor.motor_asyncio import AsyncIOMotorClient
 async def m():

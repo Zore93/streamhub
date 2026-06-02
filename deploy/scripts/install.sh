@@ -256,7 +256,7 @@ sleep 5
 seed_ok=""
 for attempt in 1 2 3 4 5; do
     echo "  seed attempt $attempt/5..."
-    if SEED_OUT=$(docker exec -e SEED_EMAIL="$ADMIN_EMAIL" -e SEED_PW="$ADMIN_PASSWORD" sh-backend python - <<'PYEOF' 2>&1
+    if SEED_OUT=$(docker exec -i -e SEED_EMAIL="$ADMIN_EMAIL" -e SEED_PW="$ADMIN_PASSWORD" sh-backend python - <<'PYEOF' 2>&1
 import asyncio, os, sys, uuid
 from datetime import datetime, timezone
 sys.path.insert(0, '/app')
