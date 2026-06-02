@@ -1,30 +1,87 @@
 import React, { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
-import { Crown, LogIn, UserPlus, LogOut, User as UserIcon } from "lucide-react";
+import { Link, useLocation } from "react-router-dom";
+import { Crown, LogIn, UserPlus, LogOut, User as UserIcon, X } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import api, { mediaUrl } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { useT } from "@/contexts/LanguageContext";
 import LiveChat from "./LiveChat";
 
-export default function RightSidebar({ recommendations = null }) {
+export default function RightSidebar({ recommendations = null, mobileOpen = false, onMobileClose }) {
   const { user, logout } = useAuth();
   const { t, siteCfg } = useT();
   const [pkgs, setPkgs] = useState([]);
+  const { pathname } = useLocation();
 
   useEffect(() => {
     api.get("/packages").then((r) => setPkgs(r.data)).catch(() => {});
   }, []);
 
+  // Auto-close mobile drawer on route change (so picking a package navigates cleanly).
+  useEffect(() => { if (mobileOpen) onMobileClose?.(); /* eslint-disable-next-line */ }, [pathname]);
+
   // Live chat is only shown on the home/listing pages (not on watch page where
   // we surface recommendations).  Admin can disable chat globally in settings.
   const chatEnabled = !recommendations && (siteCfg?.live_chat_enabled ?? true);
 
+  const body = <RightSidebarBody
+    user={user}
+    logout={logout}
+    t={t}
+    pkgs={pkgs}
+    chatEnabled={chatEnabled}
+    siteCfg={siteCfg}
+    recommendations={recommendations}
+    onMobileClose={onMobileClose}
+    showCloseButton={mobileOpen}
+  />;
+
   return (
-    <aside
-      data-testid="right-sidebar"
-      className="hidden lg:block fixed right-0 top-0 h-screen w-[280px] xl:w-[300px] border-l border-zinc-800 bg-zinc-950/90 backdrop-blur-xl p-5 overflow-y-auto custom-scrollbar z-30"
-    >
+    <>
+      {/* Desktop right rail */}
+      <aside
+        data-testid="right-sidebar"
+        className="hidden lg:block fixed right-0 top-0 h-screen w-[280px] xl:w-[300px] border-l border-zinc-800 bg-zinc-950/90 backdrop-blur-xl p-5 overflow-y-auto custom-scrollbar z-30"
+      >
+        {body}
+      </aside>
+
+      {/* Mobile drawer (account / login / PRO / chat) */}
+      {mobileOpen && (
+        <>
+          <button
+            aria-label="Close account panel"
+            onClick={onMobileClose}
+            className="lg:hidden fixed inset-0 bg-black/60 z-40 animate-fade-in"
+            data-testid="mobile-account-backdrop"
+          />
+          <aside
+            data-testid="mobile-right-sidebar"
+            className="lg:hidden fixed right-0 top-0 h-screen w-[300px] max-w-[85vw] border-l border-zinc-800 bg-zinc-950 p-5 overflow-y-auto custom-scrollbar z-50 animate-slide-in-right"
+          >
+            {body}
+          </aside>
+        </>
+      )}
+    </>
+  );
+}
+
+function RightSidebarBody({ user, logout, t, pkgs, chatEnabled, siteCfg, recommendations, onMobileClose, showCloseButton }) {
+  return (
+    <>
+      {showCloseButton && (
+        <div className="flex justify-end mb-2 lg:hidden">
+          <button
+            onClick={onMobileClose}
+            className="p-1.5 rounded-md text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800"
+            aria-label="Close"
+            data-testid="mobile-account-close"
+          >
+            <X size={18} />
+          </button>
+        </div>
+      )}
       {/* User block */}
       {user ? (
         <div data-testid="user-block" className="bg-zinc-900/70 border border-zinc-800 rounded-xl p-4 mb-4">
@@ -138,7 +195,7 @@ export default function RightSidebar({ recommendations = null }) {
           </div>
         </div>
       )}
-    </aside>
+    </>
   );
 }
 

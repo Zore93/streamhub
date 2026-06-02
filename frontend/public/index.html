@@ -84,6 +84,28 @@
             </p>
         </a>
         <script>
+            // Hide the Emergent badge on mobile viewports — keep the desktop
+            // version untouched.  Inline `!important` on the badge prevents a
+            // pure CSS override, so we run this on load + resize.
+            (function () {
+                function applyEmergentBadgeVisibility() {
+                    var el = document.getElementById("emergent-badge");
+                    if (!el) return;
+                    el.style.setProperty(
+                        "display",
+                        window.innerWidth < 1024 ? "none" : "inline-flex",
+                        "important",
+                    );
+                }
+                if (document.readyState === "loading") {
+                    document.addEventListener("DOMContentLoaded", applyEmergentBadgeVisibility);
+                } else {
+                    applyEmergentBadgeVisibility();
+                }
+                window.addEventListener("resize", applyEmergentBadgeVisibility);
+            })();
+        </script>
+        <script>
             !(function (t, e) {
                 var o, n, p, r;
                 e.__SV ||

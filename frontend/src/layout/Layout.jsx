@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { Outlet } from "react-router-dom";
-import { Menu, X } from "lucide-react";
+import { Menu, User } from "lucide-react";
 import LeftSidebar from "./LeftSidebar";
 import RightSidebar from "./RightSidebar";
 import api, { mediaUrl } from "@/lib/api";
@@ -13,6 +13,7 @@ export function Layout({ recommendations = null, children }) {
   const [announcements, setAnnouncements] = useState([]);
   const [activeAnn, setActiveAnn] = useState(null);
   const [navOpen, setNavOpen] = useState(false);
+  const [accountOpen, setAccountOpen] = useState(false);
 
   useEffect(() => {
     api.get("/announcements/active").then((r) => {
@@ -58,11 +59,22 @@ export function Layout({ recommendations = null, children }) {
             </>
           )}
         </a>
-        <div className="w-9" /> {/* spacer to keep brand centered */}
+        <button
+          onClick={() => setAccountOpen(true)}
+          className="p-2 rounded-md text-zinc-300 hover:bg-zinc-800"
+          aria-label="Account"
+          data-testid="mobile-account-btn"
+        >
+          <User size={22} />
+        </button>
       </header>
 
       <LeftSidebar mobileOpen={navOpen} onClose={() => setNavOpen(false)} />
-      <RightSidebar recommendations={recommendations} />
+      <RightSidebar
+        recommendations={recommendations}
+        mobileOpen={accountOpen}
+        onMobileClose={() => setAccountOpen(false)}
+      />
 
       <main
         className="lg:ml-[240px] lg:mr-[280px] xl:mr-[300px] min-h-screen px-4 sm:px-6 lg:px-10 py-6 lg:py-8 animate-fade-in"
