@@ -86,13 +86,19 @@ else
 fi
 
 # ─── 3) post-update health check ────────────────────────────────────────────
-# Backend isn't exposed on the host; it's proxied by nginx.  We check both:
-#  - direct container exec (works even if nginx is down)
-#  - the public URL (sanity)
+# Backend isn't exposed on the host; it's proxied by nginx.  We exec into the
+# container and use python (guaranteed to exist — it's the runtime) to hit the
+# loopback API.  Curl/wget aren't in the slim image.
 blue "→ Waiting for backend to come back…"
+HEALTH_PY='import urllib.request,sys
+try:
+    urllib.request.urlopen("http://127.0.0.1:8001/api/site/config", timeout=2).read()
+    sys.exit(0)
+except Exception:
+    sys.exit(1)'
 ok=0
 for i in $(seq 1 30); do
-    if docker exec sh-backend curl -fsS --max-time 2 http://127.0.0.1:8001/api/site/config >/dev/null 2>&1; then
+    if docker exec sh-backend python3 -c "$HEALTH_PY" >/dev/null 2>&1; then
         green "✓ Backend healthy"
         ok=1
         break
@@ -100,8 +106,11 @@ for i in $(seq 1 30); do
     sleep 2
 done
 if [[ $ok -eq 0 ]]; then
-    red "Backend did not respond after 60s. Check logs:"
-    red "  $DC logs --tail=80 backend"
+    red "Backend did not respond after 60s.  Last 30 log lines:"
+    $DC logs --tail=30 backend || true
+    red ""
+    red "If the log above shows the backend is actually serving requests, the"
+    red "container just lacks the health-check tool — try opening the site directly."
     exit 1
 fi
 
