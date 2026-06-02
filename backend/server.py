@@ -588,25 +588,49 @@ async def delete_category(cat_id: str, admin: dict = Depends(require_admin)):
 async def list_videos(
     section: str = "latest",
     category_id: Optional[str] = None,
+    category_ids: Optional[str] = None,  # comma-separated; up to 2 — extra are ignored
     kind: Optional[str] = None,  # "video" (long) | "short" | None (all)
+    access_tier: Optional[str] = None,  # "free" | "pro" | None (both)
+    q: Optional[str] = None,  # case-insensitive title/tags search
     limit: int = 20,
     skip: int = 0,
 ):
-    q = {"status": "ready"}
+    """List videos with optional filters used by the Discover page.
+
+    `category_ids="abc,def"` selects videos in EITHER category (OR semantics, max 2).
+    `q="naruto"` matches title OR tags case-insensitively.
+    `access_tier="free"|"pro"` restricts to that tier.
+    """
+    filt: dict = {"status": "ready"}
     if category_id:
-        q["category_id"] = category_id
+        filt["category_id"] = category_id
+    elif category_ids:
+        ids = [c.strip() for c in category_ids.split(",") if c.strip()][:2]
+        if ids:
+            filt["category_id"] = {"$in": ids}
     if kind == "short":
-        q["is_short"] = True
+        filt["is_short"] = True
     elif kind == "video":
-        q["is_short"] = {"$ne": True}
+        filt["is_short"] = {"$ne": True}
+    if access_tier in ("free", "pro"):
+        filt["access_tier"] = access_tier
+    if q:
+        # Build an escaped regex so user input doesn't break Mongo
+        import re as _re
+        rex = _re.escape(q.strip())
+        if rex:
+            filt["$or"] = [
+                {"title": {"$regex": rex, "$options": "i"}},
+                {"tags": {"$regex": rex, "$options": "i"}},
+            ]
     if section == "popular":
-        cur = db.videos.find(q, {"_id": 0}).sort("views", -1).skip(skip).limit(limit)
+        cur = db.videos.find(filt, {"_id": 0}).sort("views", -1).skip(skip).limit(limit)
         return await cur.to_list(limit)
     if section == "random":
-        pipeline = [{"$match": q}, {"$sample": {"size": limit + skip}},
+        pipeline = [{"$match": filt}, {"$sample": {"size": limit + skip}},
                     {"$project": {"_id": 0}}, {"$skip": skip}, {"$limit": limit}]
         return await db.videos.aggregate(pipeline).to_list(limit)
-    cur = db.videos.find(q, {"_id": 0}).sort("created_at", -1).skip(skip).limit(limit)
+    cur = db.videos.find(filt, {"_id": 0}).sort("created_at", -1).skip(skip).limit(limit)
     return await cur.to_list(limit)
 
 

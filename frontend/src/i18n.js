@@ -56,6 +56,17 @@ const EN = {
   "page.loading": "Loading...",
   "page.empty": "Nothing here yet.",
 
+  // Discover filters
+  "discover.searchPlaceholder": "Search videos by title…",
+  "discover.filters": "Filters",
+  "discover.clearAll": "Clear all",
+  "discover.tier": "Access",
+  "discover.tierAll": "All",
+  "discover.tierFree": "Free videos",
+  "discover.tierPro": "PRO videos",
+  "discover.categories": "Categories (pick up to 2)",
+  "discover.noResults": "No videos match your filters.",
+
   // Auth
   "auth.signIn": "Sign in",
   "auth.signIn.subtitle": "Continue to",
@@ -211,6 +222,17 @@ const RO = {
   "page.loadMore": "Încarcă mai multe",
   "page.loading": "Se încarcă...",
   "page.empty": "Nimic aici încă.",
+
+  // Discover filters
+  "discover.searchPlaceholder": "Caută videoclipuri după titlu…",
+  "discover.filters": "Filtre",
+  "discover.clearAll": "Șterge tot",
+  "discover.tier": "Acces",
+  "discover.tierAll": "Toate",
+  "discover.tierFree": "Videoclipuri gratuite",
+  "discover.tierPro": "Videoclipuri PRO",
+  "discover.categories": "Categorii (alege maxim 2)",
+  "discover.noResults": "Niciun videoclip nu corespunde filtrelor tale.",
 
   "auth.signIn": "Autentificare",
   "auth.signIn.subtitle": "Continuă pe",
