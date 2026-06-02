@@ -64,7 +64,7 @@ DOMAIN=$(grep -E '^DOMAIN=' "$ENV_FILE" | head -1 | cut -d= -f2-)
 if [[ -n "$DOMAIN" ]]; then
     echo
     echo "→ Verifying login via https://$DOMAIN/api/auth/login …"
-    BODY=$(python3 -c "import json,os,sys; print(json.dumps({'email':os.environ['E'],'password':os.environ['P']}))" E="$email" P="$pw")
+    BODY=$(E="$email" P="$pw" python3 -c "import json,os; print(json.dumps({'email':os.environ['E'],'password':os.environ['P']}))")
     HTTP=$(curl -sk -o /tmp/r.json -w "%{http_code}" -X POST "https://$DOMAIN/api/auth/login" \
         -H "Content-Type: application/json" --data-binary "$BODY")
     if [[ "$HTTP" == "200" ]]; then

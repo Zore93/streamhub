@@ -54,7 +54,7 @@ PY
 echo
 echo "2) Live login test against https://$DOMAIN/api/auth/login"
 echo "──────────────────────────────────────────────────────"
-BODY=$(python3 -c "import json,os; print(json.dumps({'email':os.environ['E'],'password':os.environ['P']}))" E="$EMAIL" P="$PASSWORD")
+BODY=$(E="$EMAIL" P="$PASSWORD" python3 -c "import json,os; print(json.dumps({'email':os.environ['E'],'password':os.environ['P']}))")
 HTTP=$(curl -sk -o /tmp/dl.json -w "%{http_code}" -X POST "https://$DOMAIN/api/auth/login" \
     -H "Content-Type: application/json" --data-binary "$BODY")
 echo "   HTTP $HTTP"
