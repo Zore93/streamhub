@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import api, { mediaUrl } from "@/lib/api";
 import { useAuth } from "@/contexts/AuthContext";
+import { useT } from "@/contexts/LanguageContext";
 import VideoCard from "@/components/VideoCard";
 import { Button } from "@/components/ui/button";
 import { Camera, Crown, Trash2, Pencil } from "lucide-react";
@@ -11,6 +12,7 @@ import { toast } from "sonner";
 export default function Profile() {
   const { id } = useParams();
   const { user, setUser } = useAuth();
+  const { t } = useT();
   const [profile, setProfile] = useState(null);
   const [videos, setVideos] = useState([]);
 
@@ -35,27 +37,27 @@ export default function Profile() {
   };
 
   const deleteVideo = async (vid) => {
-    if (!window.confirm("Delete this video?")) return;
+    if (!window.confirm(t("profile.confirmDelete"))) return;
     await api.delete(`/videos/${vid}`);
     setVideos(videos.filter((v) => v.id !== vid));
-    toast.success("Video deleted");
+    toast.success(t("profile.deleted"));
   };
 
-  if (!profile) return <div className="text-zinc-500">Loading...</div>;
+  if (!profile) return <div className="text-zinc-500">{t("page.loading")}</div>;
 
   return (
     <div data-testid="profile-page">
       <div className="rounded-xl overflow-hidden bg-zinc-900 mb-6 relative">
-        <div className="h-48 bg-gradient-to-br from-zinc-800 to-zinc-900 relative">
+        <div className="h-32 sm:h-48 bg-gradient-to-br from-zinc-800 to-zinc-900 relative">
           {profile.cover_url && <img src={mediaUrl(profile.cover_url)} alt="" className="w-full h-full object-cover" />}
           {isMe && (
             <label className="absolute top-3 right-3 bg-black/70 text-white px-3 py-1.5 rounded-md text-xs flex items-center gap-1 cursor-pointer hover:bg-black/90" data-testid="upload-cover-btn">
-              <Camera size={12} /> Cover
+              <Camera size={12} /> {t("profile.changeCover")}
               <input type="file" accept="image/*" className="hidden" onChange={(e) => e.target.files?.[0] && uploadFile(e.target.files[0], "cover")} />
             </label>
           )}
         </div>
-        <div className="px-6 pb-6 flex items-end gap-4 -mt-12">
+        <div className="px-4 sm:px-6 pb-6 flex items-end gap-4 -mt-12 flex-wrap">
           <div className="relative">
             <div className="h-24 w-24 rounded-full bg-zinc-800 border-4 border-zinc-950 overflow-hidden">
               {profile.avatar_url && <img src={mediaUrl(profile.avatar_url)} alt="" className="w-full h-full object-cover" />}
@@ -77,7 +79,7 @@ export default function Profile() {
         </div>
       </div>
 
-      <h2 className="text-2xl font-semibold mb-4">Videos ({videos.length})</h2>
+      <h2 className="text-2xl font-semibold mb-4">{t("profile.videos")} ({videos.length})</h2>
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
         {videos.map((v) => (
           <div key={v.id} className="relative">
@@ -94,7 +96,7 @@ export default function Profile() {
             )}
           </div>
         ))}
-        {videos.length === 0 && <p className="text-zinc-500 col-span-3">No videos uploaded.</p>}
+        {videos.length === 0 && <p className="text-zinc-500 col-span-3">{t("page.empty")}</p>}
       </div>
     </div>
   );

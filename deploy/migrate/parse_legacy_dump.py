@@ -247,6 +247,11 @@ def main():
                     help="If given, all relative video/thumbnail paths are prefixed with this base.")
     ap.add_argument("--include-only-active", action="store_true",
                     help="Skip users with active=0 and videos with active=0/approved=0.")
+    ap.add_argument("--all-pro", action="store_true",
+                    help="Force every imported video to access_tier=pro (recommended for legacy "
+                         "migrations — keeps existing catalogue behind the paywall).")
+    ap.add_argument("--shorts-max-seconds", type=int, default=60,
+                    help="Videos shorter than this AND vertical are tagged as Shorts.")
     args = ap.parse_args()
     args.out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -352,6 +357,15 @@ def main():
             tags = (row.get("tags") or "").strip()
             tag_list = [t.strip() for t in re.split(r"[,;\n]", tags) if t.strip()]
             renditions = video_renditions(video_loc, row, args.wasabi_base_url)
+            duration = parse_duration(row.get("duration"))
+            # Heuristic for legacy Shorts: WoWonder doesn't have a "shorts" flag, but
+            # vertical/mobile clips have orientation="portrait" or height > width.
+            orientation = (row.get("video_orientation") or "").strip().lower()
+            w_raw = int(row.get("video_width") or row.get("width") or 0)
+            h_raw = int(row.get("video_height") or row.get("height") or 0)
+            is_vertical = orientation in ("portrait", "vertical") or (h_raw > 0 and w_raw > 0 and h_raw > w_raw)
+            is_short = bool(is_vertical and 0 < duration <= args.shorts_max_seconds)
+            access_tier = "pro" if args.all_pro else ("pro" if int(row.get("privacy") or 0) == 2 else "free")
             doc = {
                 "id": str(uuid.uuid4()),
                 "title": title,
@@ -364,17 +378,18 @@ def main():
                                   if row.get("thumbnail") and "d-thumb" not in (row.get("thumbnail") or "")
                                   else None,
                 "thumbnail_options": [],
-                "duration_sec": parse_duration(row.get("duration")),
+                "duration_sec": duration,
                 "original_filename": video_loc.split("/")[-1] if video_loc else "",
                 "original_size_bytes": int(row.get("size") or 0),
-                "original_width": 0,
-                "original_height": 0,
+                "original_width": w_raw,
+                "original_height": h_raw,
                 "status": "ready" if int(row.get("converted") or 1) == 1 else "processing",
                 "progress": 100,
                 "error": None,
                 "renditions": renditions,
                 "subtitles": [],
-                "access_tier": "pro" if int(row.get("privacy") or 0) == 2 else "free",
+                "access_tier": access_tier,
+                "is_short": is_short,
                 "views": int(row.get("views") or 0),
                 "likes": [],
                 "created_at": epoch_to_iso(row.get("time") or int(now.timestamp())),

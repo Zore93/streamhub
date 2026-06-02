@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import api from "@/lib/api";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
@@ -9,7 +10,10 @@ import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
 import { useAuth } from "@/contexts/AuthContext";
-import { Trash2, Plus, RefreshCw, Eye, Heart, MessageCircle, Users, Video as VideoIcon, Crown } from "lucide-react";
+import {
+  Trash2, Plus, RefreshCw, Eye, Heart, MessageCircle, Users, Video as VideoIcon, Crown,
+  Pencil, Ban, ShieldOff,
+} from "lucide-react";
 
 const RES_OPTIONS = ["360p", "720p", "1080p", "2048p", "4096p"];
 const BAN_OPTIONS = [
@@ -31,6 +35,7 @@ export default function Admin() {
           <TabsTrigger value="categories" data-testid="tab-categories">Categories</TabsTrigger>
           <TabsTrigger value="packages" data-testid="tab-packages">Packages</TabsTrigger>
           <TabsTrigger value="announcements" data-testid="tab-announcements">Announcements</TabsTrigger>
+          <TabsTrigger value="chat" data-testid="tab-chat">Live Chat</TabsTrigger>
           <TabsTrigger value="settings" data-testid="tab-settings">Settings</TabsTrigger>
         </TabsList>
         <TabsContent value="dashboard"><Dashboard /></TabsContent>
@@ -39,6 +44,7 @@ export default function Admin() {
         <TabsContent value="categories"><CategoriesTab /></TabsContent>
         <TabsContent value="packages"><PackagesTab /></TabsContent>
         <TabsContent value="announcements"><AnnouncementsTab /></TabsContent>
+        <TabsContent value="chat"><ChatModerationTab /></TabsContent>
         <TabsContent value="settings"><SettingsTab /></TabsContent>
       </Tabs>
     </div>
@@ -75,6 +81,7 @@ function Dashboard() {
 
 function VideosTab() {
   const [vids, setVids] = useState([]);
+  const [q, setQ] = useState("");
   const load = () => api.get("/admin/videos").then((r) => setVids(r.data));
   useEffect(() => { load(); }, []);
   const del = async (id) => {
@@ -82,18 +89,45 @@ function VideosTab() {
     await api.delete(`/videos/${id}`);
     load();
   };
+  const filtered = q
+    ? vids.filter((v) =>
+        (v.title || "").toLowerCase().includes(q.toLowerCase()) ||
+        (v.uploader_username || "").toLowerCase().includes(q.toLowerCase()),
+      )
+    : vids;
   return (
     <div className="mt-6 space-y-2" data-testid="admin-videos">
-      {vids.map((v) => (
-        <div key={v.id} className="bg-zinc-900 border border-zinc-800 rounded-lg p-3 flex items-center justify-between gap-3">
+      <Input
+        value={q}
+        onChange={(e) => setQ(e.target.value)}
+        placeholder="Search by title or uploader…"
+        className="bg-zinc-900 border-zinc-800 max-w-md"
+        data-testid="admin-videos-search"
+      />
+      {filtered.map((v) => (
+        <div key={v.id} className="bg-zinc-900 border border-zinc-800 rounded-lg p-3 flex items-center justify-between gap-3 flex-wrap">
           <div className="flex-1 min-w-0">
             <div className="font-semibold truncate">{v.title}</div>
-            <div className="text-xs text-zinc-500">@{v.uploader_username} · {v.status} · {v.views} views · {v.access_tier}</div>
+            <div className="text-xs text-zinc-500 flex flex-wrap gap-x-2">
+              <span>@{v.uploader_username}</span>
+              <span>·</span>
+              <span className={v.status === "ready" ? "text-emerald-400" : v.status === "failed" ? "text-red-400" : "text-amber-400"}>{v.status}</span>
+              <span>·</span>
+              <span>{v.views} views</span>
+              <span>·</span>
+              <span className={v.access_tier === "pro" ? "text-amber-300" : ""}>{v.access_tier}</span>
+              {v.is_short && (<><span>·</span><span className="text-fuchsia-300">SHORT</span></>)}
+            </div>
           </div>
+          <Link to={`/edit-video/${v.id}`}>
+            <Button size="sm" variant="outline" className="border-zinc-700 hover:bg-zinc-800" data-testid={`edit-vid-${v.id}`}>
+              <Pencil size={14} className="mr-1" /> Edit
+            </Button>
+          </Link>
           <Button size="sm" variant="destructive" onClick={() => del(v.id)} data-testid={`del-vid-${v.id}`}><Trash2 size={14} /></Button>
         </div>
       ))}
-      {vids.length === 0 && <p className="text-zinc-500">No videos.</p>}
+      {filtered.length === 0 && <p className="text-zinc-500">No videos.</p>}
     </div>
   );
 }
@@ -131,7 +165,7 @@ function UsersTab() {
         <div key={u.id} className="bg-zinc-900 border border-zinc-800 rounded-lg p-3 flex items-center justify-between gap-3 flex-wrap">
           <div className="flex-1 min-w-0">
             <div className="font-semibold truncate">@{u.username} <span className="text-xs text-zinc-500">{u.email}</span></div>
-            <div className="text-xs text-zinc-500">role: {u.role} · pro: {String(!!u.is_pro)} · banned: {u.banned_until ? u.banned_until.slice(0, 16) : "no"}</div>
+            <div className="text-xs text-zinc-500">role: {u.role} · pro: {String(!!u.is_pro)} · banned: {u.banned_until ? u.banned_until.slice(0, 16) : "no"} · chat-ban: {u.chat_banned_until ? u.chat_banned_until.slice(0, 16) : "no"}</div>
           </div>
           <Select value={banDur[u.id] || "1day"} onValueChange={(v) => setBanDur({ ...banDur, [u.id]: v })}>
             <SelectTrigger className="w-32 bg-zinc-950 border-zinc-800"><SelectValue /></SelectTrigger>
@@ -260,6 +294,85 @@ function AnnouncementsTab() {
   );
 }
 
+function ChatModerationTab() {
+  const [bans, setBans] = useState({ users: [], guests: [] });
+  const [msgs, setMsgs] = useState([]);
+
+  const load = async () => {
+    const [b, m] = await Promise.all([
+      api.get("/admin/chat/bans"),
+      api.get("/chat/messages?limit=100"),
+    ]);
+    setBans(b.data);
+    setMsgs(m.data.slice().reverse()); // newest first
+  };
+  useEffect(() => { load(); }, []);
+
+  const unbanUser = async (uid) => { await api.post(`/admin/chat/unban-user/${uid}`); load(); };
+  const unbanGuest = async (gs) => { await api.post(`/admin/chat/unban-guest/${gs}`); load(); };
+  const delMsg = async (id) => { await api.delete(`/admin/chat/messages/${id}`); load(); };
+  const banFromMsg = async (m) => {
+    const reason = window.prompt("Reason?", "spam");
+    if (reason === null) return;
+    if (m.user_id) {
+      await api.post(`/admin/chat/ban-user/${m.user_id}`, { duration: "1week", reason });
+    } else if (m.guest_session) {
+      await api.post(`/admin/chat/ban-guest/${m.guest_session}`, { duration: "1week", reason });
+    }
+    load();
+  };
+
+  return (
+    <div className="mt-6 space-y-6" data-testid="admin-chat-moderation">
+      <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4">
+        <h3 className="font-semibold mb-3">Recent messages (last 100)</h3>
+        <div className="max-h-96 overflow-y-auto custom-scrollbar space-y-1.5">
+          {msgs.map((m) => (
+            <div key={m.id} className="flex items-start gap-2 text-sm border-b border-zinc-800/60 pb-1.5" data-testid={`mod-msg-${m.id}`}>
+              <span className={`font-semibold ${m.role === "admin" ? "text-rose-400" : m.is_pro ? "text-amber-300" : "text-zinc-200"}`}>
+                {m.username}
+              </span>
+              <span className="text-[10px] text-zinc-600">{m.role}{m.guest_session ? ` · ${m.guest_session.slice(0, 12)}…` : ""}</span>
+              <span className="text-zinc-300 flex-1 break-words">{m.content}</span>
+              <button onClick={() => banFromMsg(m)} className="text-zinc-500 hover:text-amber-400" title="Ban from chat"><Ban size={14} /></button>
+              <button onClick={() => delMsg(m.id)} className="text-zinc-500 hover:text-red-400" title="Delete"><Trash2 size={14} /></button>
+            </div>
+          ))}
+          {msgs.length === 0 && <div className="text-zinc-500 text-sm">No messages yet.</div>}
+        </div>
+      </div>
+
+      <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4">
+        <h3 className="font-semibold mb-3">Banned users ({bans.users.length})</h3>
+        {bans.users.map((u) => (
+          <div key={u.id} className="flex items-center justify-between bg-zinc-950 border border-zinc-800 rounded-md p-2 mb-1">
+            <div className="text-sm">
+              <span className="font-semibold">@{u.username}</span>
+              <span className="text-xs text-zinc-500 ml-2">until {u.chat_banned_until?.slice(0, 16) || "permanent"} — {u.chat_banned_reason || "-"}</span>
+            </div>
+            <Button size="sm" variant="outline" onClick={() => unbanUser(u.id)}><ShieldOff size={12} className="mr-1" /> Unban</Button>
+          </div>
+        ))}
+        {bans.users.length === 0 && <div className="text-zinc-500 text-sm">No banned users.</div>}
+      </div>
+
+      <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4">
+        <h3 className="font-semibold mb-3">Banned guest sessions ({bans.guests.length})</h3>
+        {bans.guests.map((g) => (
+          <div key={g.guest_session} className="flex items-center justify-between bg-zinc-950 border border-zinc-800 rounded-md p-2 mb-1">
+            <div className="text-sm">
+              <code className="text-xs">{g.guest_session}</code>
+              <span className="text-xs text-zinc-500 ml-2">until {g.banned_until?.slice(0, 16) || "permanent"} — {g.reason || "-"}</span>
+            </div>
+            <Button size="sm" variant="outline" onClick={() => unbanGuest(g.guest_session)}><ShieldOff size={12} className="mr-1" /> Unban</Button>
+          </div>
+        ))}
+        {bans.guests.length === 0 && <div className="text-zinc-500 text-sm">No banned guests.</div>}
+      </div>
+    </div>
+  );
+}
+
 function SettingsTab() {
   const [s, setS] = useState(null);
   useEffect(() => { api.get("/admin/settings").then((r) => setS(r.data)); }, []);
@@ -273,13 +386,38 @@ function SettingsTab() {
     const cur = s.enabled_resolutions || [];
     upd("enabled_resolutions", cur.includes(r) ? cur.filter((x) => x !== r) : [...cur, r]);
   };
-  const githubUpdate = async () => {
-    if (!window.confirm("This will pull the latest code and rebuild the containers. Continue?")) return;
-    try { const { data } = await api.post("/admin/github/update"); toast.success("Update triggered"); console.log(data); }
-    catch (e) { toast.error(e.response?.data?.detail || "Failed"); }
-  };
   return (
     <div className="mt-6 space-y-6 max-w-3xl" data-testid="admin-settings">
+      <Section title="Localization">
+        <Field label="Default site language">
+          <Select value={s.default_language || "ro"} onValueChange={(v) => upd("default_language", v)}>
+            <SelectTrigger className="bg-zinc-950 border-zinc-800" data-testid="default-language-select"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="ro">Română</SelectItem>
+              <SelectItem value="en">English</SelectItem>
+            </SelectContent>
+          </Select>
+        </Field>
+        <p className="text-xs text-zinc-500">First-time visitors see the site in this language. Each visitor can switch later via the sidebar.</p>
+      </Section>
+      <Section title="Shorts">
+        <Field label="Max Shorts duration (seconds)">
+          <Input type="number" min={5} max={600} value={s.shorts_max_duration_sec ?? 60} onChange={(e) => upd("shorts_max_duration_sec", parseInt(e.target.value) || 60)} className="bg-zinc-950 border-zinc-800" data-testid="shorts-max-dur" />
+        </Field>
+        <p className="text-xs text-zinc-500">Videos shorter than this and vertical (9:16) are auto-classified as Shorts on upload.</p>
+      </Section>
+      <Section title="Live Chat">
+        <Field label="Enable live chat"><Switch checked={!!s.live_chat_enabled} onCheckedChange={(v) => upd("live_chat_enabled", v)} data-testid="chat-enable-toggle" /></Field>
+        <Field label="Allow guests to chat"><Switch checked={!!s.live_chat_guest_allowed} onCheckedChange={(v) => upd("live_chat_guest_allowed", v)} /></Field>
+        <Field label="Max message length"><Input type="number" value={s.live_chat_max_message_length ?? 500} onChange={(e) => upd("live_chat_max_message_length", parseInt(e.target.value) || 500)} className="bg-zinc-950 border-zinc-800" /></Field>
+        <Field label="Rate limit window (seconds)"><Input type="number" value={s.live_chat_rate_limit_seconds ?? 3} onChange={(e) => upd("live_chat_rate_limit_seconds", parseInt(e.target.value) || 3)} className="bg-zinc-950 border-zinc-800" /></Field>
+      </Section>
+      <Section title="Legacy migration">
+        <Field label="Mark migrated legacy videos as PRO-only">
+          <Switch checked={!!s.legacy_videos_pro_only} onCheckedChange={(v) => upd("legacy_videos_pro_only", v)} data-testid="legacy-pro-toggle" />
+        </Field>
+        <p className="text-xs text-zinc-500">When importing legacy databases via the migration tool, the imported videos default to PRO-only access.</p>
+      </Section>
       <Section title="FFmpeg & Uploads">
         <Field label="Concurrent transcodes"><Input type="number" value={s.ffmpeg_concurrency} onChange={(e) => upd("ffmpeg_concurrency", parseInt(e.target.value) || 1)} className="bg-zinc-950 border-zinc-800" /></Field>
         <Field label="Max upload size (MB)"><Input type="number" value={s.max_upload_size_mb} onChange={(e) => upd("max_upload_size_mb", parseInt(e.target.value) || 100)} className="bg-zinc-950 border-zinc-800" /></Field>
@@ -340,7 +478,7 @@ function SettingsTab() {
         <Field label="Key Pair ID"><Input value={s.cloudfront_key_pair_id || ""} onChange={(e) => upd("cloudfront_key_pair_id", e.target.value)} className="bg-zinc-950 border-zinc-800" /></Field>
         <div className="col-span-2"><Label>Private key (PEM)</Label>
           <Textarea rows={6} value={s.cloudfront_private_key || ""} onChange={(e) => upd("cloudfront_private_key", e.target.value)} placeholder="-----BEGIN RSA PRIVATE KEY-----..." className="bg-zinc-950 border-zinc-800 font-mono text-xs" /></div>
-        <p className="text-xs text-zinc-500 col-span-2">When enabled, signed URLs are issued by CloudFront instead of S3 presign. Pair with a CloudFront distribution whose origin is your Wasabi bucket (with bucket public access restricted via OAI / signed-URL behavior). Also set <code>wasabi_public_base_url</code> to your CloudFront URL so newly uploaded assets serve through CloudFront.</p>
+        <p className="text-xs text-zinc-500 col-span-2">When enabled, signed URLs are issued by CloudFront instead of S3 presign.</p>
       </Section>
       <Section title="Contact form">
         <Field label="Contact email"><Input type="email" value={s.contact_email || ""} onChange={(e) => upd("contact_email", e.target.value)} placeholder="contact@yourdomain.com" className="bg-zinc-950 border-zinc-800" data-testid="contact-email-setting" /></Field>
@@ -421,6 +559,7 @@ function GithubUpdateControls() {
     </div>
   );
 }
+
 function Field({ label, children }) {
   return (
     <div className="grid grid-cols-2 gap-4 items-center">

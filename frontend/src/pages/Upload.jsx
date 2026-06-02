@@ -1,17 +1,21 @@
 import React, { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
-import api, { mediaUrl } from "@/lib/api";
+import { Link, useNavigate } from "react-router-dom";
+import api from "@/lib/api";
 import { useAuth } from "@/contexts/AuthContext";
+import { useT } from "@/contexts/LanguageContext";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Progress } from "@/components/ui/progress";
+import { Loader2, Home as HomeIcon } from "lucide-react";
 import { toast } from "sonner";
 
 export default function Upload() {
   const { user } = useAuth();
+  const { t, siteCfg } = useT();
   const nav = useNavigate();
   const [file, setFile] = useState(null);
   const [title, setTitle] = useState("");
@@ -20,34 +24,21 @@ export default function Upload() {
   const [categories, setCategories] = useState([]);
   const [categoryId, setCategoryId] = useState("none");
   const [accessTier, setAccessTier] = useState("free");
+  const [isShort, setIsShort] = useState(false);
   const [busy, setBusy] = useState(false);
   const [uploadedVideo, setUploadedVideo] = useState(null);
   const [progress, setProgress] = useState(0);
-  const [pollProgress, setPollProgress] = useState(0);
 
   useEffect(() => {
     api.get("/categories").then((r) => setCategories(r.data));
   }, []);
 
-  useEffect(() => {
-    if (!uploadedVideo || uploadedVideo.status === "ready") return;
-    const i = setInterval(async () => {
-      try {
-        const { data } = await api.get(`/videos/${uploadedVideo.id}`);
-        setUploadedVideo(data);
-        setPollProgress(data.progress || 0);
-        if (data.status === "ready" || data.status === "failed") {
-          clearInterval(i);
-        }
-      } catch {}
-    }, 2500);
-    return () => clearInterval(i);
-  }, [uploadedVideo?.id, uploadedVideo?.status]);
+  const shortsMax = siteCfg?.shorts_max_duration_sec ?? 60;
 
   const submit = async (e) => {
     e.preventDefault();
     if (!file) {
-      toast.error("Pick a video file");
+      toast.error(t("upload.file"));
       return;
     }
     setBusy(true);
@@ -59,12 +50,13 @@ export default function Upload() {
     fd.append("tags", tags);
     if (categoryId && categoryId !== "none") fd.append("category_id", categoryId);
     fd.append("access_tier", accessTier);
+    fd.append("is_short", String(isShort));
     try {
       const { data } = await api.post("/videos/upload", fd, {
         headers: { "Content-Type": "multipart/form-data" },
         onUploadProgress: (e) => setProgress(Math.round((e.loaded / (e.total || 1)) * 100)),
       });
-      toast.success("Upload complete. Processing...");
+      toast.success(t("upload.complete"));
       setUploadedVideo(data);
     } catch (err) {
       toast.error(err.response?.data?.detail || "Upload failed");
@@ -73,47 +65,33 @@ export default function Upload() {
     }
   };
 
-  const pickThumbnail = async (rel) => {
-    const { data } = await api.patch(`/videos/${uploadedVideo.id}`, { thumbnail_url: rel });
-    setUploadedVideo(data);
-    toast.success("Thumbnail set");
-  };
-
   if (!user) {
-    return <div className="text-zinc-400">Please log in to upload.</div>;
+    return <div className="text-zinc-400">{t("comments.signInToComment")}</div>;
   }
 
+  // Once upload is accepted, show "processing in background" page and let user
+  // navigate away. The transcoder keeps running server-side.
   if (uploadedVideo) {
     return (
-      <div className="max-w-3xl mx-auto" data-testid="upload-progress">
-        <h1 className="text-3xl font-bold font-heading mb-6">Processing your video</h1>
-        <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6">
-          <div className="mb-4 font-semibold">{uploadedVideo.title}</div>
-          <div className="text-sm text-zinc-500 mb-2">Status: <span className="text-zinc-200">{uploadedVideo.status}</span> ({pollProgress}%)</div>
-          <Progress value={pollProgress} className="h-2" />
-          {uploadedVideo.status === "ready" && uploadedVideo.thumbnail_options?.length > 0 && (
-            <>
-              <div className="mt-6 mb-2 text-sm font-semibold">Choose a thumbnail (10 generated):</div>
-              <div className="grid grid-cols-5 gap-2">
-                {uploadedVideo.thumbnail_options.map((t, i) => (
-                  <button
-                    key={i}
-                    onClick={() => pickThumbnail(t)}
-                    className={`rounded-md overflow-hidden border-2 ${uploadedVideo.thumbnail_url === t ? "border-rose-500" : "border-transparent"}`}
-                    data-testid={`thumb-option-${i}`}
-                  >
-                    <img src={mediaUrl(t)} alt="" className="w-full aspect-video object-cover" />
-                  </button>
-                ))}
-              </div>
-              <Button className="mt-6 pro-gradient text-white border-0" onClick={() => nav(`/watch/${uploadedVideo.id}`)} data-testid="goto-video-btn">
-                View Video
+      <div className="max-w-xl mx-auto" data-testid="upload-success">
+        <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-8 text-center">
+          <Loader2 size={42} className="text-rose-500 mx-auto mb-4 animate-spin" />
+          <h1 className="text-2xl font-bold font-heading mb-2">{t("upload.processing.title")}</h1>
+          <p className="text-zinc-400 mb-6">{t("upload.processing.body")}</p>
+          <div className="flex flex-col sm:flex-row gap-2 justify-center">
+            <Button
+              onClick={() => nav(`/watch/${uploadedVideo.id}`)}
+              className="pro-gradient text-white border-0"
+              data-testid="goto-video-btn"
+            >
+              {t("upload.viewVideo")}
+            </Button>
+            <Link to="/">
+              <Button variant="outline" className="border-zinc-700 hover:bg-zinc-800 w-full sm:w-auto" data-testid="goto-home-btn">
+                <HomeIcon size={14} className="mr-2" /> {t("upload.continueBrowsing")}
               </Button>
-            </>
-          )}
-          {uploadedVideo.status === "failed" && (
-            <div className="text-red-400 mt-4">Processing failed: {uploadedVideo.error}</div>
-          )}
+            </Link>
+          </div>
         </div>
       </div>
     );
@@ -121,47 +99,54 @@ export default function Upload() {
 
   return (
     <div className="max-w-2xl mx-auto" data-testid="upload-page">
-      <h1 className="text-3xl font-bold font-heading mb-6">Upload Video</h1>
+      <h1 className="text-3xl font-bold font-heading mb-6">{t("upload.title")}</h1>
       <form onSubmit={submit} className="space-y-4 bg-zinc-900 border border-zinc-800 rounded-xl p-6">
         <div>
-          <Label>Video file</Label>
+          <Label>{t("upload.file")}</Label>
           <Input type="file" accept="video/*" onChange={(e) => setFile(e.target.files?.[0])} className="bg-zinc-950 border-zinc-800" required data-testid="upload-file" />
         </div>
         <div>
-          <Label>Title</Label>
+          <Label>{t("upload.titleField")}</Label>
           <Input value={title} onChange={(e) => setTitle(e.target.value)} className="bg-zinc-950 border-zinc-800" required data-testid="upload-title" />
         </div>
         <div>
-          <Label>Description</Label>
+          <Label>{t("upload.description")}</Label>
           <Textarea value={description} onChange={(e) => setDescription(e.target.value)} className="bg-zinc-950 border-zinc-800" data-testid="upload-description" />
         </div>
         <div>
-          <Label>Tags (comma-separated)</Label>
+          <Label>{t("upload.tags")}</Label>
           <Input value={tags} onChange={(e) => setTags(e.target.value)} className="bg-zinc-950 border-zinc-800" data-testid="upload-tags" />
         </div>
         <div>
-          <Label>Category</Label>
+          <Label>{t("upload.category")}</Label>
           <Select value={categoryId} onValueChange={setCategoryId}>
             <SelectTrigger className="bg-zinc-950 border-zinc-800" data-testid="upload-category"><SelectValue placeholder="Select" /></SelectTrigger>
             <SelectContent>
-              <SelectItem value="none">None</SelectItem>
+              <SelectItem value="none">{t("upload.categoryNone")}</SelectItem>
               {categories.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
             </SelectContent>
           </Select>
         </div>
         <div>
-          <Label>Access</Label>
+          <Label>{t("upload.access")}</Label>
           <Select value={accessTier} onValueChange={setAccessTier}>
             <SelectTrigger className="bg-zinc-950 border-zinc-800" data-testid="upload-access"><SelectValue /></SelectTrigger>
             <SelectContent>
-              <SelectItem value="free">Everyone (free)</SelectItem>
-              <SelectItem value="pro">PRO users only</SelectItem>
+              <SelectItem value="free">{t("upload.access.free")}</SelectItem>
+              <SelectItem value="pro">{t("upload.access.pro")}</SelectItem>
             </SelectContent>
           </Select>
         </div>
+        <div className="flex items-start justify-between bg-zinc-950 border border-zinc-800 rounded-md p-3">
+          <div className="pr-4">
+            <Label className="block">{t("upload.isShort")}</Label>
+            <p className="text-xs text-zinc-500 mt-1">{t("upload.isShort.help", null, { dur: shortsMax })}</p>
+          </div>
+          <Switch checked={isShort} onCheckedChange={setIsShort} data-testid="upload-is-short" />
+        </div>
         {busy && <Progress value={progress} className="h-2" />}
         <Button type="submit" disabled={busy} className="w-full pro-gradient text-white border-0" data-testid="upload-submit">
-          {busy ? `Uploading ${progress}%...` : "Upload"}
+          {busy ? `${t("upload.busy")} ${progress}%...` : t("upload.btn")}
         </Button>
       </form>
     </div>

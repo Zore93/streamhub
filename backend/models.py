@@ -31,6 +31,9 @@ class User(BaseModel):
     bio: Optional[str] = None
     banned_until: Optional[str] = None  # ISO; "permanent" for permanent ban
     banned_reason: Optional[str] = None
+    # Chat-specific ban (doesn't block site access — only chat sending)
+    chat_banned_until: Optional[str] = None
+    chat_banned_reason: Optional[str] = None
     created_at: str = Field(default_factory=now_iso)
 
 
@@ -228,6 +231,17 @@ class AppSettings(BaseModel):
     github_repo: str = ""
     github_token: str = ""
     github_branch: str = "main"
+    # Localization
+    default_language: str = "ro"  # ro | en
+    # Shorts detection
+    shorts_max_duration_sec: int = 60  # videos shorter than this AND vertical = Short
+    # Live chat
+    live_chat_enabled: bool = True
+    live_chat_guest_allowed: bool = True
+    live_chat_max_message_length: int = 500
+    live_chat_rate_limit_seconds: int = 3
+    # Legacy migration
+    legacy_videos_pro_only: bool = True  # newly migrated legacy videos become PRO-only
 
 
 class SettingsUpdateReq(BaseModel):
@@ -255,6 +269,39 @@ class BanReq(BaseModel):
     duration: str  # "1day" | "1week" | "1month" | "permanent" | "custom"
     custom_days: Optional[int] = None
     reason: Optional[str] = None
+
+
+# ============ CHAT ============
+class ChatMessage(BaseModel):
+    id: str = Field(default_factory=new_id)
+    user_id: Optional[str] = None  # None for guests
+    guest_session: Optional[str] = None  # used for guest bans
+    username: str
+    avatar_url: Optional[str] = None
+    is_pro: bool = False
+    role: str = "guest"  # guest | user | admin
+    content: str
+    created_at: str = Field(default_factory=now_iso)
+
+
+class ChatSendReq(BaseModel):
+    content: str
+    guest_session: Optional[str] = None  # required when not authed
+    guest_name: Optional[str] = None  # required when not authed
+
+
+class ChatBanReq(BaseModel):
+    duration: str  # "1day" | "1week" | "1month" | "permanent" | "custom"
+    custom_days: Optional[int] = None
+    reason: Optional[str] = None
+
+
+class GuestChatBan(BaseModel):
+    id: str = Field(default_factory=new_id)
+    guest_session: str
+    banned_until: str  # ISO or "permanent"
+    reason: Optional[str] = None
+    created_at: str = Field(default_factory=now_iso)
 
 
 # ============ ADMIN UPLOAD-PERMISSION CHECK ============

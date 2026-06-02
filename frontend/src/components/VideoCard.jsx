@@ -1,12 +1,13 @@
 import React from "react";
 import { Link } from "react-router-dom";
 import { mediaUrl } from "@/lib/api";
-import { Play, Eye, Crown } from "lucide-react";
+import { Play, Eye, Crown, Loader2 } from "lucide-react";
 
-export default function VideoCard({ v }) {
+export default function VideoCard({ v, vertical = false }) {
+  const isProcessing = v.status && v.status !== "ready";
   return (
     <Link to={`/watch/${v.id}`} className="group block" data-testid={`video-card-${v.id}`}>
-      <div className="aspect-video overflow-hidden rounded-lg bg-zinc-900 relative">
+      <div className={`${vertical ? "aspect-[9/16]" : "aspect-video"} overflow-hidden rounded-lg bg-zinc-900 relative`}>
         {v.thumbnail_url ? (
           <img
             src={mediaUrl(v.thumbnail_url)}
@@ -26,6 +27,11 @@ export default function VideoCard({ v }) {
         {v.access_tier === "pro" && (
           <div className="absolute top-2 right-2 pro-gradient text-white text-xs font-semibold px-2 py-1 rounded-md flex items-center gap-1">
             <Crown size={10} /> PRO
+          </div>
+        )}
+        {isProcessing && (
+          <div className="absolute top-2 left-2 bg-amber-500/95 text-white text-[10px] font-semibold px-2 py-1 rounded-md flex items-center gap-1" data-testid="processing-badge">
+            <Loader2 size={10} className="animate-spin" /> {v.progress != null ? `${v.progress}%` : "…"}
           </div>
         )}
         {v.duration_sec > 0 && (

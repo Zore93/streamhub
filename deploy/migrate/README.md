@@ -31,6 +31,12 @@ Flags:
   (e.g. `upload/videos/.../foo_360p_converted.mp4`) onto Wasabi at a known
   base, prepend it so all rendition URLs become absolute and play immediately.
 - `--include-only-active` — skip un-approved / soft-deleted rows.
+- `--all-pro` — force every imported video to **access_tier=pro** (recommended
+  for legacy migrations — keeps the legacy catalogue behind the paywall).
+  Equivalent to the *"Mark migrated legacy videos as PRO-only"* toggle in the
+  admin Settings tab.
+- `--shorts-max-seconds N` (default 60) — videos shorter than N seconds **and**
+  with a portrait/9:16 orientation are tagged as Shorts during import.
 
 Outputs (in `--out-dir`):
 

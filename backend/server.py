@@ -23,6 +23,8 @@ from fastapi import (
     Request,
     Response,
     UploadFile,
+    WebSocket,
+    WebSocketDisconnect,
     status,
 )
 from fastapi.responses import FileResponse, JSONResponse
@@ -56,8 +58,12 @@ from models import (
     AppSettings,
     BanReq,
     Category,
+    ChatBanReq,
+    ChatMessage,
+    ChatSendReq,
     Comment,
     CommentReq,
+    GuestChatBan,
     LoginReq,
     Package,
     PaymentTransaction,
@@ -71,6 +77,7 @@ from models import (
     new_id,
     now_iso,
 )
+from chat import hub as chat_hub
 from transcoder import (
     RESOLUTIONS,
     filter_resolutions_for_source,
@@ -263,6 +270,19 @@ async def process_video(video_id: str, src_path: str):
             duration = info["duration"]
             src_h = info["height"]
             src_w = info["width"]
+            # Auto-detect shorts: vertical aspect AND under configured max duration.
+            # The explicit `is_short=True` flag from the uploader always wins.
+            cur_doc = await db.videos.find_one({"id": video_id}, {"_id": 0}) or {}
+            already_short = bool(cur_doc.get("is_short"))
+            max_short_dur = int(settings.get("shorts_max_duration_sec", 60))
+            auto_short = (
+                src_h > 0
+                and src_w > 0
+                and src_h > src_w
+                and duration > 0
+                and duration <= max_short_dur
+            )
+            is_short_final = already_short or auto_short
             await db.videos.update_one(
                 {"id": video_id},
                 {
@@ -270,6 +290,7 @@ async def process_video(video_id: str, src_path: str):
                         "duration_sec": duration,
                         "original_width": src_w,
                         "original_height": src_h,
+                        "is_short": is_short_final,
                         "progress": 15,
                     }
                 },
@@ -333,10 +354,12 @@ async def process_video(video_id: str, src_path: str):
                         ).model_dump()
                     )
                 progress = 30 + int(65 * (i + 1) / total)
-                await db.videos.update_one(
-                    {"id": video_id},
-                    {"$set": {"renditions": renditions, "progress": progress}},
-                )
+                # As soon as the FIRST rendition completes, mark the video "ready"
+                # so the watch page can start playing while the rest transcode.
+                upd = {"renditions": renditions, "progress": progress}
+                if renditions and i == 0:
+                    upd["status"] = "ready"
+                await db.videos.update_one({"id": video_id}, {"$set": upd})
             await db.videos.update_one(
                 {"id": video_id},
                 {"$set": {"status": "ready", "progress": 100}},
@@ -708,6 +731,7 @@ async def upload_video(
         uploader_id=user["id"],
         uploader_username=user["username"],
         access_tier=access_tier,
+        is_short=is_short,
         original_filename=file.filename or "",
         original_size_bytes=size,
         status="processing",
@@ -1445,7 +1469,7 @@ async def public_player_config():
 
 @api.get("/site/config")
 async def public_site_config():
-    """Public site identity / SEO config consumed by frontend index.html and Layout."""
+    """Public site identity / SEO + localisation + chat config consumed by the frontend."""
     s = await get_settings()
     return {
         "title": s.get("site_title") or "StreamHub",
@@ -1453,7 +1477,195 @@ async def public_site_config():
         "favicon_url": s.get("site_favicon_url") or "",
         "keywords": s.get("site_seo_keywords") or "",
         "meta": s.get("site_seo_meta") or "",
+        "default_language": s.get("default_language") or "ro",
+        "shorts_max_duration_sec": int(s.get("shorts_max_duration_sec", 60)),
+        "live_chat_enabled": bool(s.get("live_chat_enabled", True)),
+        "live_chat_guest_allowed": bool(s.get("live_chat_guest_allowed", True)),
+        "live_chat_max_message_length": int(s.get("live_chat_max_message_length", 500)),
     }
+
+
+# ============ LIVE CHAT ============
+_chat_last_send: dict[str, float] = {}
+
+
+def _chat_is_banned(user: Optional[dict], guest_session: Optional[str], guest_bans: list[dict]) -> Optional[str]:
+    """Return reason string if banned, else None."""
+    now = datetime.now(timezone.utc)
+    if user:
+        cbu = user.get("chat_banned_until")
+        if cbu == "permanent":
+            return user.get("chat_banned_reason") or "Permanently banned from chat"
+        if cbu:
+            try:
+                if datetime.fromisoformat(cbu) > now:
+                    return user.get("chat_banned_reason") or f"Chat-banned until {cbu}"
+            except ValueError:
+                pass
+    if guest_session:
+        for b in guest_bans:
+            if b.get("guest_session") != guest_session:
+                continue
+            bu = b.get("banned_until")
+            if bu == "permanent":
+                return b.get("reason") or "Permanently banned from chat"
+            try:
+                if datetime.fromisoformat(bu) > now:
+                    return b.get("reason") or f"Chat-banned until {bu}"
+            except ValueError:
+                pass
+    return None
+
+
+@api.get("/chat/messages")
+async def chat_messages(limit: int = 50):
+    cur = db.chat_messages.find({}, {"_id": 0}).sort("created_at", -1).limit(min(limit, 200))
+    msgs = await cur.to_list(limit)
+    return list(reversed(msgs))  # oldest first for UI
+
+
+@api.post("/chat/send")
+async def chat_send(req: ChatSendReq, user: Optional[dict] = Depends(current_user)):
+    settings = await get_settings()
+    if not settings.get("live_chat_enabled", True):
+        raise HTTPException(503, "Chat disabled")
+    content = (req.content or "").strip()
+    if not content:
+        raise HTTPException(400, "Empty message")
+    max_len = int(settings.get("live_chat_max_message_length", 500))
+    if len(content) > max_len:
+        raise HTTPException(400, f"Message exceeds {max_len} characters")
+
+    guest_session = None
+    guest_name = None
+    if not user:
+        if not settings.get("live_chat_guest_allowed", True):
+            raise HTTPException(401, "Guest chat not allowed")
+        guest_session = (req.guest_session or "").strip()
+        guest_name = (req.guest_name or "").strip()
+        if not guest_session or not guest_name:
+            raise HTTPException(400, "Guest must provide session id and name")
+        if len(guest_name) > 30:
+            raise HTTPException(400, "Guest name too long")
+
+    # Rate-limit: one message per window seconds per principal
+    rate_key = user["id"] if user else f"guest:{guest_session}"
+    rate_window = int(settings.get("live_chat_rate_limit_seconds", 3))
+    now = time.time()
+    last = _chat_last_send.get(rate_key, 0)
+    if now - last < rate_window:
+        raise HTTPException(429, f"Slow down — wait {rate_window - int(now - last)}s")
+    # Ban check
+    guest_bans = await db.chat_bans.find({}, {"_id": 0}).to_list(1000)
+    reason = _chat_is_banned(user, guest_session, guest_bans)
+    if reason:
+        raise HTTPException(403, reason)
+
+    msg = ChatMessage(
+        user_id=user["id"] if user else None,
+        guest_session=guest_session,
+        username=user["username"] if user else guest_name,
+        avatar_url=user.get("avatar_url") if user else None,
+        is_pro=bool(user.get("is_pro")) if user else False,
+        role=("admin" if user and user.get("role") == "admin" else ("user" if user else "guest")),
+        content=content,
+    )
+    await db.chat_messages.insert_one(msg.model_dump())
+    _chat_last_send[rate_key] = now
+    # Trim to last 500
+    total = await db.chat_messages.count_documents({})
+    if total > 500:
+        # Delete oldest
+        oldest = await db.chat_messages.find({}, {"_id": 0, "id": 1, "created_at": 1}).sort("created_at", 1).limit(total - 500).to_list(total)
+        ids = [x["id"] for x in oldest]
+        if ids:
+            await db.chat_messages.delete_many({"id": {"$in": ids}})
+    await chat_hub.broadcast({"type": "message", "data": msg.model_dump()})
+    return msg.model_dump()
+
+
+@api.websocket("/chat/ws")
+async def chat_ws(websocket: WebSocket):
+    cid = await chat_hub.connect(websocket)
+    try:
+        while True:
+            # Keep-alive: clients aren't expected to send (they POST /chat/send),
+            # but we must read to detect disconnects.
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        pass
+    except Exception as e:  # noqa: BLE001
+        logger.debug("chat ws closed: %s", e)
+    finally:
+        await chat_hub.disconnect(cid)
+
+
+def _ban_until_from_req(req: ChatBanReq) -> str:
+    now = datetime.now(timezone.utc)
+    if req.duration == "permanent":
+        return "permanent"
+    if req.duration == "1day":
+        return (now + timedelta(days=1)).isoformat()
+    if req.duration == "1week":
+        return (now + timedelta(days=7)).isoformat()
+    if req.duration == "1month":
+        return (now + timedelta(days=30)).isoformat()
+    if req.duration == "custom":
+        return (now + timedelta(days=int(req.custom_days or 1))).isoformat()
+    raise HTTPException(400, "Invalid duration")
+
+
+@api.post("/admin/chat/ban-user/{user_id}")
+async def admin_chat_ban_user(user_id: str, req: ChatBanReq, admin: dict = Depends(require_admin)):
+    until = _ban_until_from_req(req)
+    await db.users.update_one(
+        {"id": user_id},
+        {"$set": {"chat_banned_until": until, "chat_banned_reason": req.reason or ""}},
+    )
+    return {"ok": True, "chat_banned_until": until}
+
+
+@api.post("/admin/chat/unban-user/{user_id}")
+async def admin_chat_unban_user(user_id: str, admin: dict = Depends(require_admin)):
+    await db.users.update_one(
+        {"id": user_id},
+        {"$set": {"chat_banned_until": None, "chat_banned_reason": None}},
+    )
+    return {"ok": True}
+
+
+@api.post("/admin/chat/ban-guest/{guest_session}")
+async def admin_chat_ban_guest(guest_session: str, req: ChatBanReq, admin: dict = Depends(require_admin)):
+    until = _ban_until_from_req(req)
+    await db.chat_bans.update_one(
+        {"guest_session": guest_session},
+        {"$set": GuestChatBan(guest_session=guest_session, banned_until=until, reason=req.reason).model_dump()},
+        upsert=True,
+    )
+    return {"ok": True, "banned_until": until}
+
+
+@api.post("/admin/chat/unban-guest/{guest_session}")
+async def admin_chat_unban_guest(guest_session: str, admin: dict = Depends(require_admin)):
+    await db.chat_bans.delete_one({"guest_session": guest_session})
+    return {"ok": True}
+
+
+@api.delete("/admin/chat/messages/{msg_id}")
+async def admin_delete_chat_message(msg_id: str, admin: dict = Depends(require_admin)):
+    await db.chat_messages.delete_one({"id": msg_id})
+    await chat_hub.broadcast({"type": "delete", "data": {"id": msg_id}})
+    return {"ok": True}
+
+
+@api.get("/admin/chat/bans")
+async def admin_chat_bans(admin: dict = Depends(require_admin)):
+    users = await db.users.find(
+        {"chat_banned_until": {"$ne": None}},
+        {"_id": 0, "id": 1, "username": 1, "email": 1, "chat_banned_until": 1, "chat_banned_reason": 1},
+    ).to_list(500)
+    guests = await db.chat_bans.find({}, {"_id": 0}).to_list(500)
+    return {"users": users, "guests": guests}
 
 
 @api.get("/secure-media/{rel_path:path}")

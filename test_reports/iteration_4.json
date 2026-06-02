@@ -1,0 +1,90 @@
+{
+  "summary": "Iteration 4 — Full e2e validation of the 14-point feature batch (live chat, mobile responsive, RO/EN i18n, shorts vs videos, admin moderation, processing overlay, sidebar routes, 12-per-section homepage, new Admin Settings). 15/15 backend tests PASSED. Critical frontend flows verified via Playwright.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {
+        "flow": "Live chat WebSocket",
+        "issue": "First WS connect occasionally logs 'WebSocket is closed before the connection is established' (auto-reconnects shortly after, broadcasts work). Not blocking, but visible as a one-off console warning on initial page load.",
+        "affected_selectors": ["RightSidebar / LiveChat"]
+      }
+    ],
+    "design_issues": [
+      {
+        "screen": "All pages (with active announcement)",
+        "issues": [
+          "DialogOverlay for announcements intercepts pointer events for the WHOLE viewport even when the modal looks dismissable; users must click 'Închide' to use anything. If multiple announcements pile up or auto-show on every load, this can soft-lock interactions. Consider auto-dismissing or storing dismissed announcement IDs in localStorage."
+        ]
+      }
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration4.py",
+    "/app/test_reports/pytest/iteration4.xml"
+  ],
+  "tests_executed": {
+    "backend": [
+      "GET /api/site/config returns default_language, shorts_max_duration_sec, live_chat_enabled, live_chat_guest_allowed, live_chat_max_message_length — PASS",
+      "PATCH /api/admin/settings updates default_language / shorts_max_duration_sec / live_chat_enabled / legacy_videos_pro_only and persists on GET — PASS",
+      "GET /api/videos?kind=short returns only is_short=True; kind=video returns only non-shorts — PASS",
+      "GET /api/chat/messages returns oldest-first list — PASS",
+      "POST /api/chat/send (guest) succeeds; 2nd call within 3s rate-limit window → 429 — PASS",
+      "POST /api/chat/send with content >500 chars → 400 — PASS",
+      "POST /api/chat/send with empty/whitespace content → 400 — PASS",
+      "POST /api/chat/send (authenticated Bearer) returns role='user' and correct user_id — PASS",
+      "POST /api/admin/chat/ban-user/{id} sets chat_banned_until; banned user send → 403; unban clears; send succeeds again — PASS",
+      "POST /api/admin/chat/ban-guest/{session} → banned guest send returns 403 — PASS",
+      "GET /api/admin/chat/bans returns {users:[], guests:[]} structure — PASS",
+      "DELETE /api/admin/chat/messages/{id} removes message from /api/chat/messages listing — PASS",
+      "WebSocket /api/chat/ws accepts connection; POST /api/chat/send broadcasts payload to listener — PASS (verified content-match on receiver)"
+    ],
+    "frontend": [
+      "RO hero text 'Vezi hentai subtitrat în limba română la calitate 1080P - 4096P.' visible by default — PASS",
+      "Language switcher [data-testid=lang-switcher] visible with lang-en + lang-ro buttons — PASS",
+      "Clicking lang-en switches UI to English and persists 'en' in localStorage; lang-ro restores RO — PASS",
+      "LeftSidebar nav links (nav-home/popular/discover/shorts/all-episodes/contact) all present — PASS",
+      "Home page 'See more' buttons present (section-latest-see-more, section-popular-see-more) — PASS",
+      "Admin login (admin@streamhub.io / Admin123!) — PASS",
+      "Admin tabs present: tab-dashboard, tab-videos, tab-users, tab-categories, tab-packages, tab-announcements, tab-chat, tab-settings — PASS",
+      "Admin → Settings: default-language-select, shorts-max-dur, chat-enable-toggle, legacy-pro-toggle all rendered — PASS",
+      "Admin → Videos: per-row [data-testid=edit-vid-*] Edit buttons rendered (2 found for 2 videos) — PASS",
+      "Admin → Live Chat tab shows messages with ban/del controls (21 control elements found) — PASS",
+      "Upload page: [data-testid=upload-is-short] toggle with Romanian help text '≤ 60s, 9:16' rendered — PASS",
+      "Mobile viewport (390x844): [data-testid=mobile-menu-btn], [data-testid=mobile-topbar] visible; desktop left-sidebar hidden — PASS",
+      "Mobile hamburger click opens [data-testid=mobile-left-sidebar] drawer with full nav — PASS",
+      "Live chat in RightSidebar visible on desktop, guest nickname input present, broadcasts working (chat shows hello-108840, auth-msg-*, ws-broadcast-* etc) — PASS",
+      "/shorts /popular /discover /all-episodes routes load without 404 — PASS",
+      "Watch page loads at /watch/:id; for the seeded 'ready' Player Demo video, no processing-view (expected) — PASS"
+    ]
+  },
+  "action_items": [
+    "Investigate the initial WebSocket 'closed before established' warning in LiveChat.jsx — likely a React StrictMode double-mount; doesn't affect functionality but is noisy in console.",
+    "Consider persisting announcement-dismissed state in localStorage so the announcement modal does not re-block UI every page reload (low priority UX nit).",
+    "Pre-existing test data ('Player Demo', 'TEST_SubVideo') have corrupt rainbow thumbnails — known per E1 handoff note, not regressions."
+  ],
+  "critical_code_review_comments": [
+    "/app/backend/server.py is 1693 lines — single monolithic file. Should be split by domain (auth, videos, chat, admin, settings, billing) into a routers/ package once any further feature lands; refactor not required now.",
+    "/app/backend/server.py:927 — `admin_update_settings(payload: dict, ...)` accepts arbitrary dict and only key-whitelists against AppSettings.model_fields. It does NOT type-validate values (e.g. shorts_max_duration_sec could be a string and still saved). Replace with a Pydantic partial model (AppSettingsUpdate with all-Optional fields) for safety. Currently lucky because frontend always sends correct types.",
+    "Live chat rate-limit (3s) is enforced server-side correctly, but the frontend should display a friendly 'slow down' toast on 429 instead of failing silently — verify in LiveChat.jsx error handler.",
+    "Auto-shorts detection in process_video (~server.py:200) could not be live-verified without ffmpeg-processing a fresh vertical clip; code path inspection looks correct (compares aspect <1 and duration<=shorts_max_duration_sec). Recommend adding a unit test for the helper.",
+    "Status transition to 'ready' on FIRST rendition was not exercised in this session (no live transcode happened during testing); covered indirectly via existing ready videos. A targeted integration test would be nice but requires ffmpeg seeding."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration4.py (new)",
+    "/app/test_reports/pytest/iteration4.xml (junit output)"
+  ],
+  "success_rate": {
+    "backend": "100% (15/15)",
+    "frontend": "100% of probed flows (16/16 checks)"
+  },
+  "test_credentials": "admin@streamhub.io / Admin123! — works. Plus auto-created TEST_iter4_<random>@example.com regular user for non-admin chat tests.",
+  "seed_data_creation": "Created several guest chat messages (TEST_guest_*) and one regular user (TEST_iter4_*). Bans were applied and lifted within tests; no persistent state changes remain except those test chat messages.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iteration 4 backend test suite lives at /app/backend/tests/test_iteration4.py and is fully green. Reuses earlier iteration_1/2/3 tests. Live chat WS URL = wss://<host>/api/chat/ws. Default rate-limit is 3s between sends from same identity (sleep before re-send). Active announcements use a Radix DialogOverlay that blocks pointer events — automation must dismiss via 'button:has-text(\"Închide\")' before further interaction. Default UI language is RO; switch to EN via [data-testid=lang-en] when running assertions on English text.",
+  "rca_of_the_issue": "N/A — no blocking bugs."
+}

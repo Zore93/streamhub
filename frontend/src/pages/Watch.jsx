@@ -1,26 +1,26 @@
-import React, { useEffect, useState, useRef } from "react";
-import { useParams } from "react-router-dom";
+import React, { useEffect, useState } from "react";
+import { Link, useParams } from "react-router-dom";
 import api, { mediaUrl } from "@/lib/api";
 import { useAuth } from "@/contexts/AuthContext";
+import { useT } from "@/contexts/LanguageContext";
 import { Layout } from "@/layout/Layout";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Heart, Eye, Crown, Lock, Send, Trash2 } from "lucide-react";
+import { Heart, Eye, Crown, Lock, Send, Trash2, Loader2 } from "lucide-react";
 import { toast } from "sonner";
-import { Link } from "react-router-dom";
 import VideoPlayer from "@/components/VideoPlayer";
+import { Progress } from "@/components/ui/progress";
 
 export default function Watch() {
   const { id } = useParams();
   const { user } = useAuth();
+  const { t } = useT();
   const [video, setVideo] = useState(null);
   const [recs, setRecs] = useState([]);
   const [comments, setComments] = useState([]);
   const [comment, setComment] = useState("");
   const [resolution, setResolution] = useState(null);
   const [allowDownload, setAllowDownload] = useState(false);
-  const videoRef = useRef(null);
 
   const load = async () => {
     const { data } = await api.get(`/videos/${id}`);
@@ -28,6 +28,7 @@ export default function Watch() {
     if (data.renditions?.length && !resolution) {
       setResolution(data.renditions[data.renditions.length - 1].resolution);
     }
+    return data;
   };
 
   useEffect(() => {
@@ -38,6 +39,26 @@ export default function Watch() {
     api.post(`/videos/${id}/view`).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
+
+  // Poll status while the video is still being transcoded so the player
+  // appears automatically the moment the first rendition is ready.
+  useEffect(() => {
+    if (!video) return;
+    const hasPlayable = (video.renditions || []).length > 0;
+    if (video.status === "ready" && hasPlayable) return;
+    if (video.status === "failed") return;
+    const i = setInterval(async () => {
+      try {
+        const data = await load();
+        if (data.status === "ready" && (data.renditions || []).length > 0) {
+          clearInterval(i);
+        }
+        if (data.status === "failed") clearInterval(i);
+      } catch {}
+    }, 4000);
+    return () => clearInterval(i);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [video?.status, video?.renditions?.length]);
 
   const currentRendition = video?.renditions?.find((r) => r.resolution === resolution) || video?.renditions?.[0];
 
@@ -54,7 +75,7 @@ export default function Watch() {
   };
 
   const toggleLike = async () => {
-    if (!user) return toast.error("Login required");
+    if (!user) return toast.error(t("auth.signIn"));
     const { data } = await api.post(`/videos/${id}/like`);
     setVideo({ ...video, likes: data.liked ? [...(video.likes || []), user.id] : (video.likes || []).filter((x) => x !== user.id) });
   };
@@ -64,20 +85,33 @@ export default function Watch() {
     setComments(comments.filter((c) => c.id !== cid));
   };
 
-  if (!video) return <Layout><div className="text-zinc-500">Loading...</div></Layout>;
+  if (!video) return <Layout><div className="text-zinc-500">{t("page.loading")}</div></Layout>;
 
   const isLocked = video.locked || (video.access_tier === "pro" && !user?.is_pro);
+  const hasPlayable = (video.renditions || []).length > 0;
+  const isProcessing = !isLocked && (!hasPlayable || video.status === "processing");
 
   return (
     <Layout recommendations={recs}>
       <div data-testid="watch-page">
         <div className="aspect-video bg-black rounded-lg overflow-hidden relative">
           {isLocked ? (
-            <div className="absolute inset-0 flex flex-col items-center justify-center bg-zinc-950" data-testid="locked-view">
+            <div className="absolute inset-0 flex flex-col items-center justify-center bg-zinc-950 text-center px-6" data-testid="locked-view">
               <Lock size={48} className="text-rose-500 mb-3" />
-              <h3 className="text-xl font-semibold mb-1">PRO content</h3>
-              <p className="text-zinc-400 mb-4">Upgrade to PRO to watch this video</p>
-              <Link to="/pro"><Button className="pro-gradient text-white border-0">Upgrade Now</Button></Link>
+              <h3 className="text-xl font-semibold mb-1">{t("player.proLocked")}</h3>
+              <p className="text-zinc-400 mb-4">{t("player.proLocked.body")}</p>
+              <Link to="/pro"><Button className="pro-gradient text-white border-0">{t("player.upgrade")}</Button></Link>
+            </div>
+          ) : isProcessing ? (
+            <div className="absolute inset-0 flex flex-col items-center justify-center bg-zinc-950 text-center px-6" data-testid="processing-view">
+              <Loader2 size={42} className="text-rose-500 mb-4 animate-spin" />
+              <p className="text-zinc-200 max-w-md">{t("player.processing")}</p>
+              {video.progress != null && (
+                <div className="w-64 mt-5">
+                  <Progress value={video.progress} className="h-2" />
+                  <div className="text-xs text-zinc-500 mt-2">{video.progress}%</div>
+                </div>
+              )}
             </div>
           ) : currentRendition ? (
             <VideoPlayer
@@ -89,18 +123,18 @@ export default function Watch() {
             />
           ) : (
             <div className="absolute inset-0 flex items-center justify-center text-zinc-500">
-              Video is {video.status}... ({video.progress}%)
+              {video.status}...
             </div>
           )}
         </div>
 
-        <div className="flex items-center justify-between mt-5 mb-2">
+        <div className="flex items-center justify-between mt-5 mb-2 flex-wrap gap-2">
           <h1 className="text-2xl sm:text-3xl font-bold font-heading">{video.title}</h1>
           {video.access_tier === "pro" && <span className="pro-gradient text-white text-xs font-semibold px-3 py-1 rounded-md flex items-center gap-1"><Crown size={12} /> PRO</span>}
         </div>
 
         <div className="flex flex-wrap items-center gap-4 text-zinc-500 mb-4">
-          <span className="flex items-center gap-1.5"><Eye size={14} /> {video.views} views</span>
+          <span className="flex items-center gap-1.5"><Eye size={14} /> {video.views} {t("video.views")}</span>
           <button onClick={toggleLike} className="flex items-center gap-1.5 hover:text-rose-400 transition" data-testid="like-btn">
             <Heart size={14} className={user && video.likes?.includes(user.id) ? "fill-rose-500 text-rose-500" : ""} />
             {video.likes?.length || 0}
@@ -114,20 +148,20 @@ export default function Watch() {
 
         {video.tags?.length > 0 && (
           <div className="flex flex-wrap gap-2 mb-6">
-            {video.tags.map((t) => <span key={t} className="text-xs bg-zinc-800 text-zinc-300 px-2 py-1 rounded">#{t}</span>)}
+            {video.tags.map((tg) => <span key={tg} className="text-xs bg-zinc-800 text-zinc-300 px-2 py-1 rounded">#{tg}</span>)}
           </div>
         )}
 
         {/* Comments */}
         <div className="mt-8" data-testid="comments-section">
-          <h2 className="text-xl font-semibold mb-4">Comments ({comments.length})</h2>
+          <h2 className="text-xl font-semibold mb-4">{t("comments.title")} ({comments.length})</h2>
           {user ? (
             <form onSubmit={submitComment} className="flex gap-2 mb-6">
-              <Textarea value={comment} onChange={(e) => setComment(e.target.value)} placeholder="Add a comment" className="bg-zinc-900 border-zinc-800" data-testid="comment-input" />
+              <Textarea value={comment} onChange={(e) => setComment(e.target.value)} placeholder={t("comments.placeholder")} className="bg-zinc-900 border-zinc-800" data-testid="comment-input" />
               <Button type="submit" className="pro-gradient text-white border-0 self-end" data-testid="comment-submit"><Send size={14} /></Button>
             </form>
           ) : (
-            <p className="text-zinc-500 mb-4">Sign in to comment.</p>
+            <p className="text-zinc-500 mb-4">{t("comments.signInToComment")}</p>
           )}
           <div className="space-y-3">
             {comments.map((c) => (
@@ -146,6 +180,7 @@ export default function Watch() {
                 </div>
               </div>
             ))}
+            {comments.length === 0 && <p className="text-zinc-500 text-sm">{t("comments.empty")}</p>}
           </div>
         </div>
       </div>

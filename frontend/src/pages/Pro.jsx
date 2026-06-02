@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import api from "@/lib/api";
 import { useAuth } from "@/contexts/AuthContext";
+import { useT } from "@/contexts/LanguageContext";
 import { Button } from "@/components/ui/button";
 import { Crown, Check } from "lucide-react";
 import { toast } from "sonner";
@@ -9,6 +10,7 @@ import { toast } from "sonner";
 export default function Pro() {
   const [pkgs, setPkgs] = useState([]);
   const { user, refresh } = useAuth();
+  const { t } = useT();
   const nav = useNavigate();
   const [busy, setBusy] = useState(null);
   const [search] = useSearchParams();
@@ -62,12 +64,12 @@ export default function Pro() {
     <div data-testid="pro-page">
       <div className="text-center mb-12">
         <Crown size={48} className="pro-gradient-text mx-auto mb-4" />
-        <h1 className="text-4xl sm:text-5xl font-bold font-heading mb-2">Go <span className="pro-gradient-text">PRO</span></h1>
-        <p className="text-zinc-400 max-w-xl mx-auto">Unlock premium content, exclusive videos, and an ad-free experience.</p>
+        <h1 className="text-4xl sm:text-5xl font-bold font-heading mb-2">{t("pro.title")} <span className="pro-gradient-text">PRO</span></h1>
+        <p className="text-zinc-400 max-w-xl mx-auto">{t("pro.subtitle")}</p>
       </div>
       {user?.is_pro && (
         <div className="bg-green-900/30 border border-green-700 rounded-lg p-4 text-center mb-8" data-testid="pro-active">
-          You are already a PRO member. Expires: {user.pro_expires_at?.slice(0, 10) || "—"}
+          {t("pro.active")} {user.pro_expires_at?.slice(0, 10) || "—"}
         </div>
       )}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 max-w-5xl mx-auto">
@@ -78,16 +80,16 @@ export default function Pro() {
             <div className="text-3xl font-bold mb-1">${p.price}</div>
             <div className="text-xs text-zinc-500 mb-4">{p.duration_days} days access</div>
             <ul className="text-sm text-zinc-400 space-y-2 mb-6">
-              <li className="flex gap-2"><Check size={14} className="text-rose-500" /> Watch all PRO videos</li>
-              <li className="flex gap-2"><Check size={14} className="text-rose-500" /> Ad-free experience</li>
-              <li className="flex gap-2"><Check size={14} className="text-rose-500" /> Priority support</li>
+              <li className="flex gap-2"><Check size={14} className="text-rose-500" /> {t("pro.feature.watchAll")}</li>
+              <li className="flex gap-2"><Check size={14} className="text-rose-500" /> {t("pro.feature.adFree")}</li>
+              <li className="flex gap-2"><Check size={14} className="text-rose-500" /> {t("pro.feature.support")}</li>
             </ul>
             <Button disabled={busy === p.id} onClick={() => buy(p)} className="pro-gradient text-white border-0 w-full" data-testid={`buy-${p.id}`}>
-              {busy === p.id ? "Redirecting..." : "Subscribe"}
+              {busy === p.id ? t("pro.subscribing") : t("pro.subscribe")}
             </Button>
           </div>
         ))}
-        {pkgs.length === 0 && <p className="text-zinc-500 col-span-3 text-center">No active packages.</p>}
+        {pkgs.length === 0 && <p className="text-zinc-500 col-span-3 text-center">{t("pro.empty")}</p>}
       </div>
     </div>
   );
