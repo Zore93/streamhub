@@ -11,6 +11,13 @@ JWT_ALG = "HS256"
 JWT_EXP_DAYS = 30
 
 
+def set_jwt_secret(secret: str):
+    """Allow runtime override of the JWT signing key (loaded from MongoDB at startup)."""
+    global JWT_SECRET
+    if secret:
+        JWT_SECRET = secret
+
+
 def hash_password(password: str) -> str:
     return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 

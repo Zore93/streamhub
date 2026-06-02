@@ -35,6 +35,7 @@ from auth import (
     create_token,
     decode_token,
     hash_password,
+    set_jwt_secret,
     verify_password,
 )
 from mailer import send_verification_email
@@ -1202,7 +1203,15 @@ async def github_update(admin: dict = Depends(require_admin)):
 @app.on_event("startup")
 async def startup():
     # Ensure settings exist
-    await get_settings()
+    s = await get_settings()
+    # Bootstrap JWT secret: prefer DB value, else generate-and-persist one. This
+    # makes the deployment self-contained — `.env` only needs MONGO_URL + DB_NAME.
+    db_jwt = (s.get("jwt_secret") or "").strip()
+    if not db_jwt:
+        db_jwt = secrets.token_urlsafe(64)
+        await save_settings({**s, "jwt_secret": db_jwt})
+    # Inject into auth module so create_token / decode_token use it
+    set_jwt_secret(db_jwt)
     # Seed admin
     existing = await db.users.find_one({"email": "admin@streamhub.io"})
     if not existing:

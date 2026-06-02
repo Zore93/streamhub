@@ -258,6 +258,23 @@ systemctl daemon-reload
 systemctl enable streamhub.service >/dev/null
 green "✓ systemd unit installed"
 
+#─── 11.5) Final smoke-test: real login round-trip ──────────────────────────
+green "→ Smoke-testing login at https://$DOMAIN/api/auth/login"
+sleep 5
+SMOKE_BODY=$(python3 -c "import json,os,sys; print(json.dumps({'email':os.environ['E'],'password':os.environ['P']}))" E="$ADMIN_EMAIL" P="$ADMIN_PASSWORD")
+SMOKE_HTTP=$(curl -sk -o /tmp/sh_smoke.json -w "%{http_code}" -X POST \
+    "https://$DOMAIN/api/auth/login" \
+    -H "Content-Type: application/json" \
+    --data-binary "$SMOKE_BODY" || echo "000")
+if [[ "$SMOKE_HTTP" == "200" ]]; then
+    green "✓ Smoke test PASSED — admin can log in."
+else
+    red "✘ Smoke test FAILED — HTTP $SMOKE_HTTP  body: $(cat /tmp/sh_smoke.json 2>/dev/null || true)"
+    yellow "  Fix without re-installing — run:"
+    yellow "    sudo bash $DEPLOY_DIR/scripts/reset-admin.sh"
+fi
+rm -f /tmp/sh_smoke.json
+
 #─── 12) Wrap-up ────────────────────────────────────────────────────────────
 echo
 bold "════════════════════════════════════════════════════════════════"

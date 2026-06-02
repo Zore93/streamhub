@@ -1,56 +1,66 @@
 #!/usr/bin/env bash
-# Diagnostic helper: tries to login locally with the admin credentials from .env
-# and reports exactly why login is rejected (no-such-user vs bad-password vs banned).
-set -euo pipefail
+# Diagnose "Login failed" on a live StreamHub install.
+# Reads .env line-by-line (no shell interpolation), dumps the actual admin
+# document in MongoDB, attempts a real curl login, and prints a clear verdict.
+set -uo pipefail
 
 DEPLOY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENV_FILE="$DEPLOY_DIR/.env"
-[[ -f "$ENV_FILE" ]] || { echo "Cannot find $ENV_FILE"; exit 1; }
+[[ -f "$ENV_FILE" ]] || { echo "✘ $ENV_FILE missing"; exit 1; }
 
-EMAIL=$(grep -E '^ADMIN_EMAIL=' "$ENV_FILE" | head -1 | cut -d= -f2-)
-# Read raw password line as-is (no shell interpretation):
-PASSWORD=$(grep -E '^ADMIN_PASSWORD=' "$ENV_FILE" | head -1 | cut -d= -f2-)
+env_get() { grep -E "^$1=" "$ENV_FILE" | head -1 | cut -d= -f2-; }
 
-echo "Reading credentials from $ENV_FILE …"
-echo "  ADMIN_EMAIL    = $EMAIL"
-echo "  ADMIN_PASSWORD = $PASSWORD   (literal value from .env)"
+DOMAIN=$(env_get DOMAIN)
+EMAIL=$(env_get ADMIN_EMAIL)
+PASSWORD=$(env_get ADMIN_PASSWORD)
 
-# Show what docker compose ACTUALLY passes to the container after interpolation:
+echo "════════════════════════════════════════════════════════════════"
+echo " StreamHub login diagnosis"
+echo "════════════════════════════════════════════════════════════════"
+echo " DOMAIN          = $DOMAIN"
+echo " ADMIN_EMAIL     = $EMAIL"
+echo " ADMIN_PASSWORD  = $PASSWORD   ← literal value as stored in .env"
 echo
-echo "What docker compose would inject (after \$VAR interpolation):"
-docker compose --env-file "$ENV_FILE" -f "$DEPLOY_DIR/docker-compose.yml" \
-    config 2>/dev/null | grep -A2 -E '^\s+ADMIN' || true
+echo "1) Container & DB state"
+echo "──────────────────────────────────────────────────────"
+docker inspect -f '{{.State.Status}}' sh-backend 2>/dev/null \
+    && echo "   sh-backend container: $(docker inspect -f '{{.State.Status}}' sh-backend)" \
+    || { echo "   ✘ sh-backend container not found"; exit 1; }
 
-echo
-echo "Checking DB for the user…"
-docker exec sh-backend python - <<'PY'
+docker exec sh-backend python - <<'PY' 2>&1 || true
 import asyncio, os
 from motor.motor_asyncio import AsyncIOMotorClient
 async def m():
     db = AsyncIOMotorClient(os.environ['MONGO_URL'])[os.environ['DB_NAME']]
-    users = await db.users.find({'role':'admin'}, {'email':1,'role':1,'is_pro':1,
-        'email_verified':1,'banned_until':1,'password_hash':1,'_id':0}).to_list(50)
-    if not users:
-        print("✘ No admin user in DB at all.")
-        return
-    for u in users:
-        ph = u.pop('password_hash','')
-        u['hash_prefix'] = ph[:7]
-        print(u)
+    n_users = await db.users.count_documents({})
+    print(f"   users total           : {n_users}")
+    admins = await db.users.find({'role':'admin'}, {'email':1,'is_pro':1,
+        'email_verified':1,'banned_until':1,'password_hash':1,'id':1,'_id':0}).to_list(50)
+    print(f"   admin docs            : {len(admins)}")
+    for a in admins:
+        a['password_hash_prefix'] = (a.pop('password_hash','') or '')[:10] or 'NONE'
+        print("    ", a)
 asyncio.run(m())
 PY
 
 echo
-echo "Attempting login against http://127.0.0.1 (frontend nginx)…"
-RES=$(curl -ks -o /tmp/login.json -w "%{http_code}" -X POST \
-    "https://$(grep ^DOMAIN= "$ENV_FILE" | cut -d= -f2)/api/auth/login" \
-    -H "Content-Type: application/json" \
-    --data-binary "{\"email\":\"$EMAIL\",\"password\":\"$PASSWORD\"}" || true)
-echo "HTTP $RES"
-cat /tmp/login.json; echo
-case "$RES" in
-    200) echo "✓ Login works.";;
-    401) echo "✘ 401 Invalid credentials — password in DB does NOT match the .env value. Run: sudo bash $(dirname "$0")/reset-admin.sh";;
-    403) echo "✘ 403 — account is verified=false or banned.  Run reset-admin.sh to fix.";;
-    *)   echo "✘ Unexpected response. Check: docker compose logs backend";;
+echo "2) Live login test against https://$DOMAIN/api/auth/login"
+echo "──────────────────────────────────────────────────────"
+BODY=$(python3 -c "import json,os; print(json.dumps({'email':os.environ['E'],'password':os.environ['P']}))" E="$EMAIL" P="$PASSWORD")
+HTTP=$(curl -sk -o /tmp/dl.json -w "%{http_code}" -X POST "https://$DOMAIN/api/auth/login" \
+    -H "Content-Type: application/json" --data-binary "$BODY")
+echo "   HTTP $HTTP"
+echo "   body: $(cat /tmp/dl.json 2>/dev/null)"
+rm -f /tmp/dl.json
+echo
+case "$HTTP" in
+    200) echo "✓ Login WORKS. If your browser still fails, hard-refresh (Ctrl-Shift-R) and clear localStorage.";;
+    401) echo "✘ Wrong password — the bcrypt hash in DB doesn't match what's in .env.";
+         echo "  → Fix: sudo bash $DEPLOY_DIR/scripts/reset-admin.sh";;
+    403) echo "✘ 403 — account is banned or not email-verified.";
+         echo "  → Fix: sudo bash $DEPLOY_DIR/scripts/reset-admin.sh   (it sets email_verified=true)";;
+    429) echo "✘ Rate-limited. Wait the configured window (default 5 min) and retry, or lower the limit in Admin → Settings → Auth security.";;
+    000) echo "✘ Network unreachable — DNS / SSL / nginx not up.";;
+    5*)  echo "✘ Server error — check: docker compose -f $DEPLOY_DIR/docker-compose.yml logs backend";;
+    *)   echo "? Unexpected status.";;
 esac

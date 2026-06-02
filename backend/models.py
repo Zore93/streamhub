@@ -219,6 +219,9 @@ class AppSettings(BaseModel):
     require_password_complexity: bool = True
     login_rate_limit_max: int = 5     # attempts
     login_rate_limit_window: int = 300  # seconds
+    # Bootstrapped secrets (auto-generated on first boot if blank; can be edited
+    # from Admin → Settings instead of editing /opt/streamhub/deploy/.env)
+    jwt_secret: str = ""
     # GitHub auto-update
     github_repo: str = ""
     github_token: str = ""
