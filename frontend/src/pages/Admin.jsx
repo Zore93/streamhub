@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import api, { mediaUrl } from "@/lib/api";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -81,31 +81,97 @@ function Dashboard() {
 }
 
 function VideosTab() {
-  const [vids, setVids] = useState([]);
+  const [items, setItems] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [skip, setSkip] = useState(0);
+  const [loading, setLoading] = useState(false);
   const [q, setQ] = useState("");
-  const load = () => api.get("/admin/videos").then((r) => setVids(r.data));
-  useEffect(() => { load(); }, []);
+  const [debouncedQ, setDebouncedQ] = useState("");
+  const [tier, setTier] = useState("");      // "" | free | pro
+  const [statusF, setStatusF] = useState(""); // "" | ready | processing | failed
+  const [shortF, setShortF] = useState("");   // "" | "short" | "video"
+  const PAGE = 50;
+
+  // Debounce
+  useEffect(() => {
+    const id = setTimeout(() => setDebouncedQ(q.trim()), 350);
+    return () => clearTimeout(id);
+  }, [q]);
+
+  const load = async (nextSkip = 0, append = false) => {
+    setLoading(true);
+    try {
+      const p = new URLSearchParams({ skip: String(nextSkip), limit: String(PAGE) });
+      if (debouncedQ) p.set("q", debouncedQ);
+      if (tier) p.set("access_tier", tier);
+      if (statusF) p.set("status_filter", statusF);
+      if (shortF === "short") p.set("is_short", "true");
+      else if (shortF === "video") p.set("is_short", "false");
+      const { data } = await api.get(`/admin/videos?${p.toString()}`);
+      setTotal(data.total);
+      setSkip(nextSkip);
+      setItems((prev) => append ? [...prev, ...data.items] : data.items);
+    } finally { setLoading(false); }
+  };
+
+  // Reset + fetch on every filter change
+  const filterKey = `${debouncedQ}|${tier}|${statusF}|${shortF}`;
+  const lastKey = useRef("");
+  useEffect(() => {
+    if (lastKey.current === filterKey) return;
+    lastKey.current = filterKey;
+    load(0, false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filterKey]);
+
   const del = async (id) => {
     if (!window.confirm("Delete?")) return;
     await api.delete(`/videos/${id}`);
-    load();
+    load(skip, false);
   };
-  const filtered = q
-    ? vids.filter((v) =>
-        (v.title || "").toLowerCase().includes(q.toLowerCase()) ||
-        (v.uploader_username || "").toLowerCase().includes(q.toLowerCase()),
-      )
-    : vids;
+
+  const hasMore = items.length < total;
   return (
-    <div className="mt-6 space-y-2" data-testid="admin-videos">
-      <Input
-        value={q}
-        onChange={(e) => setQ(e.target.value)}
-        placeholder="Search by title or uploader…"
-        className="bg-zinc-900 border-zinc-800 max-w-md"
-        data-testid="admin-videos-search"
-      />
-      {filtered.map((v) => (
+    <div className="mt-6 space-y-3" data-testid="admin-videos">
+      <div className="flex flex-wrap gap-2 items-center">
+        <Input
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder="Search by title, uploader, or tag…"
+          className="bg-zinc-900 border-zinc-800 max-w-md"
+          data-testid="admin-videos-search"
+        />
+        <Select value={tier || "all"} onValueChange={(v) => setTier(v === "all" ? "" : v)}>
+          <SelectTrigger className="bg-zinc-900 border-zinc-800 w-32" data-testid="admin-videos-tier"><SelectValue placeholder="Tier" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All tiers</SelectItem>
+            <SelectItem value="free">Free</SelectItem>
+            <SelectItem value="pro">PRO</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select value={statusF || "all"} onValueChange={(v) => setStatusF(v === "all" ? "" : v)}>
+          <SelectTrigger className="bg-zinc-900 border-zinc-800 w-36" data-testid="admin-videos-status"><SelectValue placeholder="Status" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All statuses</SelectItem>
+            <SelectItem value="ready">Ready</SelectItem>
+            <SelectItem value="processing">Processing</SelectItem>
+            <SelectItem value="failed">Failed</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select value={shortF || "all"} onValueChange={(v) => setShortF(v === "all" ? "" : v)}>
+          <SelectTrigger className="bg-zinc-900 border-zinc-800 w-32" data-testid="admin-videos-kind"><SelectValue placeholder="Kind" /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Any kind</SelectItem>
+            <SelectItem value="video">Long-form</SelectItem>
+            <SelectItem value="short">Shorts</SelectItem>
+          </SelectContent>
+        </Select>
+        <div className="text-xs text-zinc-500 ml-auto">
+          Showing <strong>{items.length}</strong> of <strong>{total}</strong>
+        </div>
+      </div>
+
+      {items.map((v) => (
         <div key={v.id} className="bg-zinc-900 border border-zinc-800 rounded-lg p-3 flex items-center justify-between gap-3 flex-wrap">
           <div className="flex-1 min-w-0">
             <div className="font-semibold truncate">{v.title}</div>
@@ -128,40 +194,99 @@ function VideosTab() {
           <Button size="sm" variant="destructive" onClick={() => del(v.id)} data-testid={`del-vid-${v.id}`}><Trash2 size={14} /></Button>
         </div>
       ))}
-      {filtered.length === 0 && <p className="text-zinc-500">No videos.</p>}
+      {items.length === 0 && !loading && (
+        <p className="text-zinc-500 text-center py-8">No videos match your filters.</p>
+      )}
+      {hasMore && (
+        <div className="flex justify-center pt-4">
+          <Button
+            variant="outline"
+            disabled={loading}
+            onClick={() => load(items.length, true)}
+            className="border-zinc-700 hover:bg-zinc-800"
+            data-testid="admin-videos-load-more"
+          >
+            {loading ? "Loading…" : `Load more (${total - items.length} remaining)`}
+          </Button>
+        </div>
+      )}
     </div>
   );
 }
 
 function UsersTab() {
   const [users, setUsers] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [skip, setSkip] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const [q, setQ] = useState("");
+  const [debouncedQ, setDebouncedQ] = useState("");
   const [banDur, setBanDur] = useState({});
   const [banDays, setBanDays] = useState({});
   const [proDur, setProDur] = useState({});
   const [proDays, setProDays] = useState({});
-  const load = () => api.get("/admin/users").then((r) => setUsers(r.data));
-  useEffect(() => { load(); }, []);
+  const PAGE = 50;
+
+  useEffect(() => {
+    const id = setTimeout(() => setDebouncedQ(q.trim()), 350);
+    return () => clearTimeout(id);
+  }, [q]);
+
+  const load = async (nextSkip = 0, append = false) => {
+    setLoading(true);
+    try {
+      const p = new URLSearchParams({ skip: String(nextSkip), limit: String(PAGE) });
+      if (debouncedQ) p.set("q", debouncedQ);
+      const { data } = await api.get(`/admin/users?${p.toString()}`);
+      setTotal(data.total);
+      setSkip(nextSkip);
+      setUsers((prev) => append ? [...prev, ...data.items] : data.items);
+    } finally { setLoading(false); }
+  };
+
+  const lastKey = useRef("");
+  useEffect(() => {
+    if (lastKey.current === debouncedQ) return;
+    lastKey.current = debouncedQ;
+    load(0, false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [debouncedQ]);
+
+  const reload = () => load(0, false);
 
   const ban = async (u) => {
     const duration = banDur[u.id] || "1day";
     const body = { duration, custom_days: parseInt(banDays[u.id] || 1) };
     await api.post(`/admin/users/${u.id}/ban`, body);
     toast.success("Banned");
-    load();
+    reload();
   };
-  const unban = async (u) => { await api.post(`/admin/users/${u.id}/unban`); load(); };
-  const setRole = async (u, role) => { await api.post(`/admin/users/${u.id}/role`, { role }); load(); };
+  const unban = async (u) => { await api.post(`/admin/users/${u.id}/unban`); reload(); };
+  const setRole = async (u, role) => { await api.post(`/admin/users/${u.id}/role`, { role }); reload(); };
   const grantPro = async (u) => {
     const duration = proDur[u.id] || "1month";
     const body = { duration, custom_days: parseInt(proDays[u.id] || 1) };
     await api.post(`/admin/users/${u.id}/grant-pro`, body);
     toast.success("PRO granted");
-    load();
+    reload();
   };
-  const revokePro = async (u) => { await api.post(`/admin/users/${u.id}/revoke-pro`); load(); };
+  const revokePro = async (u) => { await api.post(`/admin/users/${u.id}/revoke-pro`); reload(); };
 
+  const hasMore = users.length < total;
   return (
-    <div className="mt-6 space-y-2" data-testid="admin-users">
+    <div className="mt-6 space-y-3" data-testid="admin-users">
+      <div className="flex flex-wrap gap-2 items-center">
+        <Input
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder="Search by username or email…"
+          className="bg-zinc-900 border-zinc-800 max-w-md"
+          data-testid="admin-users-search"
+        />
+        <div className="text-xs text-zinc-500 ml-auto">
+          Showing <strong>{users.length}</strong> of <strong>{total}</strong>
+        </div>
+      </div>
       {users.map((u) => (
         <div key={u.id} className="bg-zinc-900 border border-zinc-800 rounded-lg p-3 flex items-center justify-between gap-3 flex-wrap">
           <div className="flex-1 min-w-0">
@@ -191,6 +316,22 @@ function UsersTab() {
           </div>
         </div>
       ))}
+      {users.length === 0 && !loading && (
+        <p className="text-zinc-500 text-center py-8">No users match your search.</p>
+      )}
+      {hasMore && (
+        <div className="flex justify-center pt-4">
+          <Button
+            variant="outline"
+            disabled={loading}
+            onClick={() => load(users.length, true)}
+            className="border-zinc-700 hover:bg-zinc-800"
+            data-testid="admin-users-load-more"
+          >
+            {loading ? "Loading…" : `Load more (${total - users.length} remaining)`}
+          </Button>
+        </div>
+      )}
     </div>
   );
 }

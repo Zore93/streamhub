@@ -1009,9 +1009,33 @@ async def admin_test_wasabi(admin: dict = Depends(require_admin)):
 
 # ============ ADMIN: USERS ============
 @api.get("/admin/users")
-async def admin_list_users(admin: dict = Depends(require_admin)):
-    us = await db.users.find({}, {"_id": 0, "password_hash": 0, "verify_token": 0}).sort("created_at", -1).to_list(500)
-    return us
+async def admin_list_users(
+    q: Optional[str] = None,
+    skip: int = 0,
+    limit: int = 50,
+    admin: dict = Depends(require_admin),
+):
+    """Paginated user listing with server-side search.
+
+    `q` matches `username` or `email` case-insensitively.  Returns a paginated
+    envelope so the admin UI can render correct counts + "Load more".
+    """
+    filt: dict = {}
+    if q and q.strip():
+        import re as _re
+        rex = _re.escape(q.strip())
+        filt["$or"] = [
+            {"username": {"$regex": rex, "$options": "i"}},
+            {"email":    {"$regex": rex, "$options": "i"}},
+        ]
+    total = await db.users.count_documents(filt)
+    limit = max(1, min(limit, 200))
+    cur = (
+        db.users.find(filt, {"_id": 0, "password_hash": 0, "verify_token": 0})
+        .sort("created_at", -1).skip(max(0, skip)).limit(limit)
+    )
+    items = await cur.to_list(limit)
+    return {"items": items, "total": total, "skip": skip, "limit": limit}
 
 
 @api.post("/admin/users/{user_id}/ban")
@@ -1119,8 +1143,46 @@ async def admin_stats(admin: dict = Depends(require_admin)):
 
 
 @api.get("/admin/videos")
-async def admin_list_videos(admin: dict = Depends(require_admin)):
-    return await db.videos.find({}, {"_id": 0}).sort("created_at", -1).to_list(500)
+async def admin_list_videos(
+    q: Optional[str] = None,
+    skip: int = 0,
+    limit: int = 50,
+    status_filter: Optional[str] = None,
+    access_tier: Optional[str] = None,
+    is_short: Optional[bool] = None,
+    admin: dict = Depends(require_admin),
+):
+    """Paginated video listing with server-side search.
+
+    `q` matches title, uploader_username, or tags case-insensitively.
+    Additional optional filters: status_filter (ready/processing/failed),
+    access_tier (free/pro), is_short (true/false).
+    """
+    filt: dict = {}
+    if q and q.strip():
+        import re as _re
+        rex = _re.escape(q.strip())
+        filt["$or"] = [
+            {"title":              {"$regex": rex, "$options": "i"}},
+            {"uploader_username":  {"$regex": rex, "$options": "i"}},
+            {"tags":               {"$regex": rex, "$options": "i"}},
+        ]
+    if status_filter in ("ready", "processing", "failed"):
+        filt["status"] = status_filter
+    if access_tier in ("free", "pro"):
+        filt["access_tier"] = access_tier
+    if is_short is True:
+        filt["is_short"] = True
+    elif is_short is False:
+        filt["is_short"] = {"$ne": True}
+    total = await db.videos.count_documents(filt)
+    limit = max(1, min(limit, 200))
+    cur = (
+        db.videos.find(filt, {"_id": 0})
+        .sort("created_at", -1).skip(max(0, skip)).limit(limit)
+    )
+    items = await cur.to_list(limit)
+    return {"items": items, "total": total, "skip": skip, "limit": limit}
 
 
 @api.get("/admin/videos/legacy-stats")
