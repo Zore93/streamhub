@@ -457,12 +457,32 @@ function SettingsTab() {
       <Section title="SMTP / Email verification">
         <Field label="Require email verification"><Switch checked={s.require_email_verification} onCheckedChange={(v) => upd("require_email_verification", v)} /></Field>
         <Field label="SMTP enabled"><Switch checked={s.smtp_enabled} onCheckedChange={(v) => upd("smtp_enabled", v)} /></Field>
-        <Field label="SMTP host"><Input value={s.smtp_host} onChange={(e) => upd("smtp_host", e.target.value)} className="bg-zinc-950 border-zinc-800" /></Field>
-        <Field label="SMTP port"><Input type="number" value={s.smtp_port} onChange={(e) => upd("smtp_port", parseInt(e.target.value) || 587)} className="bg-zinc-950 border-zinc-800" /></Field>
-        <Field label="SMTP user"><Input value={s.smtp_user} onChange={(e) => upd("smtp_user", e.target.value)} className="bg-zinc-950 border-zinc-800" /></Field>
-        <Field label="SMTP password"><Input type="password" value={s.smtp_password} onChange={(e) => upd("smtp_password", e.target.value)} className="bg-zinc-950 border-zinc-800" /></Field>
-        <Field label="From address"><Input value={s.smtp_from} onChange={(e) => upd("smtp_from", e.target.value)} className="bg-zinc-950 border-zinc-800" /></Field>
-        <Field label="Use TLS"><Switch checked={s.smtp_use_tls} onCheckedChange={(v) => upd("smtp_use_tls", v)} /></Field>
+        <Field label="SMTP host"><Input value={s.smtp_host} onChange={(e) => upd("smtp_host", e.target.value)} className="bg-zinc-950 border-zinc-800" placeholder="smtp.gmail.com" /></Field>
+        <Field label="SMTP port"><Input type="number" value={s.smtp_port} onChange={(e) => upd("smtp_port", parseInt(e.target.value) || 587)} className="bg-zinc-950 border-zinc-800" placeholder="587 (STARTTLS) or 465 (SSL)" /></Field>
+        <Field label="Security">
+          <Select
+            value={s.smtp_security || "auto"}
+            onValueChange={(v) => upd("smtp_security", v === "auto" ? "" : v)}
+          >
+            <SelectTrigger className="bg-zinc-950 border-zinc-800" data-testid="smtp-security-select"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="auto">Auto (recommended)</SelectItem>
+              <SelectItem value="starttls">STARTTLS (port 587)</SelectItem>
+              <SelectItem value="ssl">SSL / implicit TLS (port 465)</SelectItem>
+              <SelectItem value="none">None (plaintext)</SelectItem>
+            </SelectContent>
+          </Select>
+        </Field>
+        <Field label="SMTP user"><Input value={s.smtp_user} onChange={(e) => upd("smtp_user", e.target.value)} className="bg-zinc-950 border-zinc-800" placeholder="your.address@gmail.com" /></Field>
+        <Field label="SMTP password"><Input type="password" value={s.smtp_password} onChange={(e) => upd("smtp_password", e.target.value)} className="bg-zinc-950 border-zinc-800" placeholder="Gmail: 16-char App Password" /></Field>
+        <Field label="From address"><Input value={s.smtp_from} onChange={(e) => upd("smtp_from", e.target.value)} className="bg-zinc-950 border-zinc-800" placeholder="zore.zore1993@gmail.com" /></Field>
+        <SmtpTestControls contactEmail={s.contact_email} />
+        <p className="text-xs text-zinc-500 col-span-2">
+          <strong>Gmail tip:</strong> enable 2-Step Verification, then create an{" "}
+          <a className="text-rose-400 hover:text-rose-300 underline" href="https://myaccount.google.com/apppasswords" target="_blank" rel="noreferrer">App Password</a>
+          {" "}for "Mail" — paste it as the SMTP password (spaces are stripped automatically).
+          Use port <strong>587 + STARTTLS</strong> <em>or</em> port <strong>465 + SSL</strong>, not both.
+        </p>
       </Section>
       <Section title="Stripe">
         <Field label="Stripe secret key (leave blank to use env)"><Input type="password" value={s.stripe_secret_key} onChange={(e) => upd("stripe_secret_key", e.target.value)} className="bg-zinc-950 border-zinc-800" /></Field>
@@ -517,6 +537,43 @@ function Section({ title, children }) {
     <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5 space-y-4">
       <div className="font-heading font-semibold text-lg">{title}</div>
       {children}
+    </div>
+  );
+}
+
+function SmtpTestControls({ contactEmail }) {
+  const [to, setTo] = useState(contactEmail || "");
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (contactEmail && !to) setTo(contactEmail);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [contactEmail]);
+  const send = async () => {
+    if (!to.trim()) { toast.error("Enter a recipient email"); return; }
+    setBusy(true);
+    try {
+      const { data } = await api.post("/admin/smtp/test", { to: to.trim() });
+      toast.success(`✓ Test email sent to ${data.sent_to}`);
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "SMTP test failed", { duration: 10000 });
+    } finally { setBusy(false); }
+  };
+  return (
+    <div className="col-span-2 bg-zinc-950 border border-zinc-800 rounded-md p-3 space-y-2" data-testid="smtp-test-controls">
+      <Label className="m-0">Send a test email (uses the SMTP settings currently saved)</Label>
+      <div className="flex flex-wrap gap-2">
+        <Input
+          value={to}
+          onChange={(e) => setTo(e.target.value)}
+          placeholder="recipient@example.com"
+          className="bg-zinc-900 border-zinc-800 flex-1 min-w-[200px]"
+          data-testid="smtp-test-to"
+        />
+        <Button onClick={send} disabled={busy} className="pro-gradient text-white border-0" data-testid="smtp-test-send">
+          {busy ? "Sending…" : "Send test email"}
+        </Button>
+      </div>
+      <p className="text-xs text-zinc-500">If it fails, the toast shows the exact SMTP error so you can diagnose (wrong password, wrong port, firewall, etc.).</p>
     </div>
   );
 }

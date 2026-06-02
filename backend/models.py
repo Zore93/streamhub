@@ -198,7 +198,8 @@ class AppSettings(BaseModel):
     smtp_user: str = ""
     smtp_password: str = ""
     smtp_from: str = ""
-    smtp_use_tls: bool = True
+    smtp_use_tls: bool = True  # legacy boolean — kept for backwards compat
+    smtp_security: str = ""    # "" (auto) | "starttls" | "ssl" | "none"
     require_email_verification: bool = False
     # Stripe
     stripe_secret_key: str = ""  # if blank, uses env STRIPE_API_KEY

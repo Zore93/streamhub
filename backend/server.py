@@ -41,7 +41,7 @@ from auth import (
     set_jwt_secret,
     verify_password,
 )
-from mailer import send_verification_email
+from mailer import send_contact_message, send_test_email, send_verification_email
 from storage import (
     upload_file as wasabi_upload,
     wasabi_configured,
@@ -1751,39 +1751,55 @@ async def contact_form(payload: dict):
     to = settings.get("contact_email")
     if not to:
         raise HTTPException(503, "Contact email not configured by admin")
-    # Persist
+    # Persist (so admin sees it in Contact Messages even if email send fails)
     await db.contact_messages.insert_one({
         "id": new_id(), "title": title, "message": message, "email": email,
         "created_at": now_iso(),
     })
-    # Best-effort send via SMTP
-    if settings.get("smtp_enabled") and settings.get("smtp_host"):
-        try:
-            from email.message import EmailMessage
-            import aiosmtplib
-            msg = EmailMessage()
-            msg["From"] = settings.get("smtp_from") or settings.get("smtp_user")
-            msg["To"] = to
-            msg["Reply-To"] = email
-            msg["Subject"] = f"[StreamHub Contact] {title}"
-            msg.set_content(f"From: {email}\n\n{message}")
-            await aiosmtplib.send(
-                msg,
-                hostname=settings.get("smtp_host"),
-                port=int(settings.get("smtp_port", 587)),
-                username=settings.get("smtp_user") or None,
-                password=settings.get("smtp_password") or None,
-                start_tls=bool(settings.get("smtp_use_tls", True)),
-                timeout=15,
-            )
-        except Exception as e:  # noqa: BLE001
-            logger.warning(f"contact smtp failed: {e}")
-    return {"ok": True}
+    # Send via SMTP — raises with the real error, which we surface as 502 so the
+    # user knows something actually went wrong (no more silent "Sent" toast).
+    if not settings.get("smtp_enabled") or not settings.get("smtp_host"):
+        return {"ok": True, "delivered": False,
+                "note": "Message saved. SMTP is disabled, so it wasn't emailed."}
+    try:
+        await send_contact_message(settings, to, email, title, message)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("contact smtp failed: %s", e)
+        # We still keep the saved message; admin can read it in the panel.
+        raise HTTPException(502, f"SMTP send failed: {e}") from e
+    return {"ok": True, "delivered": True}
 
 
 @api.get("/admin/contact-messages")
 async def admin_contact_messages(admin: dict = Depends(require_admin)):
     return await db.contact_messages.find({}, {"_id": 0}).sort("created_at", -1).to_list(500)
+
+
+@api.post("/admin/smtp/test")
+async def admin_smtp_test(payload: dict, admin: dict = Depends(require_admin)):
+    """Send a test email so the admin can confirm SMTP works without going
+    through the public Contact form.  Returns the real SMTP error on failure."""
+    to = (payload.get("to") or "").strip() or admin.get("email")
+    if not to:
+        raise HTTPException(400, "Provide a `to` email address")
+    settings = await get_settings()
+    if not settings.get("smtp_host"):
+        raise HTTPException(400, "SMTP host is empty — save SMTP settings first")
+    try:
+        await send_test_email(settings, to)
+    except Exception as e:  # noqa: BLE001
+        # Most common Gmail errors annotated for clarity
+        msg = str(e)
+        hint = ""
+        if "Username and Password not accepted" in msg or "535" in msg:
+            hint = (" Hint: Gmail requires a 16-char App Password (not your normal password), "
+                    "generated at myaccount.google.com → Security → 2-Step Verification → App passwords.")
+        elif "STARTTLS" in msg or "starttls" in msg:
+            hint = " Hint: port 465 needs SMTP security = 'ssl' (implicit TLS), not STARTTLS."
+        elif "connection" in msg.lower() and "refused" in msg.lower():
+            hint = " Hint: check the firewall / outgoing port 587/465 from your VPS to Gmail."
+        raise HTTPException(502, f"SMTP test failed: {e}.{hint}") from e
+    return {"ok": True, "sent_to": to}
 
 
 @api.delete("/admin/contact-messages/{mid}")
