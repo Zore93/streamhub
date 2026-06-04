@@ -1,6 +1,30 @@
 upstream sh_backend  { server backend:8001; }
 upstream sh_frontend { server frontend:80;  }
 
+# Social-media crawler detection (used to route /watch/<id> → /api/og/video/<id>
+# so Discord/Facebook/Twitter/etc. see proper embed cards).
+map $http_user_agent $is_social_crawler {
+    default 0;
+    "~*facebookexternalhit"     1;
+    "~*Facebot"                 1;
+    "~*Twitterbot"              1;
+    "~*Discordbot"              1;
+    "~*Slackbot"                1;
+    "~*TelegramBot"             1;
+    "~*WhatsApp"                1;
+    "~*LinkedInBot"             1;
+    "~*Googlebot"               1;
+    "~*bingbot"                 1;
+    "~*Embedly"                 1;
+    "~*Pinterest"               1;
+    "~*redditbot"               1;
+    "~*Mastodon"                1;
+    "~*Iframely"                1;
+    "~*SkypeUriPreview"         1;
+    "~*Applebot"                1;
+    "~*Yahoo!"                  1;
+}
+
 # HTTP -> HTTPS + ACME challenge
 server {
     listen 80;
@@ -27,6 +51,22 @@ server {
     proxy_read_timeout 3600s;
     proxy_send_timeout 3600s;
 
+    # ── Social-media crawler routing ───────────────────────────────────────
+    # When a known crawler (see top-of-file `map`) hits /watch/<id> we rewrite
+    # to the backend's server-rendered OG-card endpoint so link previews show
+    # the episode thumbnail + title.  Humans still get the React SPA.
+    location ~ ^/watch/([^/?#]+) {
+        if ($is_social_crawler) {
+            rewrite ^/watch/([^/?#]+).*$ /api/og/video/$1 last;
+        }
+        proxy_pass http://sh_frontend;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
     # API + media (FastAPI)
     location /api/ {
         proxy_pass http://sh_backend;
@@ -39,8 +79,11 @@ server {
         proxy_set_header Connection "upgrade";
     }
 
-    # React SPA
+    # React SPA — homepage crawlers also get the OG-card.
     location / {
+        if ($is_social_crawler) {
+            rewrite ^/$ /api/og/home last;
+        }
         proxy_pass http://sh_frontend;
         proxy_http_version 1.1;
         proxy_set_header Host $host;

@@ -1915,6 +1915,101 @@ async def public_site_config():
     }
 
 
+@api.get("/og/video/{video_id}")
+async def og_video_html(video_id: str):
+    """Server-rendered HTML for social-media crawlers (Discord/Facebook/Twitter/etc).
+
+    nginx routes any request to `/watch/<id>` with a crawler User-Agent here so
+    the link preview shows the actual episode thumbnail + title instead of the
+    generic SPA shell.  Humans (real browsers) keep hitting the React app.
+    """
+    from fastapi.responses import HTMLResponse
+    import html as _html
+    v = await db.videos.find_one({"id": video_id}, {"_id": 0})
+    s = await get_settings()
+    site_title = s.get("site_title") or "StreamHub"
+    base = (s.get("site_canonical_url") or "").rstrip("/")
+    if not v:
+        # Fall back to homepage card so a missing video doesn't break the embed.
+        title = site_title
+        desc = s.get("site_description") or ""
+        img = mediaUrl_for_og(s.get("site_og_image") or "", s)
+        page_url = base or "/"
+    else:
+        title = f'{v.get("title") or "Video"} — {site_title}'
+        desc = (v.get("description") or "").strip()[:200] or (s.get("site_description") or "")
+        img = mediaUrl_for_og(v.get("thumbnail_url") or s.get("site_og_image") or "", s)
+        page_url = f"{base}/watch/{video_id}" if base else f"/watch/{video_id}"
+    esc = _html.escape
+    body = f"""<!doctype html>
+<html lang="ro"><head>
+<meta charset="utf-8">
+<title>{esc(title)}</title>
+<meta name="description" content="{esc(desc)}">
+<link rel="canonical" href="{esc(page_url)}">
+<meta property="og:type" content="video.other">
+<meta property="og:site_name" content="{esc(site_title)}">
+<meta property="og:title" content="{esc(title)}">
+<meta property="og:description" content="{esc(desc)}">
+<meta property="og:url" content="{esc(page_url)}">
+<meta property="og:image" content="{esc(img)}">
+<meta property="og:image:secure_url" content="{esc(img)}">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="{esc(title)}">
+<meta name="twitter:description" content="{esc(desc)}">
+<meta name="twitter:image" content="{esc(img)}">
+<meta http-equiv="refresh" content="0; url={esc(page_url)}">
+</head><body>
+<p><a href="{esc(page_url)}">{esc(title)}</a></p>
+</body></html>"""
+    return HTMLResponse(body, headers={"Cache-Control": "public, max-age=300"})
+
+
+def mediaUrl_for_og(rel: str, settings: dict) -> str:
+    """Resolve a possibly-relative media path to an absolute URL for OG tags."""
+    if not rel:
+        return ""
+    if rel.startswith("http://") or rel.startswith("https://"):
+        return rel
+    base = (settings.get("site_canonical_url") or "").rstrip("/")
+    if not base:
+        return rel
+    return f"{base}/media/{rel.lstrip('/')}"
+
+
+@api.get("/og/home")
+async def og_home_html():
+    """SSR OG card for the homepage / unknown routes."""
+    from fastapi.responses import HTMLResponse
+    import html as _html
+    s = await get_settings()
+    title = s.get("site_title") or "StreamHub"
+    desc = s.get("site_description") or ""
+    base = (s.get("site_canonical_url") or "").rstrip("/")
+    img = mediaUrl_for_og(s.get("site_og_image") or "", s)
+    page_url = base or "/"
+    esc = _html.escape
+    body = f"""<!doctype html>
+<html lang="ro"><head>
+<meta charset="utf-8">
+<title>{esc(title)}</title>
+<meta name="description" content="{esc(desc)}">
+<link rel="canonical" href="{esc(page_url)}">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="{esc(title)}">
+<meta property="og:title" content="{esc(title)}">
+<meta property="og:description" content="{esc(desc)}">
+<meta property="og:url" content="{esc(page_url)}">
+<meta property="og:image" content="{esc(img)}">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="{esc(title)}">
+<meta name="twitter:description" content="{esc(desc)}">
+<meta name="twitter:image" content="{esc(img)}">
+<meta http-equiv="refresh" content="0; url={esc(page_url)}">
+</head><body><p><a href="{esc(page_url)}">{esc(title)}</a></p></body></html>"""
+    return HTMLResponse(body, headers={"Cache-Control": "public, max-age=300"})
+
+
 # ============ Admin: site logo upload ============
 (UPLOAD_DIR / "branding").mkdir(exist_ok=True)
 

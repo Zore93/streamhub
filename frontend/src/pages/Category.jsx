@@ -53,7 +53,7 @@ export default function Category() {
   return (
     <div data-testid="category-page">
       <h1 className="text-3xl font-bold font-heading mb-6">{cat?.name || "Category"}</h1>
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+      <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-6">
         {vids.map((v) => <VideoCard key={v.id} v={v} />)}
       </div>
       {vids.length === 0 && !loading && <p className="text-zinc-500 text-center py-10">{t("page.empty")}</p>}
