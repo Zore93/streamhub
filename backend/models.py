@@ -221,7 +221,9 @@ class AppSettings(BaseModel):
     site_favicon_url: str = ""
     site_logo_url: str = ""   # left-sidebar brand logo; replaces the "S" + name when set
     site_seo_keywords: str = ""
-    site_seo_meta: str = ""  # raw additional <meta> tags
+    site_seo_meta: str = ""
+    site_og_image: str = ""   # default Open Graph image (used as fallback for embeds)
+    site_canonical_url: str = ""  # canonical base URL e.g. https://gleague.eu (used for og:url + sharing)  # raw additional <meta> tags
     # Auth security
     min_password_length: int = 8
     require_password_complexity: bool = True

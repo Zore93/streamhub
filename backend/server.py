@@ -309,10 +309,10 @@ async def process_video(video_id: str, src_path: str):
                 },
             )
             await _publish_status(video_id)
-            # Generate 10 thumbnails
+            # Generate 20 thumbnails (per admin request — was 10)
             thumb_dir = UPLOAD_DIR / "thumbnails"
             thumbs = await generate_thumbnails(
-                src_path, str(thumb_dir), video_id, duration, 10
+                src_path, str(thumb_dir), video_id, duration, 20
             )
             use_wasabi = wasabi_configured(settings)
             thumb_urls: List[str] = []
@@ -625,13 +625,25 @@ async def list_videos(
             ]
     if section == "popular":
         cur = db.videos.find(filt, {"_id": 0}).sort("views", -1).skip(skip).limit(limit)
-        return await cur.to_list(limit)
-    if section == "random":
+        items = await cur.to_list(limit)
+    elif section == "random":
         pipeline = [{"$match": filt}, {"$sample": {"size": limit + skip}},
                     {"$project": {"_id": 0}}, {"$skip": skip}, {"$limit": limit}]
-        return await db.videos.aggregate(pipeline).to_list(limit)
-    cur = db.videos.find(filt, {"_id": 0}).sort("created_at", -1).skip(skip).limit(limit)
-    return await cur.to_list(limit)
+        items = await db.videos.aggregate(pipeline).to_list(limit)
+    else:
+        cur = db.videos.find(filt, {"_id": 0}).sort("created_at", -1).skip(skip).limit(limit)
+        items = await cur.to_list(limit)
+    # Decorate each video with comments_count for the cards (cheap fan-out).
+    if items:
+        ids = [v["id"] for v in items]
+        pipeline = [
+            {"$match": {"video_id": {"$in": ids}}},
+            {"$group": {"_id": "$video_id", "n": {"$sum": 1}}},
+        ]
+        counts = {r["_id"]: r["n"] async for r in db.comments.aggregate(pipeline)}
+        for v in items:
+            v["comments_count"] = counts.get(v["id"], 0)
+    return items
 
 
 @api.get("/videos/count")
@@ -1891,6 +1903,8 @@ async def public_site_config():
         "description": s.get("site_description") or "",
         "favicon_url": s.get("site_favicon_url") or "",
         "logo_url": s.get("site_logo_url") or "",
+        "og_image": s.get("site_og_image") or "",
+        "canonical_url": s.get("site_canonical_url") or "",
         "keywords": s.get("site_seo_keywords") or "",
         "meta": s.get("site_seo_meta") or "",
         "default_language": s.get("default_language") or "ro",

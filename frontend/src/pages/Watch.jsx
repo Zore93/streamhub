@@ -6,7 +6,7 @@ import { useT } from "@/contexts/LanguageContext";
 import { Layout } from "@/layout/Layout";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { Heart, Eye, Crown, Lock, Send, Trash2, Loader2 } from "lucide-react";
+import { Eye, Crown, Lock, Send, Trash2, Loader2, ThumbsUp, Folder } from "lucide-react";
 import { toast } from "sonner";
 import VideoPlayer from "@/components/VideoPlayer";
 import { Progress } from "@/components/ui/progress";
@@ -21,6 +21,12 @@ export default function Watch() {
   const [comment, setComment] = useState("");
   const [resolution, setResolution] = useState(null);
   const [allowDownload, setAllowDownload] = useState(false);
+  const [categories, setCategories] = useState([]);
+
+  useEffect(() => {
+    api.get("/categories").then((r) => setCategories(r.data)).catch(() => {});
+  }, []);
+  const category = categories.find((c) => c.id === video?.category_id);
 
   const load = async () => {
     const { data } = await api.get(`/videos/${id}`);
@@ -169,13 +175,43 @@ export default function Watch() {
           {video.access_tier === "pro" && <span className="pro-gradient text-white text-xs font-semibold px-3 py-1 rounded-md flex items-center gap-1"><Crown size={12} /> PRO</span>}
         </div>
 
-        <div className="flex flex-wrap items-center gap-4 text-zinc-500 mb-4">
-          <span className="flex items-center gap-1.5"><Eye size={14} /> {video.views} {t("video.views")}</span>
-          <button onClick={toggleLike} className="flex items-center gap-1.5 hover:text-rose-400 transition" data-testid="like-btn">
-            <Heart size={14} className={user && video.likes?.includes(user.id) ? "fill-rose-500 text-rose-500" : ""} />
-            {video.likes?.length || 0}
+        <div className="flex flex-wrap items-center gap-3 sm:gap-4 mb-4">
+          <button
+            onClick={toggleLike}
+            className={`inline-flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium transition-colors border ${
+              user && video.likes?.includes(user.id)
+                ? "bg-rose-500 border-rose-500 text-white"
+                : "bg-zinc-900 border-zinc-800 text-zinc-200 hover:bg-zinc-800"
+            }`}
+            data-testid="like-btn"
+          >
+            <ThumbsUp size={14} className={user && video.likes?.includes(user.id) ? "fill-white" : ""} />
+            <span>Like</span>
+            <span className="text-zinc-400">·</span>
+            <span>{video.likes?.length || 0}</span>
           </button>
-          <Link to={`/profile/${video.uploader_id}`} className="hover:text-zinc-200">@{video.uploader_username}</Link>
+          <span className="text-zinc-500 text-sm flex items-center gap-1.5"><Eye size={14} /> {video.views} {t("video.views")}</span>
+          {/* Uploader — opens profile in a new tab on Ctrl/Cmd+click; users can also right-click → "open in new tab". */}
+          <a
+            href={`/profile/${video.uploader_id}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-zinc-400 hover:text-zinc-100 text-sm"
+            data-testid="uploader-link"
+          >
+            @{video.uploader_username}
+          </a>
+          {category && (
+            <a
+              href={`/category/${category.id}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 text-sm text-zinc-300 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 px-3 py-1 rounded-full transition-colors"
+              data-testid="video-category-link"
+            >
+              <Folder size={12} /> {category.name}
+            </a>
+          )}
         </div>
 
         {video.description && (
@@ -207,7 +243,15 @@ export default function Watch() {
                 </div>
                 <div className="flex-1">
                   <div className="flex items-center justify-between">
-                    <span className="font-semibold text-sm">@{c.username}</span>
+                    <a
+                      href={`/profile/${c.user_id}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="font-semibold text-sm hover:text-rose-300 transition-colors"
+                      data-testid={`comment-author-${c.id}`}
+                    >
+                      @{c.username}
+                    </a>
                     {(user?.id === c.user_id || user?.role === "admin") && (
                       <button onClick={() => delComment(c.id)} className="text-zinc-500 hover:text-red-400"><Trash2 size={14} /></button>
                     )}

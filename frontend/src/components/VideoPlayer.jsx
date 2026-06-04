@@ -13,6 +13,7 @@ import {
 export default function VideoPlayer({ video, currentRendition, resolution, setResolution, allowDownload }) {
   const ref = useRef(null);
   const wrapRef = useRef(null);
+  const hideTimerRef = useRef(null);
   const [playing, setPlaying] = useState(false);
   const [muted, setMuted] = useState(false);
   const [volume, setVolume] = useState(1);
@@ -20,6 +21,42 @@ export default function VideoPlayer({ video, currentRendition, resolution, setRe
   const [duration, setDuration] = useState(video.duration_sec || 0);
   const [activeTrack, setActiveTrack] = useState("off");
   const [savedTime, setSavedTime] = useState(0);
+  // Controls visibility: true on mount, hides after 2.5s of no mouse movement
+  // while the video is playing.  Any mousemove / mouseenter / pause shows them
+  // again.  Works in fullscreen too because we listen on the wrap element.
+  const [controlsVisible, setControlsVisible] = useState(true);
+
+  const showControls = () => {
+    setControlsVisible(true);
+    if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
+    if (!ref.current || ref.current.paused) return;  // keep visible when paused
+    hideTimerRef.current = setTimeout(() => setControlsVisible(false), 2500);
+  };
+
+  useEffect(() => {
+    const wrap = wrapRef.current;
+    if (!wrap) return;
+    const onMove = () => showControls();
+    const onLeave = () => {
+      // Hide immediately when mouse leaves the player while playing
+      if (ref.current && !ref.current.paused) setControlsVisible(false);
+    };
+    wrap.addEventListener("mousemove", onMove);
+    wrap.addEventListener("mouseenter", onMove);
+    wrap.addEventListener("mouseleave", onLeave);
+    wrap.addEventListener("touchstart", onMove, { passive: true });
+    return () => {
+      wrap.removeEventListener("mousemove", onMove);
+      wrap.removeEventListener("mouseenter", onMove);
+      wrap.removeEventListener("mouseleave", onLeave);
+      wrap.removeEventListener("touchstart", onMove);
+      if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // When playback state flips, refresh the timer
+  useEffect(() => { showControls(); /* eslint-disable-next-line */ }, [playing]);
 
   // When user switches resolution we preserve current playback time
   useEffect(() => {
@@ -101,7 +138,11 @@ export default function VideoPlayer({ video, currentRendition, resolution, setRe
   if (!currentRendition) return null;
 
   return (
-    <div ref={wrapRef} className="relative w-full h-full bg-black group" data-testid="video-player">
+    <div
+      ref={wrapRef}
+      className={`relative w-full h-full bg-black group player-wrap ${controlsVisible ? "controls-visible" : "controls-hidden"}`}
+      data-testid="video-player"
+    >
       <video
         ref={ref}
         src={mediaUrl(currentRendition.url)}
@@ -116,8 +157,12 @@ export default function VideoPlayer({ video, currentRendition, resolution, setRe
         ))}
       </video>
 
-      {/* Bottom control bar */}
-      <div className="absolute bottom-0 left-0 right-0 px-3 pt-10 pb-3 bg-gradient-to-t from-black/85 via-black/40 to-transparent opacity-100 group-hover:opacity-100 transition-opacity">
+      {/* Bottom control bar — auto-hides after 2.5 s of inactivity while playing */}
+      <div
+        className={`absolute bottom-0 left-0 right-0 px-3 pt-10 pb-3 bg-gradient-to-t from-black/85 via-black/40 to-transparent transition-opacity duration-300 ${
+          controlsVisible ? "opacity-100" : "opacity-0 pointer-events-none"
+        }`}
+      >
         {/* Scrubber */}
         <input
           type="range" min="0" max={duration || 0} step="0.1" value={time}

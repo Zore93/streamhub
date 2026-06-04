@@ -651,6 +651,8 @@ function SettingsTab() {
         <Field label="Site title"><Input value={s.site_title || ""} onChange={(e) => upd("site_title", e.target.value)} className="bg-zinc-950 border-zinc-800" data-testid="site-title-input" /></Field>
         <Field label="Description"><Input value={s.site_description || ""} onChange={(e) => upd("site_description", e.target.value)} className="bg-zinc-950 border-zinc-800" /></Field>
         <Field label="Favicon URL"><Input value={s.site_favicon_url || ""} onChange={(e) => upd("site_favicon_url", e.target.value)} className="bg-zinc-950 border-zinc-800" placeholder="https://.../favicon.ico" /></Field>
+        <Field label="Canonical URL"><Input value={s.site_canonical_url || ""} onChange={(e) => upd("site_canonical_url", e.target.value)} className="bg-zinc-950 border-zinc-800" placeholder="https://gleague.eu" /></Field>
+        <Field label="Default OG image (for link previews)"><Input value={s.site_og_image || ""} onChange={(e) => upd("site_og_image", e.target.value)} className="bg-zinc-950 border-zinc-800" placeholder="https://.../share.png or path on Wasabi" /></Field>
         <SiteLogoControls
           current={s.site_logo_url}
           onChange={(url) => upd("site_logo_url", url)}

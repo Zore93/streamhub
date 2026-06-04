@@ -126,3 +126,21 @@ h5 {
 .animate-slide-in-right {
     animation: slide-in-right 200ms ease-out;
 }
+
+/* Video player — hide cursor when controls are hidden so the screen is clean. */
+.player-wrap.controls-hidden { cursor: none; }
+.player-wrap.controls-visible { cursor: auto; }
+
+/* Push native ::cue subtitles 38 px up so they sit above the bottom edge
+ * instead of overlapping the (now auto-hiding) control bar.
+ * Webkit/Blink reads `::cue { padding-bottom }` but the layout offset is
+ * controlled by `::-webkit-media-text-track-display { transform }`. */
+.player-wrap video::-webkit-media-text-track-display {
+    -webkit-transform: translateY(-38px) !important;
+            transform: translateY(-38px) !important;
+}
+.player-wrap video::cue {
+    /* Webkit ignores margin/padding on ::cue — keep just font tuning here. */
+    background-color: rgba(0,0,0,0.65);
+    color: #fff;
+}

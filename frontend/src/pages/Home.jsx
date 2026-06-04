@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { Flame, Clock, Shuffle, Smartphone, ChevronRight } from "lucide-react";
+import { Flame, Clock, Smartphone, ChevronRight } from "lucide-react";
 import api from "@/lib/api";
 import VideoCard from "@/components/VideoCard";
 import { Button } from "@/components/ui/button";
@@ -10,9 +10,11 @@ const HOME_LIMIT = 12;
 
 function Section({ title, Icon, videos, seeMoreTo, testId, vertical = false, seeMoreLabel }) {
   if (!videos || videos.length === 0) return null;
+  // Mobile: 2 columns of cards parallel (per user request) — matches the
+  // typical tube-site layout.  Sizes scale up on tablet/desktop.
   const grid = vertical
-    ? "grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4"
-    : "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6";
+    ? "grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2 sm:gap-4"
+    : "grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-6";
   return (
     <section className="mb-12" data-testid={testId}>
       <div className="flex items-center justify-between gap-3 mb-6 flex-wrap">
@@ -39,7 +41,6 @@ export default function Home() {
   const { t } = useT();
   const [latest, setLatest] = useState([]);
   const [popular, setPopular] = useState([]);
-  const [random, setRandom] = useState([]);
   const [shorts, setShorts] = useState([]);
 
   useEffect(() => {
@@ -47,7 +48,6 @@ export default function Home() {
       `/videos?section=${section}&limit=${HOME_LIMIT}&kind=video${extra}`;
     api.get(url("latest")).then((r) => setLatest(r.data)).catch(() => {});
     api.get(url("popular")).then((r) => setPopular(r.data)).catch(() => {});
-    api.get(url("random")).then((r) => setRandom(r.data)).catch(() => {});
     api
       .get(`/videos?section=latest&limit=${HOME_LIMIT}&kind=short`)
       .then((r) => setShorts(r.data))
@@ -57,7 +57,6 @@ export default function Home() {
   const isEmpty =
     latest.length === 0 &&
     popular.length === 0 &&
-    random.length === 0 &&
     shorts.length === 0;
 
   const seeMore = t("home.seeMore");
@@ -89,14 +88,6 @@ export default function Home() {
         videos={popular}
         seeMoreTo="/popular"
         testId="section-popular"
-        seeMoreLabel={seeMore}
-      />
-      <Section
-        title={t("home.discover")}
-        Icon={Shuffle}
-        videos={random}
-        seeMoreTo="/discover"
-        testId="section-discover"
         seeMoreLabel={seeMore}
       />
       <Section
