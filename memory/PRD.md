@@ -49,19 +49,29 @@ Build a full-stack video-sharing platform inspired by hentairosub.ro with:
    * `POST /admin/videos/mark-legacy-as-videos` — reverse
 - ✅ Watch page: WebSocket /api/videos/{id}/status push channel replaces 4-second polling (saves bandwidth + battery)
 - ✅ EditVideo subtitles: language Select with 14 common locales + "Other" custom code, "Make default" reorder via PATCH, is_short toggle, srt/ass auto-conversion to WebVTT
+- ✅ **SEO slug URLs (Feb 2026)** — videos served at `/watch/<slug>-<6char>` (e.g. `/watch/kutsujoku-sezonul-2-ep1-aB3xY7`). UUID URLs still work and 301-replace in the URL bar to the slug. Backfill script: `python -m scripts.backfill_video_slugs`.
+- ✅ **SSR Open Graph for crawlers (Feb 2026)** — FastAPI middleware intercepts /watch/<id> requests from social-media crawlers (Facebook/Discord/Twitter/Telegram/Slack/etc) and returns server-rendered HTML with og:title, og:description and og:image (the actual video thumbnail). Production VPS nginx also has a `is_social_crawler` map that routes those UAs to /api/og/video/<id>.
+- ✅ **Coin economy (Feb 2026)** — users earn coins per like (first-time only, idempotent via `coin_ledger`) and per comment (capped at N rewarded comments / day / video). Admin sets `coins_per_like`, `coins_per_comment`, `coins_comment_daily_cap_per_video` in Admin → Settings → Economie Monede.
+- ✅ **Avatar frames + Shop (Feb 2026)** — 50 default CSS-animated avatar frames (28 unique `effect_key` animations × multiple color schemes; rarities common/rare/epic/legendary). Square avatars (`rounded-md`). New `/shop` page accessible from right-sidebar. Profile page has a "Cadre" tab for applying owned frames. Comment avatars are 100×100 with the user's currently selected frame. Admin Panel has a "Cadre Avatar" tab for CRUD + a `POST /admin/frames/seed` button.
+- ✅ **Privacy**: user emails are hidden from public `/api/users/{id}` responses; only the owner and admins receive the `email` field.
+- ✅ **Page title sync**: `<title>` resets to the site default when navigating back from /watch/:id → /.
+- ✅ **Resolution badge fix**: thumbnail badge now considers `max(rendition heights, original_height, original_width)` so 4K-source videos always display the 4K badge.
 
 ## Roadmap / Future improvements
 - P2 — Multi-language metadata (currently `description` is single string)
 - P2 — Per-user playlists / favourites
-- P3 — Refactor `server.py` (now ~1860 lines) into `routes/` package
+- P2 — Coin earning streaks / daily login bonus
+- P2 — Frame trading between users
+- P3 — Refactor `server.py` (now ~2670 lines) into `routes/` package — overdue
 - P3 — Notification system (in-app bell for video ready / replies)
 - P3 — `git ls-remote` validation in /admin/github/set-remote for connectivity check
 - P3 — Refactor models.py into `models/` package; move chat/storage helpers to `services/`
+- P3 — Atomicity: wrap `_award_coins` (user.coins $inc + coin_ledger insert) in a Mongo transaction.
 
 ## Test data
-- Admin: `admin@streamhub.io` / `Admin123!`
+- Admin: `admin@streamhub.io` / `Admin123!` (10 000 coins seeded for shop testing)
 - Owner: `owner@streamhub.io` / `Owner@2026!`
-- Tests: see `/app/backend/tests/test_iteration4.py`; report at `/app/test_reports/iteration_4.json` (15/15 backend + 16/16 frontend = 100% pass).
+- Tests: latest report `/app/test_reports/iteration_6.json` (12/12 backend + 11/11 frontend = 100% pass). Test file `/app/backend/tests/test_iteration6.py`.
 
 ## Deployment
 - See `/app/deploy/README.md` then `sudo bash /app/deploy/scripts/install.sh`.
