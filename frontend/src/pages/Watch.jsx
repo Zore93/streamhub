@@ -1,19 +1,21 @@
 import React, { useEffect, useRef, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import api, { mediaUrl, BACKEND_URL } from "@/lib/api";
 import { useAuth } from "@/contexts/AuthContext";
 import { useT } from "@/contexts/LanguageContext";
 import { Layout } from "@/layout/Layout";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { Eye, Crown, Lock, Send, Trash2, Loader2, ThumbsUp, Folder } from "lucide-react";
+import { Eye, Crown, Lock, Send, Trash2, Loader2, ThumbsUp, Folder, Coins } from "lucide-react";
 import { toast } from "sonner";
 import VideoPlayer from "@/components/VideoPlayer";
+import FramedAvatar from "@/components/FramedAvatar";
 import { Progress } from "@/components/ui/progress";
 
 export default function Watch() {
   const { id } = useParams();
-  const { user } = useAuth();
+  const navigate = useNavigate();
+  const { user, refresh } = useAuth();
   const { t } = useT();
   const [video, setVideo] = useState(null);
   const [recs, setRecs] = useState([]);
@@ -28,23 +30,31 @@ export default function Watch() {
   }, []);
   const category = categories.find((c) => c.id === video?.category_id);
 
-  const load = async () => {
-    const { data } = await api.get(`/videos/${id}`);
-    setVideo(data);
-    if (data.renditions?.length && !resolution) {
-      setResolution(data.renditions[data.renditions.length - 1].resolution);
-    }
-    return data;
-  };
+  useEffect(() => {
+    let alive = true;
+    Promise.all([
+      api.get(`/videos/${id}`),
+      api.get(`/videos/${id}/recommendations?limit=15`),
+      api.get(`/videos/${id}/comments`),
+    ]).then(([v, rec, com]) => {
+      if (!alive) return;
+      setVideo(v.data);
+      if (v.data.renditions?.length) {
+        setResolution((cur) => cur || v.data.renditions[v.data.renditions.length - 1].resolution);
+      }
+      if (v.data.slug && id !== v.data.slug) {
+        navigate(`/watch/${v.data.slug}`, { replace: true });
+      }
+      setRecs(rec.data);
+      setComments(com.data);
+    });
+    api.post(`/videos/${id}/view`).catch(() => {});
+    return () => { alive = false; };
+  }, [id, navigate]);
 
   useEffect(() => {
-    load();
-    api.get(`/videos/${id}/recommendations?limit=15`).then((r) => setRecs(r.data));
-    api.get(`/videos/${id}/comments`).then((r) => setComments(r.data));
     api.get("/site/player-config").then((r) => setAllowDownload(!!r.data.allow_video_download)).catch(() => {});
-    api.post(`/videos/${id}/view`).catch(() => {});
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id]);
+  }, []);
 
   // Real-time status updates via WebSocket (replaces HTTP polling).  Open a
   // /api/videos/{id}/status socket whenever the video isn't fully ready and
@@ -78,13 +88,13 @@ export default function Watch() {
               setResolution(r[r.length - 1].resolution);
             }
           }
-        } catch {}
+        } catch (_e) { /* ignore */ }
       };
       ws.onclose = () => {
         if (cancelled) return;
         reconnectTimer = setTimeout(connect, 3000);
       };
-      ws.onerror = () => { try { ws.close(); } catch {} };
+      ws.onerror = () => { try { ws.close(); } catch (_e) { /* ignore */ } };
     };
     connect();
 
@@ -94,13 +104,12 @@ export default function Watch() {
       const ws = wsRef.current;
       if (!ws) return;
       if (ws.readyState === WebSocket.CONNECTING) {
-        ws.addEventListener("open", () => { try { ws.close(); } catch {} }, { once: true });
+        ws.addEventListener("open", () => { try { ws.close(); } catch (_e) { /* ignore */ } }, { once: true });
       } else {
-        try { ws.close(); } catch {}
+        try { ws.close(); } catch (_e) { /* ignore */ }
       }
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id, video?.status, video?.renditions?.length]);
+  }, [id, video?.status, video?.renditions?.length, resolution]);
 
   const currentRendition = video?.renditions?.find((r) => r.resolution === resolution) || video?.renditions?.[0];
 
@@ -111,6 +120,10 @@ export default function Watch() {
       const { data } = await api.post(`/videos/${id}/comments`, { content: comment });
       setComments([data, ...comments]);
       setComment("");
+      if (data.coins_awarded > 0) {
+        toast.success(`+${data.coins_awarded} monede pentru comentariu!`, { icon: "🪙" });
+        refresh?.();
+      }
     } catch (err) {
       toast.error(err.response?.data?.detail || "Comment failed");
     }
@@ -120,6 +133,10 @@ export default function Watch() {
     if (!user) return toast.error(t("auth.signIn"));
     const { data } = await api.post(`/videos/${id}/like`);
     setVideo({ ...video, likes: data.liked ? [...(video.likes || []), user.id] : (video.likes || []).filter((x) => x !== user.id) });
+    if (data.coins_awarded > 0) {
+      toast.success(`+${data.coins_awarded} monede pentru like!`, { icon: "🪙" });
+      refresh?.();
+    }
   };
 
   const delComment = async (cid) => {
@@ -228,35 +245,72 @@ export default function Watch() {
         <div className="mt-8" data-testid="comments-section">
           <h2 className="text-xl font-semibold mb-4">{t("comments.title")} ({comments.length})</h2>
           {user ? (
-            <form onSubmit={submitComment} className="flex gap-2 mb-6">
-              <Textarea value={comment} onChange={(e) => setComment(e.target.value)} placeholder={t("comments.placeholder")} className="bg-zinc-900 border-zinc-800" data-testid="comment-input" />
-              <Button type="submit" className="pro-gradient text-white border-0 self-end" data-testid="comment-submit"><Send size={14} /></Button>
+            <form onSubmit={submitComment} className="flex gap-3 mb-6 items-start">
+              <FramedAvatar
+                src={user.avatar_url}
+                username={user.username}
+                size={56}
+                frame={null}
+                className="flex-shrink-0 hidden sm:inline-block"
+              />
+              <Textarea
+                value={comment}
+                onChange={(e) => setComment(e.target.value)}
+                placeholder={t("comments.placeholder")}
+                className="bg-zinc-900 border-zinc-800 min-h-[88px] text-base"
+                rows={3}
+                data-testid="comment-input"
+              />
+              <Button type="submit" className="pro-gradient text-white border-0 self-end h-10 px-4" data-testid="comment-submit">
+                <Send size={16} />
+              </Button>
             </form>
           ) : (
             <p className="text-zinc-500 mb-4">{t("comments.signInToComment")}</p>
           )}
-          <div className="space-y-3">
+          <div className="space-y-4">
             {comments.map((c) => (
-              <div key={c.id} className="flex gap-3 bg-zinc-900 border border-zinc-800 rounded-lg p-3" data-testid={`comment-${c.id}`}>
-                <div className="h-10 w-10 rounded-full bg-zinc-800 flex-shrink-0 overflow-hidden">
-                  {c.avatar_url && <img src={mediaUrl(c.avatar_url)} alt="" className="w-full h-full object-cover" />}
-                </div>
-                <div className="flex-1">
-                  <div className="flex items-center justify-between">
+              <div
+                key={c.id}
+                className="flex gap-4 bg-zinc-900 border border-zinc-800 rounded-lg p-4"
+                data-testid={`comment-${c.id}`}
+              >
+                <a
+                  href={`/profile/${c.user_id}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex-shrink-0"
+                >
+                  <FramedAvatar
+                    src={c.avatar_url}
+                    username={c.username}
+                    size={100}
+                    frame={c.frame || null}
+                    data-testid={`comment-avatar-${c.id}`}
+                  />
+                </a>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center justify-between gap-2">
                     <a
                       href={`/profile/${c.user_id}`}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="font-semibold text-sm hover:text-rose-300 transition-colors"
+                      className="font-semibold text-base hover:text-rose-300 transition-colors"
                       data-testid={`comment-author-${c.id}`}
                     >
                       @{c.username}
                     </a>
                     {(user?.id === c.user_id || user?.role === "admin") && (
-                      <button onClick={() => delComment(c.id)} className="text-zinc-500 hover:text-red-400"><Trash2 size={14} /></button>
+                      <button
+                        onClick={() => delComment(c.id)}
+                        className="text-zinc-500 hover:text-red-400"
+                        data-testid={`comment-delete-${c.id}`}
+                      >
+                        <Trash2 size={16} />
+                      </button>
                     )}
                   </div>
-                  <p className="text-zinc-300 mt-1 whitespace-pre-line">{c.content}</p>
+                  <p className="text-zinc-200 mt-2 whitespace-pre-line text-base leading-relaxed">{c.content}</p>
                 </div>
               </div>
             ))}

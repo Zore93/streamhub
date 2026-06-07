@@ -35,6 +35,7 @@ export default function Admin() {
           <TabsTrigger value="users" data-testid="tab-users">Users</TabsTrigger>
           <TabsTrigger value="categories" data-testid="tab-categories">Categories</TabsTrigger>
           <TabsTrigger value="packages" data-testid="tab-packages">Packages</TabsTrigger>
+          <TabsTrigger value="frames" data-testid="tab-frames">Cadre Avatar</TabsTrigger>
           <TabsTrigger value="announcements" data-testid="tab-announcements">Announcements</TabsTrigger>
           <TabsTrigger value="chat" data-testid="tab-chat">Live Chat</TabsTrigger>
           <TabsTrigger value="settings" data-testid="tab-settings">Settings</TabsTrigger>
@@ -44,6 +45,7 @@ export default function Admin() {
         <TabsContent value="users"><UsersTab /></TabsContent>
         <TabsContent value="categories"><CategoriesTab /></TabsContent>
         <TabsContent value="packages"><PackagesTab /></TabsContent>
+        <TabsContent value="frames"><FramesTab /></TabsContent>
         <TabsContent value="announcements"><AnnouncementsTab /></TabsContent>
         <TabsContent value="chat"><ChatModerationTab /></TabsContent>
         <TabsContent value="settings"><SettingsTab /></TabsContent>
@@ -405,6 +407,175 @@ function PackagesTab() {
   );
 }
 
+function FramesTab() {
+  const [frames, setFrames] = useState([]);
+  const [creating, setCreating] = useState({ name: "", effect_key: "neon-ring", color_primary: "#f43f5e", color_secondary: "#fb7185", rarity: "common", price_coins: 100, active: true, sort_order: 0 });
+  const [busy, setBusy] = useState(false);
+  const EFFECTS = [
+    "neon-ring", "dashed-rotate", "soft-glow", "conic-rotate", "stars-orbit",
+    "pulse-shadow", "aurora-shift", "fire", "electric", "particles",
+    "hologram", "glitch", "gold-shimmer", "diamond-shimmer", "fire-ring",
+    "frost-ring", "hearts-orbit", "moon-glow", "crown-orbit", "demonic",
+    "galaxy", "sun-rays", "phoenix", "dragon-scales", "petals",
+    "cyberpunk", "matrix", "lava", "cosmos-supreme",
+  ];
+
+  const load = () => api.get("/admin/frames").then((r) => setFrames(r.data));
+  useEffect(() => { load(); }, []);
+
+  const create = async () => {
+    if (!creating.name.trim()) return toast.error("Nume obligatoriu");
+    setBusy(true);
+    try {
+      await api.post("/admin/frames", creating);
+      setCreating({ ...creating, name: "" });
+      toast.success("Cadru creat");
+      load();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Eroare");
+    } finally { setBusy(false); }
+  };
+
+  const upd = async (id, patch) => {
+    await api.patch(`/admin/frames/${id}`, patch);
+    load();
+  };
+  const del = async (id) => {
+    if (!window.confirm("Șterge acest cadru? Va fi eliminat și din inventarul utilizatorilor.")) return;
+    await api.delete(`/admin/frames/${id}`);
+    toast.success("Șters");
+    load();
+  };
+
+  const seedDefaults = async () => {
+    setBusy(true);
+    try {
+      const { data } = await api.post("/admin/frames/seed");
+      toast.success(`${data.inserted} cadre adăugate (total: ${data.total})`);
+      load();
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <div className="mt-6 space-y-4" data-testid="admin-frames">
+      <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4">
+        <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+          <h3 className="font-semibold">Cadre Avatar — {frames.length} total</h3>
+          <Button onClick={seedDefaults} variant="outline" size="sm" disabled={busy} data-testid="seed-frames-btn">
+            Adaugă cele 50 implicite
+          </Button>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
+          <Input placeholder="Nume cadru" value={creating.name} onChange={(e) => setCreating({ ...creating, name: e.target.value })} className="bg-zinc-950 border-zinc-800" data-testid="new-frame-name" />
+          <select
+            value={creating.effect_key}
+            onChange={(e) => setCreating({ ...creating, effect_key: e.target.value })}
+            className="bg-zinc-950 border border-zinc-800 rounded-md px-3 py-2 text-sm"
+            data-testid="new-frame-effect"
+          >
+            {EFFECTS.map((e) => <option key={e} value={e}>{e}</option>)}
+          </select>
+          <select
+            value={creating.rarity}
+            onChange={(e) => setCreating({ ...creating, rarity: e.target.value })}
+            className="bg-zinc-950 border border-zinc-800 rounded-md px-3 py-2 text-sm"
+          >
+            <option value="common">common</option>
+            <option value="rare">rare</option>
+            <option value="epic">epic</option>
+            <option value="legendary">legendary</option>
+          </select>
+          <div className="flex gap-2">
+            <Input type="color" value={creating.color_primary} onChange={(e) => setCreating({ ...creating, color_primary: e.target.value })} className="bg-zinc-950 border-zinc-800 w-16" />
+            <Input type="color" value={creating.color_secondary} onChange={(e) => setCreating({ ...creating, color_secondary: e.target.value })} className="bg-zinc-950 border-zinc-800 w-16" />
+            <Input type="number" placeholder="Preț (monede)" value={creating.price_coins} onChange={(e) => setCreating({ ...creating, price_coins: parseInt(e.target.value || "0") })} className="bg-zinc-950 border-zinc-800" data-testid="new-frame-price" />
+          </div>
+          <Button onClick={create} disabled={busy} className="pro-gradient text-white border-0" data-testid="new-frame-create">
+            <Plus size={14} className="mr-1" /> Creează
+          </Button>
+        </div>
+      </div>
+
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm" data-testid="frames-table">
+          <thead>
+            <tr className="text-zinc-400 text-left border-b border-zinc-800">
+              <th className="py-2 px-2">Nume</th>
+              <th className="py-2 px-2">Efect</th>
+              <th className="py-2 px-2">Raritate</th>
+              <th className="py-2 px-2">Culori</th>
+              <th className="py-2 px-2">Preț</th>
+              <th className="py-2 px-2">Activ</th>
+              <th className="py-2 px-2"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {frames.map((f) => (
+              <tr key={f.id} className="border-b border-zinc-900 hover:bg-zinc-900/50" data-testid={`frame-row-${f.id}`}>
+                <td className="py-2 px-2">
+                  <Input
+                    defaultValue={f.name}
+                    onBlur={(e) => e.target.value !== f.name && upd(f.id, { name: e.target.value })}
+                    className="bg-zinc-950 border-zinc-800 h-8"
+                  />
+                </td>
+                <td className="py-2 px-2">
+                  <select
+                    defaultValue={f.effect_key}
+                    onChange={(e) => upd(f.id, { effect_key: e.target.value })}
+                    className="bg-zinc-950 border border-zinc-800 rounded-md px-2 py-1 text-xs"
+                  >
+                    {EFFECTS.map((e) => <option key={e} value={e}>{e}</option>)}
+                  </select>
+                </td>
+                <td className="py-2 px-2">
+                  <select
+                    defaultValue={f.rarity}
+                    onChange={(e) => upd(f.id, { rarity: e.target.value })}
+                    className="bg-zinc-950 border border-zinc-800 rounded-md px-2 py-1 text-xs"
+                  >
+                    <option value="common">common</option>
+                    <option value="rare">rare</option>
+                    <option value="epic">epic</option>
+                    <option value="legendary">legendary</option>
+                  </select>
+                </td>
+                <td className="py-2 px-2">
+                  <div className="flex gap-1">
+                    <input type="color" defaultValue={f.color_primary} onBlur={(e) => e.target.value !== f.color_primary && upd(f.id, { color_primary: e.target.value })} className="h-7 w-10 rounded border border-zinc-800 bg-zinc-950" />
+                    <input type="color" defaultValue={f.color_secondary} onBlur={(e) => e.target.value !== f.color_secondary && upd(f.id, { color_secondary: e.target.value })} className="h-7 w-10 rounded border border-zinc-800 bg-zinc-950" />
+                  </div>
+                </td>
+                <td className="py-2 px-2">
+                  <Input
+                    type="number"
+                    defaultValue={f.price_coins}
+                    onBlur={(e) => parseInt(e.target.value) !== f.price_coins && upd(f.id, { price_coins: parseInt(e.target.value || "0") })}
+                    className="bg-zinc-950 border-zinc-800 h-8 w-24"
+                    data-testid={`frame-price-${f.id}`}
+                  />
+                </td>
+                <td className="py-2 px-2">
+                  <Switch checked={f.active} onCheckedChange={(v) => upd(f.id, { active: v })} />
+                </td>
+                <td className="py-2 px-2">
+                  <Button size="sm" variant="destructive" onClick={() => del(f.id)} data-testid={`delete-frame-${f.id}`}>
+                    <Trash2 size={14} />
+                  </Button>
+                </td>
+              </tr>
+            ))}
+            {frames.length === 0 && (
+              <tr><td colSpan={7} className="text-zinc-500 py-6 text-center">Niciun cadru. Apasă „Adaugă cele 50 implicite".</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+
 function AnnouncementsTab() {
   const [list, setList] = useState([]);
   const [form, setForm] = useState({ title: "", content: "", active: true });
@@ -553,6 +724,18 @@ function SettingsTab() {
         <Field label="Allow guests to chat"><Switch checked={!!s.live_chat_guest_allowed} onCheckedChange={(v) => upd("live_chat_guest_allowed", v)} /></Field>
         <Field label="Max message length"><Input type="number" value={s.live_chat_max_message_length ?? 500} onChange={(e) => upd("live_chat_max_message_length", parseInt(e.target.value) || 500)} className="bg-zinc-950 border-zinc-800" /></Field>
         <Field label="Rate limit window (seconds)"><Input type="number" value={s.live_chat_rate_limit_seconds ?? 3} onChange={(e) => upd("live_chat_rate_limit_seconds", parseInt(e.target.value) || 3)} className="bg-zinc-950 border-zinc-800" /></Field>
+      </Section>
+      <Section title="Economie Monede">
+        <Field label="Monede per Like (prima dată)">
+          <Input type="number" min={0} value={s.coins_per_like ?? 1} onChange={(e) => upd("coins_per_like", parseInt(e.target.value) || 0)} className="bg-zinc-950 border-zinc-800" data-testid="coins-per-like" />
+        </Field>
+        <Field label="Monede per Comentariu">
+          <Input type="number" min={0} value={s.coins_per_comment ?? 2} onChange={(e) => upd("coins_per_comment", parseInt(e.target.value) || 0)} className="bg-zinc-950 border-zinc-800" data-testid="coins-per-comment" />
+        </Field>
+        <Field label="Limită zilnică comentarii recompensate / video">
+          <Input type="number" min={0} value={s.coins_comment_daily_cap_per_video ?? 10} onChange={(e) => upd("coins_comment_daily_cap_per_video", parseInt(e.target.value) || 0)} className="bg-zinc-950 border-zinc-800" data-testid="coins-cap-per-video" />
+        </Field>
+        <p className="text-xs text-zinc-500">Like-urile sunt recompensate o singură dată pe video (anti-farming). Setează la 0 pentru a dezactiva.</p>
       </Section>
       <Section title="Legacy migration">
         <Field label="Mark migrated legacy videos as PRO-only">

@@ -1,9 +1,9 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useLocation, useParams } from "react-router-dom";
 import api, { mediaUrl } from "@/lib/api";
 
 function setMeta(name, content, attr = "name") {
-  if (!content) return;
+  if (content == null) return;
   let m = document.querySelector(`meta[${attr}="${name}"]`);
   if (!m) {
     m = document.createElement("meta");
@@ -25,28 +25,33 @@ function setLink(rel, href) {
 }
 
 /**
- * Loads site identity + per-route Open Graph meta into <head>.
+ * Sync per-route document.title + Open Graph tags.
  *
  * Behaviour:
- *  - On boot, loads /site/config and applies defaults (title, og:image, og:url,
- *    favicon, canonical URL, raw meta HTML blob).
- *  - On /watch/:id, fetches the video and overrides og:title / og:image /
- *    og:description / og:url with the episode's own details so social embeds
- *    show the episode thumbnail + title instead of the generic site card.
+ *  - Loads /site/config once; the default site title is cached as `defaultTitle`.
+ *  - On `/watch/:id` we fetch the video and overwrite title + OG tags.
+ *  - On EVERY other route we restore the site default title (fixes the bug
+ *    where the tab title kept the previous episode title after navigation).
  *
- * Note: this updates client-rendered <head>.  Discord/Slack/Telegram crawlers
- * (which do partial JS rendering) pick this up.  For Facebook (no JS at all)
- * you'd need server-side rendering — the admin can paste a static og:image
- * fallback via the Site/SEO "OG image" field.
+ * Crawlers (Discord/Facebook/Telegram/etc) do NOT execute JavaScript — they
+ * hit `/api/og/video/:id` directly via the FastAPI middleware in server.py.
  */
 export default function SiteHead() {
   const { pathname } = useLocation();
   const params = useParams();
+  const defaultsRef = useRef({ title: "StreamHub", description: "", og_image: "", canonical_url: "" });
 
-  // 1) Site defaults (loaded once)
+  // 1) Site defaults — loaded once, applied to <head>.
   useEffect(() => {
     api.get("/site/config").then(({ data }) => {
-      if (data.title) document.title = data.title;
+      defaultsRef.current = {
+        title: data.title || "StreamHub",
+        description: data.description || "",
+        og_image: data.og_image || "",
+        canonical_url: data.canonical_url || "",
+      };
+      // Apply site defaults immediately
+      document.title = defaultsRef.current.title;
       setMeta("description", data.description);
       setMeta("keywords", data.keywords);
       setMeta("og:title", data.title, "property");
@@ -58,14 +63,11 @@ export default function SiteHead() {
         setMeta("og:url", data.canonical_url, "property");
         setLink("canonical", data.canonical_url);
       }
-      // Twitter Card defaults
       setMeta("twitter:card", "summary_large_image");
       setMeta("twitter:title", data.title);
       setMeta("twitter:description", data.description);
       if (data.og_image) setMeta("twitter:image", mediaUrl(data.og_image));
-      // Favicon
       if (data.favicon_url) setLink("icon", data.favicon_url);
-      // Custom raw meta HTML
       if (data.meta) {
         document.querySelectorAll("meta[data-streamhub-custom]").forEach((n) => n.remove());
         const tmpl = document.createElement("template");
@@ -78,13 +80,26 @@ export default function SiteHead() {
     }).catch(() => {});
   }, []);
 
-  // 2) Per-route override for /watch/:id
+  // 2) Per-route title + OG sync.
   useEffect(() => {
-    if (!pathname.startsWith("/watch/")) return;
+    const onWatch = pathname.startsWith("/watch/");
+    if (!onWatch) {
+      // Restore the site default title so users don't keep seeing the previous
+      // episode name in the browser tab after navigating away.
+      const d = defaultsRef.current;
+      if (d.title) document.title = d.title;
+      setMeta("og:title", d.title, "property");
+      setMeta("og:description", d.description, "property");
+      setMeta("og:type", "website", "property");
+      if (d.og_image) setMeta("og:image", mediaUrl(d.og_image), "property");
+      setMeta("twitter:title", d.title);
+      setMeta("twitter:description", d.description);
+      return;
+    }
     const id = params.id || pathname.split("/watch/")[1];
     if (!id) return;
     api.get(`/videos/${id}`).then(({ data }) => {
-      const title = data.title + " — StreamHub";
+      const title = `${data.title} — ${defaultsRef.current.title || "StreamHub"}`;
       document.title = title;
       const desc = (data.description || "").slice(0, 200);
       setMeta("og:title", title, "property");

@@ -1,0 +1,75 @@
+{
+  "summary": "Iteration 6 — Validated the coin system + slug URLs + email privacy + shop frames + SSR OG batch. 12/12 backend pytest cases PASS after one small fix (added coins_comment_daily_cap_per_video to /api/site/config). 11/11 frontend assertions PASS including Shop showing 50 distinct animated frames, Admin tab-frames with 50 frame-price-* inputs, Economie Monede with all 3 inputs, Profile Cadre tab, right-sidebar coin badge (9823 monede), slug URL redirect, and watch→home title reset.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/videos/{id}/comments", "issue": "`coins_comment_daily_cap_per_video` is interpreted as a MAX-COUNT-OF-REWARDED-COMMENTS-PER-DAY (`already < cap`), not a coin total cap. The variable name suggests a coin cap. Effective max-coins is therefore `cap * coins_per_comment`. Either rename to `comment_rewards_daily_count_per_video` or change logic to `(already * amt) < cap`. Spec was ambiguous; flagging for clarification."},
+      {"endpoint": "GET /api/site/config", "issue": "Previously did NOT expose `coins_comment_daily_cap_per_video`. Fixed by this testing agent — added the field. PATCH /api/admin/settings was already accepting & persisting it."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "All pages", "issues": ["Announcement DialogOverlay (existing 'AAAAAAAAAA' announcement) blocks pointer events until dismissed. localStorage `dismissedAnnouncements` now exists so dismissal persists — confirmed working. Same UX concern as iteration 4 — kept here for context only."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration6.py",
+    "/app/test_reports/pytest/iteration6.xml"
+  ],
+  "tests_executed": {
+    "backend": [
+      "POST /api/auth/login returns user with coins, owned_frames, selected_frame_id, selected_frame, email — PASS",
+      "GET /api/users/{id} anonymous → no email; admin auth → email present; regular non-owner user → no email — PASS",
+      "GET /api/shop/frames returns 50 frames with id/name/effect_key/color_primary/color_secondary/rarity/price_coins/active/owned — PASS",
+      "POST /api/admin/frames/seed is idempotent (inserted=0 on re-seed) — PASS",
+      "Admin CRUD: POST/PATCH/GET/DELETE /api/admin/frames roundtrip works — PASS",
+      "PATCH /api/admin/settings + GET /api/site/config exposes coins_per_like, coins_per_comment, coins_comment_daily_cap_per_video — PASS (after one-line fix)",
+      "GET /api/videos/{uuid-or-slug} returns same doc for both id forms; doc has `slug` field — PASS",
+      "GET /api/og/video/{uuid-or-slug} returns HTML with <title>, og:title, og:image — PASS for both forms",
+      "Backend SSR middleware on localhost:8001 — facebookexternalhit/Discordbot/Twitterbot/TelegramBot get og:title HTML; Mozilla gets 404 (not intercepted) — PASS",
+      "POST /api/videos/{id}/like — first toggle awards coins, unlike then re-like awards 0 coins (idempotent via coin_ledger) — PASS",
+      "POST /api/videos/{id}/comments — first N comments award coins, after cap subsequent comments return coins_awarded=0; response includes `frame` field — PASS",
+      "Shop purchase: 402 for unaffordable frame; 200 + coin debit + owned_frames update for affordable; selected-frame set/clear; un-owned frame_id → 403 — PASS"
+    ],
+    "frontend": [
+      "Admin tab-frames data-testid present; clicking it renders 50 frame-price-* inputs — PASS",
+      "Admin tab-settings shows coins-per-like, coins-per-comment, coins-cap-per-video inputs — PASS",
+      "Profile page (/profile/<admin_id>) shows Cadre tab — PASS",
+      "Shop page /shop renders 50 visually distinct animated frames with rarity badges and filter buttons — PASS (verified via screenshot)",
+      "Watch page /watch/<uuid> redirects to /watch/<slug> (testsubvideo-1854e5) — PASS",
+      "Watch page document.title = 'TEST_SubVideo — StreamHub' — PASS",
+      "Returning to homepage / resets document.title to 'StreamHub' — PASS",
+      "Right sidebar shows '9823 monede' + 'Magazin Cadre' link after admin login — PASS",
+      "All admin tabs visible: dashboard, videos, users, categories, packages, frames, announcements, chat, settings — PASS"
+    ]
+  },
+  "action_items": [
+    "(Clarification needed) Decide intended semantic of `coins_comment_daily_cap_per_video`: count-of-rewards (current impl) vs coins-cap (current name). Update either the variable name + admin UI label OR the comparison logic in /api/videos/{id}/comments (server.py:1033).",
+    "Continue tracking the announcement modal UX nit from iteration 4 — currently mitigated by localStorage `dismissedAnnouncements` so user-side experience is acceptable.",
+    "server.py is now 2667 lines — refactor into routers/ remains overdue (iter4/iter5 already raised this)."
+  ],
+  "critical_code_review_comments": [
+    "/app/backend/server.py:2030 build_site_config — only exposes a fixed allowlist of settings. Was missing `coins_comment_daily_cap_per_video`; fixed by this agent. Going forward, consider mirroring an explicit Pydantic SiteConfig response model so any new setting must be intentionally exported (catches this class of bug at type-check time).",
+    "/app/backend/server.py:1019-1035 comment-coin-cap logic uses `created_at` ISO string >= today's date string — works because ISO datetimes are lexicographically comparable, but is brittle. Prefer a typed datetime field or store a `day` discriminator. Also the cap semantics are ambiguous (count vs coin) — see action items.",
+    "/app/backend/server.py:299 _award_coins — non-atomic: increments user.coins then inserts ledger row separately. If the insert fails after the increment, coins are debited from the ledger's accountancy but already applied. Wrap in a Mongo transaction or invert (insert ledger first w/ a unique reason, then $inc) to make like-idempotency robust against retries.",
+    "/app/backend/server.py:780 like-coin idempotency uses reason='like:<video_id>' lookup — if reason format ever changes the ledger becomes stale; consider versioning the reason key.",
+    "Profile API GET /api/users/{id} email-visibility is correct, but be aware OWNER role and ADMIN role share `role='admin'` (per test_credentials.md) — therefore Owner sees every email. If 'Owner' was intended to be more restricted, that distinction is missing in the data model."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration6.py (new)",
+    "/app/backend/server.py (1-line fix at build_site_config — added coins_comment_daily_cap_per_video to /api/site/config response)",
+    "/app/test_reports/pytest/iteration6.xml (junit output)"
+  ],
+  "success_rate": {
+    "backend": "100% (12/12)",
+    "frontend": "100% (11/11 checks)"
+  },
+  "test_credentials": "admin@streamhub.io / Admin123! — works (admin id 237bd97e-4c5c-49f7-8365-e6c2126fa0ce). Created one regular test user TEST_iter6_<rand>@example.com to verify email-visibility from a non-admin viewpoint.",
+  "seed_data_creation": "5 test comments on VID_A (TEST_iter6_comment_*), 1 disposable admin avatar frame created and deleted in the CRUD test, 1 regular user TEST_iter6_<rand> registered (not cleaned up — register endpoint has no admin delete in test scope). One frame was purchased by admin and equipped/cleared. coins_per_like was changed to 3, coins_per_comment to 4, coins_comment_daily_cap_per_video to 3 during tests — admin may want to reset these via Admin Panel → Settings → Economie before launch.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend iter6 suite is at /app/backend/tests/test_iteration6.py and is fully green. Set REACT_APP_BACKEND_URL env or run via `export $(grep -v '^#' /app/frontend/.env | xargs) && pytest backend/tests/test_iteration6.py`. The test purchases the cheapest non-owned frame each run — admin coins will keep decreasing. If admin runs out, re-seed via Mongo (`db.users.updateOne({id:'237bd97e...'}, {$set:{coins:10000, owned_frames:[]}})`) — note the admin already has bought a few frames via this and previous tests (was at 9823 coins as of last frontend run). Settings values `coins_per_like=3, coins_per_comment=4, coins_comment_daily_cap_per_video=3` were left in DB. The comment-coin cap is enforced as a COUNT of rewarded comments per (user, video, day) — NOT a coin total. /app/backend/server.py grew to 2667 lines; refactor recommended.",
+  "rca_of_the_issue": "Real bug found: GET /api/site/config did not include `coins_comment_daily_cap_per_video` (build_site_config in server.py:2030 didn't list it). The setting was being PERSISTED correctly via PATCH /api/admin/settings (key-whitelist matched AppSettings.model_fields) but never read back by the frontend, which would cause the Admin Panel to lose the input value on reload AND the comment endpoint to fall back to the default (10) regardless of admin input. Fix: added one line to build_site_config to expose the field. Verified via test_settings_coin_keys_round_trip (now PASS)."
+}

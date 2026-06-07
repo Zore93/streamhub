@@ -34,12 +34,16 @@ class User(BaseModel):
     # Chat-specific ban (doesn't block site access — only chat sending)
     chat_banned_until: Optional[str] = None
     chat_banned_reason: Optional[str] = None
+    # Coin economy
+    coins: int = 0
+    # Frames inventory
+    owned_frames: List[str] = []  # AvatarFrame ids
+    selected_frame_id: Optional[str] = None
     created_at: str = Field(default_factory=now_iso)
 
 
 class UserPublic(BaseModel):
     id: str
-    email: str
     username: str
     role: str
     is_pro: bool
@@ -50,7 +54,12 @@ class UserPublic(BaseModel):
     cover_url: Optional[str] = None
     bio: Optional[str] = None
     banned_until: Optional[str] = None
+    coins: int = 0
+    selected_frame_id: Optional[str] = None
+    owned_frames: List[str] = []
     created_at: str
+    # Email only included for self/admin views (added dynamically by server)
+    email: Optional[str] = None
 
 
 class RegisterReq(BaseModel):
@@ -93,6 +102,7 @@ class Subtitle(BaseModel):
 class Video(BaseModel):
     id: str = Field(default_factory=new_id)
     title: str
+    slug: Optional[str] = None  # SEO-friendly URL slug (unique)
     description: str = ""
     tags: List[str] = []
     category_id: Optional[str] = None
@@ -144,6 +154,7 @@ class Comment(BaseModel):
     user_id: str
     username: str
     avatar_url: Optional[str] = None
+    frame_id: Optional[str] = None  # snapshot of selected_frame_id at write time
     content: str
     created_at: str = Field(default_factory=now_iso)
 
@@ -247,6 +258,10 @@ class AppSettings(BaseModel):
     live_chat_rate_limit_seconds: int = 3
     # Legacy migration
     legacy_videos_pro_only: bool = True  # newly migrated legacy videos become PRO-only
+    # Coin economy
+    coins_per_like: int = 1
+    coins_per_comment: int = 2
+    coins_comment_daily_cap_per_video: int = 10  # max coin-rewarded comments / day / video
 
 
 class SettingsUpdateReq(BaseModel):
@@ -317,3 +332,30 @@ class StatsResponse(BaseModel):
     total_pro_users: int
     total_likes: int
     total_comments: int
+
+
+# ============ AVATAR FRAMES (shop) ============
+class AvatarFrame(BaseModel):
+    id: str = Field(default_factory=new_id)
+    name: str
+    # The "visual" of the frame is a CSS effect key. Listed in FRAME_EFFECT_KEYS
+    # below; the React `<FramedAvatar>` component owns the actual animation CSS.
+    effect_key: str = "neon-ring"
+    # Color used by the effect (CSS color). Optional secondary color too.
+    color_primary: str = "#f43f5e"
+    color_secondary: str = "#fb7185"
+    rarity: str = "common"  # common | rare | epic | legendary
+    price_coins: int = 100
+    active: bool = True
+    sort_order: int = 0
+    created_at: str = Field(default_factory=now_iso)
+
+
+# Coin transaction (for audit / preventing double-credit on like)
+class CoinTxn(BaseModel):
+    id: str = Field(default_factory=new_id)
+    user_id: str
+    delta: int  # positive earn / negative spend
+    reason: str  # "like:<videoid>" | "comment:<videoid>" | "purchase:<frameid>"
+    balance_after: int
+    created_at: str = Field(default_factory=now_iso)

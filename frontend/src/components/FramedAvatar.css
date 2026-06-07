@@ -1,0 +1,426 @@
+/* ============================================================
+   FramedAvatar — square avatar w/ pure-CSS animated frame.
+   All frames sit BEHIND the avatar and respect --frame-c1 / --frame-c2.
+   ============================================================ */
+.fa-wrap {
+  position: relative;
+  border-radius: 6px;
+}
+.fa-avatar {
+  position: absolute;
+  border-radius: 6px;
+  z-index: 2;
+}
+.fa-frame {
+  position: absolute;
+  inset: 0;
+  border-radius: 8px;
+  z-index: 1;
+  pointer-events: none;
+}
+
+/* ===== Common — Neon ring (solid glow) ===== */
+.fa-neon-ring {
+  border: 2px solid var(--frame-c1);
+  box-shadow:
+    0 0 4px var(--frame-c1),
+    0 0 10px var(--frame-c2),
+    inset 0 0 4px var(--frame-c1);
+  animation: fa-neon-pulse 2.4s ease-in-out infinite;
+}
+@keyframes fa-neon-pulse {
+  0%, 100% { box-shadow: 0 0 4px var(--frame-c1), 0 0 10px var(--frame-c2), inset 0 0 4px var(--frame-c1); }
+  50%      { box-shadow: 0 0 8px var(--frame-c1), 0 0 18px var(--frame-c2), inset 0 0 6px var(--frame-c1); }
+}
+
+/* ===== Common — Dashed rotate ===== */
+.fa-dashed-rotate {
+  border: 2px dashed var(--frame-c1);
+  animation: fa-spin 6s linear infinite;
+}
+@keyframes fa-spin { to { transform: rotate(360deg); } }
+
+/* ===== Common — Soft glow ===== */
+.fa-soft-glow {
+  border: 2px solid var(--frame-c1);
+  box-shadow: 0 0 14px 2px var(--frame-c2);
+  animation: fa-soft 3s ease-in-out infinite;
+}
+@keyframes fa-soft {
+  0%, 100% { box-shadow: 0 0 8px var(--frame-c2); }
+  50%      { box-shadow: 0 0 20px 4px var(--frame-c2); }
+}
+
+/* ===== Rare — Conic rotate ===== */
+.fa-conic-rotate {
+  background: conic-gradient(
+    from 0deg,
+    var(--frame-c1),
+    var(--frame-c2),
+    var(--frame-c1)
+  );
+  -webkit-mask: radial-gradient(circle, transparent 60%, #000 62%);
+          mask: radial-gradient(circle, transparent 60%, #000 62%);
+  animation: fa-spin 4s linear infinite;
+  border-radius: 8px;
+}
+
+/* ===== Rare — Stars orbit ===== */
+.fa-stars-orbit::before,
+.fa-stars-orbit::after {
+  content: "★";
+  position: absolute;
+  font-size: 30%;
+  color: var(--frame-c1);
+  text-shadow: 0 0 4px var(--frame-c2);
+}
+.fa-stars-orbit::before { top: -8%; left: 50%; transform-origin: 0 200%; animation: fa-spin 5s linear infinite; }
+.fa-stars-orbit::after  { top: -8%; left: 50%; transform-origin: 0 200%; animation: fa-spin 7s linear infinite reverse; }
+.fa-stars-orbit {
+  border: 1px solid var(--frame-c1);
+  box-shadow: 0 0 6px var(--frame-c2);
+}
+
+/* ===== Rare — Pulse shadow ===== */
+.fa-pulse-shadow {
+  border: 2px solid var(--frame-c1);
+  animation: fa-pulse-sh 1.4s ease-out infinite;
+}
+@keyframes fa-pulse-sh {
+  0%   { box-shadow: 0 0 0 0 var(--frame-c2); }
+  100% { box-shadow: 0 0 0 12px transparent; }
+}
+
+/* ===== Rare — Aurora shift ===== */
+.fa-aurora-shift {
+  background: linear-gradient(120deg, var(--frame-c1), var(--frame-c2), var(--frame-c1));
+  background-size: 300% 300%;
+  -webkit-mask: radial-gradient(circle, transparent 60%, #000 64%);
+          mask: radial-gradient(circle, transparent 60%, #000 64%);
+  animation: fa-aurora 5s linear infinite;
+}
+@keyframes fa-aurora { to { background-position: 300% 0; } }
+
+/* ===== Epic — Fire ===== */
+.fa-fire {
+  border: 2px solid var(--frame-c1);
+  box-shadow:
+    0 -6px 16px -4px var(--frame-c1),
+    0 0 12px var(--frame-c2),
+    inset 0 -4px 8px var(--frame-c1);
+  animation: fa-fire-flicker 0.7s steps(2) infinite, fa-fire-shift 2.2s ease-in-out infinite;
+}
+@keyframes fa-fire-flicker {
+  0%, 100% { filter: brightness(1); }
+  50%      { filter: brightness(1.25); }
+}
+@keyframes fa-fire-shift {
+  0%, 100% { box-shadow: 0 -6px 16px -4px var(--frame-c1), 0 0 12px var(--frame-c2), inset 0 -4px 8px var(--frame-c1); }
+  50%      { box-shadow: 0 -10px 22px -2px var(--frame-c1), 0 0 18px var(--frame-c2), inset 0 -6px 14px var(--frame-c1); }
+}
+
+/* ===== Epic — Electric ===== */
+.fa-electric {
+  border: 2px solid var(--frame-c1);
+  box-shadow:
+    0 0 8px var(--frame-c1),
+    0 0 16px var(--frame-c2);
+  animation: fa-electric-jit 0.18s steps(2) infinite;
+}
+@keyframes fa-electric-jit {
+  0%   { transform: translate(0,0); }
+  25%  { transform: translate(-0.5px, 0.5px); }
+  50%  { transform: translate(0.5px, -0.5px); }
+  75%  { transform: translate(-0.5px, -0.5px); }
+  100% { transform: translate(0.5px, 0.5px); }
+}
+
+/* ===== Epic — Particles (dots orbit) ===== */
+.fa-particles::before,
+.fa-particles::after {
+  content: "";
+  position: absolute; inset: 0;
+  border-radius: 50%;
+  border: 1.5px dotted var(--frame-c1);
+  animation: fa-spin 4s linear infinite;
+}
+.fa-particles::after {
+  border-style: dashed;
+  border-color: var(--frame-c2);
+  animation-duration: 6s;
+  animation-direction: reverse;
+}
+
+/* ===== Epic — Hologram ===== */
+.fa-hologram {
+  background: linear-gradient(45deg, var(--frame-c1) 0%, transparent 30%, var(--frame-c2) 60%, transparent 100%);
+  background-size: 200% 200%;
+  -webkit-mask: radial-gradient(circle, transparent 60%, #000 62%);
+          mask: radial-gradient(circle, transparent 60%, #000 62%);
+  animation: fa-holo 3s linear infinite;
+  filter: hue-rotate(0deg);
+}
+@keyframes fa-holo {
+  0%   { background-position: 0 0; filter: hue-rotate(0deg); }
+  100% { background-position: 200% 200%; filter: hue-rotate(360deg); }
+}
+
+/* ===== Epic — Glitch ===== */
+.fa-glitch {
+  border: 2px solid var(--frame-c1);
+  box-shadow:
+    2px 0 0 var(--frame-c2),
+    -2px 0 0 var(--frame-c1);
+  animation: fa-glitch-jit 0.4s steps(2) infinite;
+}
+@keyframes fa-glitch-jit {
+  0%   { transform: translate(0,0); }
+  20%  { transform: translate(-1px, 1px); }
+  40%  { transform: translate(1px, -1px); }
+  60%  { transform: translate(-1px, -1px); }
+  80%  { transform: translate(1px, 1px); }
+  100% { transform: translate(0, 0); }
+}
+
+/* ===== Legendary — Gold shimmer ===== */
+.fa-gold-shimmer {
+  background: linear-gradient(110deg,
+    var(--frame-c1) 0%, var(--frame-c2) 40%, #fffbeb 50%, var(--frame-c2) 60%, var(--frame-c1) 100%);
+  background-size: 200% 100%;
+  -webkit-mask: radial-gradient(circle, transparent 60%, #000 64%);
+          mask: radial-gradient(circle, transparent 60%, #000 64%);
+  animation: fa-shimmer 3s linear infinite;
+  filter: drop-shadow(0 0 6px var(--frame-c1));
+}
+@keyframes fa-shimmer { to { background-position: 200% 0; } }
+
+/* ===== Legendary — Diamond shimmer ===== */
+.fa-diamond-shimmer {
+  background: linear-gradient(110deg,
+    var(--frame-c1) 0%, #ffffff 50%, var(--frame-c2) 100%);
+  background-size: 200% 100%;
+  -webkit-mask: radial-gradient(circle, transparent 60%, #000 64%);
+          mask: radial-gradient(circle, transparent 60%, #000 64%);
+  animation: fa-shimmer 2.5s linear infinite;
+  filter: drop-shadow(0 0 8px #ffffff);
+}
+
+/* ===== Legendary — Fire ring (rotating ring of flame) ===== */
+.fa-fire-ring {
+  background: conic-gradient(from 0deg, var(--frame-c1), var(--frame-c2), var(--frame-c1));
+  -webkit-mask: radial-gradient(circle, transparent 58%, #000 62%);
+          mask: radial-gradient(circle, transparent 58%, #000 62%);
+  animation: fa-spin 2s linear infinite;
+  filter: drop-shadow(0 0 8px var(--frame-c2));
+}
+
+/* ===== Legendary — Frost ring ===== */
+.fa-frost-ring {
+  background: conic-gradient(from 90deg, var(--frame-c1), var(--frame-c2), var(--frame-c1));
+  -webkit-mask: radial-gradient(circle, transparent 60%, #000 64%);
+          mask: radial-gradient(circle, transparent 60%, #000 64%);
+  animation: fa-spin 5s linear infinite reverse;
+  filter: drop-shadow(0 0 6px var(--frame-c1));
+}
+
+/* ===== Legendary — Hearts orbit ===== */
+.fa-hearts-orbit::before,
+.fa-hearts-orbit::after {
+  content: "♥";
+  position: absolute;
+  font-size: 28%;
+  color: var(--frame-c1);
+  text-shadow: 0 0 4px var(--frame-c2);
+}
+.fa-hearts-orbit::before { top: -6%; left: 50%; transform-origin: 0 200%; animation: fa-spin 4s linear infinite; }
+.fa-hearts-orbit::after  { bottom: -6%; left: 50%; transform-origin: 0 -200%; animation: fa-spin 4s linear infinite reverse; color: var(--frame-c2); }
+.fa-hearts-orbit {
+  border: 1px solid var(--frame-c1);
+  box-shadow: 0 0 8px var(--frame-c2);
+}
+
+/* ===== Legendary — Moon glow ===== */
+.fa-moon-glow {
+  background: radial-gradient(circle at 30% 30%, var(--frame-c2), var(--frame-c1) 60%, transparent 70%);
+  -webkit-mask: radial-gradient(circle, transparent 58%, #000 62%);
+          mask: radial-gradient(circle, transparent 58%, #000 62%);
+  animation: fa-moon 6s ease-in-out infinite;
+  filter: drop-shadow(0 0 8px var(--frame-c2));
+}
+@keyframes fa-moon {
+  0%, 100% { transform: scale(1); }
+  50%      { transform: scale(1.06); }
+}
+
+/* ===== Legendary — Crown ===== */
+.fa-crown-orbit {
+  border: 2px solid var(--frame-c1);
+  box-shadow: 0 0 14px var(--frame-c2);
+}
+.fa-crown-orbit::before {
+  content: "♛";
+  position: absolute;
+  top: -28%; left: 50%;
+  transform: translateX(-50%);
+  color: var(--frame-c1);
+  font-size: 50%;
+  text-shadow: 0 0 6px var(--frame-c2);
+  animation: fa-crown-bob 2s ease-in-out infinite;
+}
+@keyframes fa-crown-bob {
+  0%, 100% { transform: translateX(-50%) translateY(0); }
+  50%      { transform: translateX(-50%) translateY(-2px); }
+}
+
+/* ===== Legendary — Demonic ===== */
+.fa-demonic {
+  border: 2px solid var(--frame-c2);
+  background: radial-gradient(circle, transparent 55%, var(--frame-c1) 60%, transparent 65%);
+  -webkit-mask: radial-gradient(circle, transparent 55%, #000 60%);
+          mask: radial-gradient(circle, transparent 55%, #000 60%);
+  box-shadow: 0 0 16px var(--frame-c2), inset 0 0 12px var(--frame-c1);
+  animation: fa-demonic 1.6s ease-in-out infinite;
+}
+@keyframes fa-demonic {
+  0%, 100% { filter: hue-rotate(0deg) brightness(1); }
+  50%      { filter: hue-rotate(20deg) brightness(1.4); }
+}
+
+/* ===== Legendary — Galaxy ===== */
+.fa-galaxy {
+  background:
+    radial-gradient(circle at 20% 30%, var(--frame-c2) 0, transparent 6%),
+    radial-gradient(circle at 80% 60%, #fff 0, transparent 4%),
+    radial-gradient(circle at 60% 20%, var(--frame-c2) 0, transparent 5%),
+    conic-gradient(var(--frame-c1), var(--frame-c2), var(--frame-c1));
+  -webkit-mask: radial-gradient(circle, transparent 58%, #000 62%);
+          mask: radial-gradient(circle, transparent 58%, #000 62%);
+  animation: fa-spin 14s linear infinite;
+  filter: drop-shadow(0 0 8px var(--frame-c1));
+}
+
+/* ===== Legendary — Sun rays ===== */
+.fa-sun-rays {
+  background: conic-gradient(
+    var(--frame-c1) 0 8%, transparent 8% 16%,
+    var(--frame-c1) 16% 24%, transparent 24% 32%,
+    var(--frame-c1) 32% 40%, transparent 40% 48%,
+    var(--frame-c1) 48% 56%, transparent 56% 64%,
+    var(--frame-c1) 64% 72%, transparent 72% 80%,
+    var(--frame-c1) 80% 88%, transparent 88% 96%,
+    var(--frame-c1) 96% 100%
+  );
+  -webkit-mask: radial-gradient(circle, transparent 55%, #000 80%);
+          mask: radial-gradient(circle, transparent 55%, #000 80%);
+  animation: fa-spin 8s linear infinite;
+  filter: drop-shadow(0 0 8px var(--frame-c2));
+}
+
+/* ===== Legendary — Phoenix (flaming rotation) ===== */
+.fa-phoenix {
+  background: conic-gradient(from 0deg, var(--frame-c1), var(--frame-c2), var(--frame-c1), var(--frame-c2));
+  -webkit-mask: radial-gradient(circle, transparent 58%, #000 62%);
+          mask: radial-gradient(circle, transparent 58%, #000 62%);
+  animation: fa-spin 3s linear infinite;
+  filter: drop-shadow(0 0 12px var(--frame-c1)) drop-shadow(0 0 18px var(--frame-c2));
+}
+
+/* ===== Legendary — Dragon scales ===== */
+.fa-dragon-scales {
+  background:
+    radial-gradient(circle at 50% 50%, var(--frame-c1) 0 35%, transparent 36%),
+    repeating-radial-gradient(circle at 50% 50%,
+      var(--frame-c2) 0 4px,
+      var(--frame-c1) 4px 8px);
+  -webkit-mask: radial-gradient(circle, transparent 58%, #000 62%);
+          mask: radial-gradient(circle, transparent 58%, #000 62%);
+  animation: fa-spin 20s linear infinite;
+  filter: drop-shadow(0 0 8px var(--frame-c2));
+}
+
+/* ===== Legendary — Petals (sakura/leaves) ===== */
+.fa-petals::before,
+.fa-petals::after {
+  content: "✿";
+  position: absolute;
+  font-size: 25%;
+  color: var(--frame-c1);
+  text-shadow: 0 0 3px var(--frame-c2);
+}
+.fa-petals::before { top: 0; left: 50%; transform-origin: 0 250%; animation: fa-spin 6s linear infinite; }
+.fa-petals::after  { bottom: 0; left: 50%; transform-origin: 0 -250%; animation: fa-spin 8s linear infinite reverse; }
+.fa-petals {
+  border: 1px solid var(--frame-c2);
+  box-shadow: 0 0 10px var(--frame-c1);
+}
+
+/* ===== Legendary — Cyberpunk grid ===== */
+.fa-cyberpunk {
+  border: 2px solid var(--frame-c1);
+  box-shadow:
+    0 0 8px var(--frame-c1),
+    inset 0 0 8px var(--frame-c2);
+  background:
+    repeating-linear-gradient(0deg, transparent 0 6px, var(--frame-c2) 6px 7px),
+    repeating-linear-gradient(90deg, transparent 0 6px, var(--frame-c1) 6px 7px);
+  -webkit-mask: radial-gradient(circle, transparent 60%, #000 62% 80%, transparent 82%);
+          mask: radial-gradient(circle, transparent 60%, #000 62% 80%, transparent 82%);
+  animation: fa-cyber 2s linear infinite;
+}
+@keyframes fa-cyber {
+  0%, 100% { filter: hue-rotate(0deg); }
+  50%      { filter: hue-rotate(40deg); }
+}
+
+/* ===== Legendary — Matrix ===== */
+.fa-matrix {
+  border: 1px solid var(--frame-c1);
+  background:
+    repeating-linear-gradient(0deg,
+      var(--frame-c2) 0 1px,
+      transparent 1px 4px),
+    linear-gradient(180deg, transparent, var(--frame-c1) 90%);
+  -webkit-mask: radial-gradient(circle, transparent 58%, #000 62%);
+          mask: radial-gradient(circle, transparent 58%, #000 62%);
+  animation: fa-matrix-scroll 2s linear infinite;
+}
+@keyframes fa-matrix-scroll {
+  from { background-position: 0 0, 0 0; }
+  to   { background-position: 0 30px, 0 0; }
+}
+
+/* ===== Legendary — Lava ===== */
+.fa-lava {
+  background:
+    radial-gradient(circle at 30% 70%, var(--frame-c2) 0, transparent 30%),
+    radial-gradient(circle at 70% 30%, var(--frame-c1) 0, transparent 40%),
+    linear-gradient(160deg, var(--frame-c1), var(--frame-c2));
+  -webkit-mask: radial-gradient(circle, transparent 58%, #000 62%);
+          mask: radial-gradient(circle, transparent 58%, #000 62%);
+  animation: fa-lava-flow 4s ease-in-out infinite alternate;
+  filter: drop-shadow(0 0 10px var(--frame-c2));
+}
+@keyframes fa-lava-flow {
+  0%   { background-position: 0 0, 0 0, 0 0; }
+  100% { background-position: 100% 0, 0 100%, 0 0; }
+}
+
+/* ===== Legendary — Cosmos Supreme (multi-layer) ===== */
+.fa-cosmos-supreme {
+  background:
+    radial-gradient(circle at 25% 25%, #fff 0, transparent 3%),
+    radial-gradient(circle at 75% 75%, var(--frame-c2) 0, transparent 4%),
+    radial-gradient(circle at 50% 10%, #fff 0, transparent 2%),
+    conic-gradient(from 90deg, var(--frame-c1), var(--frame-c2), var(--frame-c1));
+  -webkit-mask: radial-gradient(circle, transparent 58%, #000 62%);
+          mask: radial-gradient(circle, transparent 58%, #000 62%);
+  animation: fa-spin 10s linear infinite, fa-cosmos-glow 3s ease-in-out infinite;
+  filter: drop-shadow(0 0 12px var(--frame-c1));
+}
+@keyframes fa-cosmos-glow {
+  0%, 100% { filter: drop-shadow(0 0 12px var(--frame-c1)); }
+  50%      { filter: drop-shadow(0 0 22px var(--frame-c2)); }
+}
+
+/* Disable hover/click on the visual frame so the avatar receives events. */
+.fa-frame { pointer-events: none; user-select: none; }

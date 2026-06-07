@@ -4,19 +4,36 @@ import { mediaUrl } from "@/lib/api";
 import { Play, Eye, Crown, Loader2, Heart, MessageCircle } from "lucide-react";
 
 /**
- * Map the highest available rendition height to a marketing label.
- *  - 360p → "360p"
- *  - 720p → "720p"
+ * Map the highest available source/rendition height to a marketing label.
+ *
+ * We consider BOTH the transcoded renditions AND the original source's
+ * dimensions — that way a 4K source that has only been partially transcoded
+ * (e.g. while 1080p is still encoding) still shows the eventual "4K" badge
+ * the user expects.  We also use `max(width, height)` because some content
+ * is uploaded sideways (wider than tall) — the long side is the real res.
+ *  - 360p → "360P"
+ *  - 720p → "720P"
  *  - 1080p → "1080P"
  *  - 1440p / 2K / 2048p → "2K"
  *  - 2160p / 4K / 4096p → "4K"
  *  - 4320p / 8K → "8K"
  */
-function highestResolutionLabel(renditions) {
-  if (!Array.isArray(renditions) || renditions.length === 0) return null;
-  const max = Math.max(
-    ...renditions.map((r) => parseInt(r.height, 10) || parseInt(r.resolution, 10) || 0),
-  );
+function highestResolutionLabel(v) {
+  const heights = [];
+  // From renditions (height OR resolution number)
+  for (const r of v.renditions || []) {
+    const h = parseInt(r.height, 10) || parseInt(String(r.resolution).replace(/[^0-9]/g, ""), 10) || 0;
+    const w = parseInt(r.width, 10) || 0;
+    if (h) heights.push(h);
+    if (w) heights.push(w);
+  }
+  // From the original source — wins for migrated/legacy videos with only one transcoded rendition.
+  const oh = parseInt(v.original_height, 10) || 0;
+  const ow = parseInt(v.original_width, 10) || 0;
+  if (oh) heights.push(oh);
+  if (ow) heights.push(ow);
+  if (heights.length === 0) return null;
+  const max = Math.max(...heights);
   if (max >= 4000) return "4K";
   if (max >= 2000) return "2K";
   if (max >= 1080) return "1080P";
@@ -28,9 +45,10 @@ function highestResolutionLabel(renditions) {
 
 export default function VideoCard({ v, vertical = false }) {
   const isProcessing = v.status && v.status !== "ready";
-  const resLabel = highestResolutionLabel(v.renditions);
+  const resLabel = highestResolutionLabel(v);
+  const watchKey = v.slug || v.id;
   return (
-    <Link to={`/watch/${v.id}`} className="group block" data-testid={`video-card-${v.id}`}>
+    <Link to={`/watch/${watchKey}`} className="group block" data-testid={`video-card-${v.id}`}>
       <div className={`${vertical ? "aspect-[9/16]" : "aspect-video"} overflow-hidden rounded-lg bg-zinc-900 relative`}>
         {v.thumbnail_url ? (
           <img

@@ -57,11 +57,13 @@ from collections import defaultdict, deque
 from models import (
     Announcement,
     AppSettings,
+    AvatarFrame,
     BanReq,
     Category,
     ChatBanReq,
     ChatMessage,
     ChatSendReq,
+    CoinTxn,
     Comment,
     CommentReq,
     GuestChatBan,
@@ -180,10 +182,28 @@ async def save_settings(s: dict):
     await db.settings.update_one({"_id": "main"}, {"$set": s}, upsert=True)
 
 
-def public_user(u: dict) -> dict:
+def public_user(u: dict, include_email: bool = False) -> dict:
     if not u:
         return None
-    return UserPublic(**u).model_dump()
+    data = UserPublic(**u).model_dump()
+    if include_email:
+        data["email"] = u.get("email")
+    else:
+        # Strip email entirely so it never leaks in public profile responses.
+        data.pop("email", None)
+    return data
+
+
+async def public_user_with_frame(u: dict, include_email: bool = False) -> dict:
+    """Same as `public_user` but additionally attaches the user's selected
+    avatar-frame doc (if any) so the client doesn't need a second fetch."""
+    data = public_user(u, include_email=include_email)
+    if data and u.get("selected_frame_id"):
+        frame = await db.avatar_frames.find_one({"id": u["selected_frame_id"]}, {"_id": 0})
+        data["selected_frame"] = frame
+    else:
+        data["selected_frame"] = None
+    return data
 
 
 def media_url(request: Request, rel_path: str) -> str:
@@ -256,6 +276,47 @@ async def require_admin(user: dict = Depends(require_user)) -> dict:
 def slugify(s: str) -> str:
     s = re.sub(r"[^a-zA-Z0-9\s-]", "", s).strip().lower()
     return re.sub(r"[\s-]+", "-", s) or new_id()[:8]
+
+
+async def build_video_slug(title: str, video_id: str) -> str:
+    """Return `<slug>-<short>` where short = last 6 chars of the UUID.
+    Guaranteed unique because the UUID suffix makes collisions astronomically rare.
+    """
+    base = slugify(title)[:60].strip("-") or "video"
+    short = (video_id or new_id()).replace("-", "")[-6:]
+    return f"{base}-{short}"
+
+
+async def find_video_by_id_or_slug(key: str) -> Optional[dict]:
+    """Resolve `key` against either `id` (UUID) or `slug` (SEO URL)."""
+    v = await db.videos.find_one({"id": key}, {"_id": 0})
+    if v:
+        return v
+    return await db.videos.find_one({"slug": key}, {"_id": 0})
+
+
+# ============ Coin economy helpers ============
+async def _award_coins(user_id: str, delta: int, reason: str) -> int:
+    """Atomically credit (delta>0) or debit (delta<0) coins to a user and
+    record an entry in the `coin_ledger` collection.  Returns the new balance.
+    The ledger entry is used for idempotency (e.g. one like per video).
+    """
+    res = await db.users.find_one_and_update(
+        {"id": user_id},
+        {"$inc": {"coins": int(delta)}},
+        return_document=True,
+        projection={"_id": 0, "coins": 1},
+    )
+    new_balance = int((res or {}).get("coins", 0))
+    await db.coin_ledger.insert_one({
+        "id": new_id(),
+        "user_id": user_id,
+        "delta": int(delta),
+        "reason": reason,
+        "balance_after": new_balance,
+        "created_at": now_iso(),
+    })
+    return new_balance
 
 
 # ============ Background transcode task ============
@@ -421,7 +482,7 @@ async def register(req: RegisterReq, request: Request):
         await send_verification_email(settings, u.email, verify_url)
         return {"message": "Verification email sent", "require_verification": True}
     token = create_token(u.id)
-    return {"token": token, "user": public_user(u.model_dump())}
+    return {"token": token, "user": await public_user_with_frame(u.model_dump(), include_email=True)}
 
 
 @api.post("/auth/login")
@@ -458,12 +519,12 @@ async def login(req: LoginReq, request: Request):
             pass
     token = create_token(u["id"])
     _rate_limit_reset(rate_key)
-    return {"token": token, "user": public_user(u)}
+    return {"token": token, "user": await public_user_with_frame(u, include_email=True)}
 
 
 @api.get("/auth/me")
 async def me(user: dict = Depends(require_user)):
-    return public_user(user)
+    return await public_user_with_frame(user, include_email=True)
 
 
 @api.get("/auth/verify")
@@ -480,11 +541,13 @@ async def verify_email(token: str):
 
 # ============ USERS / PROFILE ============
 @api.get("/users/{user_id}")
-async def get_user(user_id: str):
+async def get_user(user_id: str, viewer: Optional[dict] = Depends(current_user)):
     u = await db.users.find_one({"id": user_id}, {"_id": 0})
     if not u:
         raise HTTPException(404, "Not found")
-    return public_user(u)
+    # Only the owner / admin can see the email
+    include_email = bool(viewer and (viewer.get("id") == u.get("id") or viewer.get("role") == "admin"))
+    return await public_user_with_frame(u, include_email=include_email)
 
 
 @api.patch("/users/me")
@@ -498,7 +561,7 @@ async def update_profile(
     if upd:
         await db.users.update_one({"id": user["id"]}, {"$set": upd})
     u = await db.users.find_one({"id": user["id"]}, {"_id": 0})
-    return public_user(u)
+    return await public_user_with_frame(u, include_email=True)
 
 
 @api.post("/users/me/avatar")
@@ -664,7 +727,7 @@ async def count_videos(
 
 @api.get("/videos/{video_id}")
 async def get_video(video_id: str, request: Request, user: Optional[dict] = Depends(current_user)):
-    v = await db.videos.find_one({"id": video_id}, {"_id": 0})
+    v = await find_video_by_id_or_slug(video_id)
     if not v:
         raise HTTPException(404, "Not found")
     if v.get("access_tier") == "pro":
@@ -704,14 +767,25 @@ async def toggle_like(video_id: str, user: dict = Depends(require_user)):
     if not v:
         raise HTTPException(404, "Not found")
     likes = v.get("likes", [])
+    coins_awarded = 0
     if user["id"] in likes:
         likes.remove(user["id"])
         liked = False
     else:
         likes.append(user["id"])
         liked = True
+        # Award coins ONLY the first time this user likes this video — prevents
+        # like/unlike farming.  We use the `coin_ledger` to record idempotency.
+        reason = f"like:{video_id}"
+        existing = await db.coin_ledger.find_one({"user_id": user["id"], "reason": reason})
+        if not existing:
+            settings = await get_settings()
+            amt = int(settings.get("coins_per_like", 1) or 0)
+            if amt > 0:
+                coins_awarded = amt
+                await _award_coins(user["id"], amt, reason)
     await db.videos.update_one({"id": video_id}, {"$set": {"likes": likes}})
-    return {"liked": liked, "count": len(likes)}
+    return {"liked": liked, "count": len(likes), "coins_awarded": coins_awarded}
 
 
 @api.get("/videos/{video_id}/recommendations")
@@ -790,10 +864,14 @@ async def upload_video(
         original_size_bytes=size,
         status="processing",
     )
-    await db.videos.insert_one(v.model_dump())
+    v_dict = v.model_dump()
+    v_dict["slug"] = await build_video_slug(title, vid_id)
+    await db.videos.insert_one(v_dict)
+    # `insert_one` mutates `v_dict` by adding the ObjectId `_id` — strip it.
+    v_dict.pop("_id", None)
     # Schedule background
     background.add_task(process_video, vid_id, str(src_path))
-    return v.model_dump()
+    return v_dict
 
 
 @api.patch("/videos/{video_id}")
@@ -823,6 +901,10 @@ async def update_video(
         if {s["id"] for s in rebuilt} != set(existing_by_id):
             raise HTTPException(400, "Reorder must include all subtitles. Use DELETE to remove.")
         upd["subtitles"] = rebuilt
+    # Title change triggers slug regeneration (keeps the same trailing UUID
+    # short so external links don't have to update unless title changes a lot).
+    if "title" in upd and upd["title"] and upd["title"] != v.get("title"):
+        upd["slug"] = await build_video_slug(upd["title"], v["id"])
     if upd:
         await db.videos.update_one({"id": video_id}, {"$set": upd})
     v = await db.videos.find_one({"id": video_id}, {"_id": 0})
@@ -891,6 +973,31 @@ async def _delete_wasabi_url(url: str, settings: dict):
 @api.get("/videos/{video_id}/comments")
 async def list_comments(video_id: str):
     cs = await db.comments.find({"video_id": video_id}, {"_id": 0}).sort("created_at", -1).to_list(200)
+    # Attach the user's CURRENT selected frame (latest, not snapshot) so cadre
+    # changes take effect across already-posted comments too.
+    user_ids = list({c.get("user_id") for c in cs if c.get("user_id")})
+    if user_ids:
+        users = await db.users.find(
+            {"id": {"$in": user_ids}},
+            {"_id": 0, "id": 1, "selected_frame_id": 1, "avatar_url": 1},
+        ).to_list(len(user_ids))
+        u_by_id = {u["id"]: u for u in users}
+        frame_ids = [u.get("selected_frame_id") for u in users if u.get("selected_frame_id")]
+        frame_ids = list(set(frame_ids))
+        frames = await db.avatar_frames.find(
+            {"id": {"$in": frame_ids}}, {"_id": 0},
+        ).to_list(len(frame_ids)) if frame_ids else []
+        f_by_id = {f["id"]: f for f in frames}
+        for c in cs:
+            u = u_by_id.get(c.get("user_id"))
+            if u:
+                # Always refresh avatar to the latest one too
+                c["avatar_url"] = u.get("avatar_url") or c.get("avatar_url")
+                fid = u.get("selected_frame_id")
+                if fid and fid in f_by_id:
+                    c["frame"] = f_by_id[fid]
+                else:
+                    c["frame"] = None
     return cs
 
 
@@ -905,10 +1012,34 @@ async def add_comment(
         user_id=user["id"],
         username=user["username"],
         avatar_url=user.get("avatar_url"),
+        frame_id=user.get("selected_frame_id"),
         content=req.content.strip(),
     )
     await db.comments.insert_one(c.model_dump())
-    return c.model_dump()
+    # Coin reward — capped at N comment-rewards per day per video to prevent spam
+    coins_awarded = 0
+    settings = await get_settings()
+    amt = int(settings.get("coins_per_comment", 2) or 0)
+    cap = int(settings.get("coins_comment_daily_cap_per_video", 10) or 0)
+    if amt > 0 and cap > 0:
+        # Count today's rewarded comments by this user on this video
+        from datetime import date as _date
+        today_iso_start = _date.today().isoformat()
+        already = await db.coin_ledger.count_documents({
+            "user_id": user["id"],
+            "reason": f"comment:{video_id}",
+            "created_at": {"$gte": today_iso_start},
+        })
+        if already < cap:
+            coins_awarded = amt
+            await _award_coins(user["id"], amt, f"comment:{video_id}")
+    out = c.model_dump()
+    out["coins_awarded"] = coins_awarded
+    # Attach frame doc (if any) for immediate render on the client
+    if user.get("selected_frame_id"):
+        frame = await db.avatar_frames.find_one({"id": user["selected_frame_id"]}, {"_id": 0})
+        out["frame"] = frame
+    return out
 
 
 @api.delete("/comments/{comment_id}")
@@ -1912,35 +2043,242 @@ async def public_site_config():
         "live_chat_enabled": bool(s.get("live_chat_enabled", True)),
         "live_chat_guest_allowed": bool(s.get("live_chat_guest_allowed", True)),
         "live_chat_max_message_length": int(s.get("live_chat_max_message_length", 500)),
+        "coins_per_like": int(s.get("coins_per_like", 1)),
+        "coins_per_comment": int(s.get("coins_per_comment", 2)),
+        "coins_comment_daily_cap_per_video": int(s.get("coins_comment_daily_cap_per_video", 10)),
     }
 
 
+# ============ Shop / Avatar Frames ============
+@api.get("/shop/frames")
+async def shop_frames(user: Optional[dict] = Depends(current_user)):
+    """List all frames active in the shop, plus which ones the viewer owns."""
+    frames = await db.avatar_frames.find({"active": True}, {"_id": 0}).sort("sort_order", 1).to_list(500)
+    owned = set((user or {}).get("owned_frames", []) or [])
+    for f in frames:
+        f["owned"] = f["id"] in owned
+    return frames
+
+
+@api.post("/shop/frames/{frame_id}/purchase")
+async def shop_purchase_frame(frame_id: str, user: dict = Depends(require_user)):
+    f = await db.avatar_frames.find_one({"id": frame_id, "active": True}, {"_id": 0})
+    if not f:
+        raise HTTPException(404, "Frame not available")
+    if frame_id in (user.get("owned_frames") or []):
+        raise HTTPException(400, "Already owned")
+    price = int(f.get("price_coins", 0))
+    if int(user.get("coins", 0)) < price:
+        raise HTTPException(402, "Not enough coins")
+    # Atomic: only debit if balance still high enough
+    res = await db.users.update_one(
+        {"id": user["id"], "coins": {"$gte": price}},
+        {"$inc": {"coins": -price}, "$addToSet": {"owned_frames": frame_id}},
+    )
+    if res.modified_count != 1:
+        raise HTTPException(402, "Not enough coins")
+    await db.coin_ledger.insert_one({
+        "id": new_id(),
+        "user_id": user["id"],
+        "delta": -price,
+        "reason": f"purchase:{frame_id}",
+        "balance_after": int(user.get("coins", 0)) - price,
+        "created_at": now_iso(),
+    })
+    u = await db.users.find_one({"id": user["id"]}, {"_id": 0})
+    return {"ok": True, "user": await public_user_with_frame(u, include_email=True)}
+
+
+@api.post("/users/me/selected-frame")
+async def set_selected_frame(payload: dict, user: dict = Depends(require_user)):
+    """Apply (or clear with null) a frame the user already owns."""
+    frame_id = payload.get("frame_id")
+    if frame_id and frame_id not in (user.get("owned_frames") or []):
+        raise HTTPException(403, "Frame not owned")
+    await db.users.update_one({"id": user["id"]}, {"$set": {"selected_frame_id": frame_id or None}})
+    u = await db.users.find_one({"id": user["id"]}, {"_id": 0})
+    return await public_user_with_frame(u, include_email=True)
+
+
+# ============ Admin: Avatar Frames CRUD ============
+@api.get("/admin/frames")
+async def admin_list_frames(admin: dict = Depends(require_admin)):
+    return await db.avatar_frames.find({}, {"_id": 0}).sort("sort_order", 1).to_list(500)
+
+
+@api.post("/admin/frames")
+async def admin_create_frame(payload: dict, admin: dict = Depends(require_admin)):
+    f = AvatarFrame(
+        name=(payload.get("name") or "Frame").strip(),
+        effect_key=(payload.get("effect_key") or "neon-ring").strip(),
+        color_primary=(payload.get("color_primary") or "#f43f5e").strip(),
+        color_secondary=(payload.get("color_secondary") or "#fb7185").strip(),
+        rarity=(payload.get("rarity") or "common").strip(),
+        price_coins=int(payload.get("price_coins") or 0),
+        active=bool(payload.get("active", True)),
+        sort_order=int(payload.get("sort_order") or 0),
+    )
+    await db.avatar_frames.insert_one(f.model_dump())
+    return f.model_dump()
+
+
+@api.patch("/admin/frames/{frame_id}")
+async def admin_update_frame(frame_id: str, payload: dict, admin: dict = Depends(require_admin)):
+    upd: dict = {}
+    for k in ("name", "effect_key", "color_primary", "color_secondary", "rarity"):
+        if k in payload and payload[k] is not None:
+            upd[k] = str(payload[k]).strip()
+    if "price_coins" in payload:
+        upd["price_coins"] = int(payload["price_coins"] or 0)
+    if "active" in payload:
+        upd["active"] = bool(payload["active"])
+    if "sort_order" in payload:
+        upd["sort_order"] = int(payload["sort_order"] or 0)
+    if upd:
+        await db.avatar_frames.update_one({"id": frame_id}, {"$set": upd})
+    f = await db.avatar_frames.find_one({"id": frame_id}, {"_id": 0})
+    if not f:
+        raise HTTPException(404, "Not found")
+    return f
+
+
+@api.delete("/admin/frames/{frame_id}")
+async def admin_delete_frame(frame_id: str, admin: dict = Depends(require_admin)):
+    await db.avatar_frames.delete_one({"id": frame_id})
+    # Also remove from users' inventories (refund-free; admin choice)
+    await db.users.update_many(
+        {"owned_frames": frame_id},
+        {"$pull": {"owned_frames": frame_id}},
+    )
+    await db.users.update_many(
+        {"selected_frame_id": frame_id},
+        {"$set": {"selected_frame_id": None}},
+    )
+    return {"ok": True}
+
+
+@api.post("/admin/frames/seed")
+async def admin_frames_seed(admin: dict = Depends(require_admin)):
+    """Seed the 50 default CSS-animated frames (idempotent: only inserts missing names)."""
+    existing = {f["name"] for f in await db.avatar_frames.find({}, {"_id": 0, "name": 1}).to_list(1000)}
+    inserted = 0
+    for i, spec in enumerate(_DEFAULT_FRAMES):
+        if spec["name"] in existing:
+            continue
+        f = AvatarFrame(
+            name=spec["name"],
+            effect_key=spec["effect_key"],
+            color_primary=spec["color_primary"],
+            color_secondary=spec["color_secondary"],
+            rarity=spec["rarity"],
+            price_coins=spec["price_coins"],
+            sort_order=i,
+        )
+        await db.avatar_frames.insert_one(f.model_dump())
+        inserted += 1
+    return {"ok": True, "inserted": inserted, "total": await db.avatar_frames.count_documents({})}
+
+
+# 50 default frames inspired by the Steam Points Shop avatar frame categories.
+# Each `effect_key` maps to a CSS animation owned by the React `FramedAvatar`.
+_DEFAULT_FRAMES = [
+    # Common (50–150)
+    {"name": "Inel Neon Roz",      "effect_key": "neon-ring",      "color_primary": "#f43f5e", "color_secondary": "#fb7185", "rarity": "common", "price_coins": 50},
+    {"name": "Inel Neon Cyan",     "effect_key": "neon-ring",      "color_primary": "#06b6d4", "color_secondary": "#22d3ee", "rarity": "common", "price_coins": 50},
+    {"name": "Inel Neon Verde",    "effect_key": "neon-ring",      "color_primary": "#22c55e", "color_secondary": "#86efac", "rarity": "common", "price_coins": 50},
+    {"name": "Inel Neon Violet",   "effect_key": "neon-ring",      "color_primary": "#8b5cf6", "color_secondary": "#c4b5fd", "rarity": "common", "price_coins": 50},
+    {"name": "Inel Neon Galben",   "effect_key": "neon-ring",      "color_primary": "#eab308", "color_secondary": "#fde047", "rarity": "common", "price_coins": 50},
+    {"name": "Dashed Pulse Roz",   "effect_key": "dashed-rotate",  "color_primary": "#f472b6", "color_secondary": "#fda4af", "rarity": "common", "price_coins": 80},
+    {"name": "Dashed Pulse Blue",  "effect_key": "dashed-rotate",  "color_primary": "#3b82f6", "color_secondary": "#93c5fd", "rarity": "common", "price_coins": 80},
+    {"name": "Glow Suav Coral",    "effect_key": "soft-glow",      "color_primary": "#fb923c", "color_secondary": "#fdba74", "rarity": "common", "price_coins": 60},
+    {"name": "Glow Suav Lime",     "effect_key": "soft-glow",      "color_primary": "#84cc16", "color_secondary": "#bef264", "rarity": "common", "price_coins": 60},
+    {"name": "Glow Suav Magenta",  "effect_key": "soft-glow",      "color_primary": "#ec4899", "color_secondary": "#f9a8d4", "rarity": "common", "price_coins": 60},
+    # Rare (200–400)
+    {"name": "Conic Rainbow",      "effect_key": "conic-rotate",   "color_primary": "#f43f5e", "color_secondary": "#3b82f6", "rarity": "rare",   "price_coins": 220},
+    {"name": "Conic Ocean",        "effect_key": "conic-rotate",   "color_primary": "#0ea5e9", "color_secondary": "#22d3ee", "rarity": "rare",   "price_coins": 220},
+    {"name": "Conic Sunset",       "effect_key": "conic-rotate",   "color_primary": "#f59e0b", "color_secondary": "#ef4444", "rarity": "rare",   "price_coins": 220},
+    {"name": "Conic Aurora",       "effect_key": "conic-rotate",   "color_primary": "#10b981", "color_secondary": "#8b5cf6", "rarity": "rare",   "price_coins": 250},
+    {"name": "Stele Cosmice",      "effect_key": "stars-orbit",    "color_primary": "#fde047", "color_secondary": "#ffffff", "rarity": "rare",   "price_coins": 300},
+    {"name": "Stele Negre",        "effect_key": "stars-orbit",    "color_primary": "#a855f7", "color_secondary": "#f9a8d4", "rarity": "rare",   "price_coins": 300},
+    {"name": "Pulse Cardiac",      "effect_key": "pulse-shadow",   "color_primary": "#ef4444", "color_secondary": "#fca5a5", "rarity": "rare",   "price_coins": 250},
+    {"name": "Pulse Frost",        "effect_key": "pulse-shadow",   "color_primary": "#3b82f6", "color_secondary": "#bfdbfe", "rarity": "rare",   "price_coins": 250},
+    {"name": "Aurora Glow",        "effect_key": "aurora-shift",   "color_primary": "#22c55e", "color_secondary": "#06b6d4", "rarity": "rare",   "price_coins": 320},
+    {"name": "Aurora Purpurie",    "effect_key": "aurora-shift",   "color_primary": "#a855f7", "color_secondary": "#ec4899", "rarity": "rare",   "price_coins": 320},
+    # Epic (500–900)
+    {"name": "Foc Înflăcărat",     "effect_key": "fire",           "color_primary": "#f97316", "color_secondary": "#facc15", "rarity": "epic",   "price_coins": 600},
+    {"name": "Foc Albastru",       "effect_key": "fire",           "color_primary": "#1d4ed8", "color_secondary": "#22d3ee", "rarity": "epic",   "price_coins": 650},
+    {"name": "Foc Verde Toxic",    "effect_key": "fire",           "color_primary": "#16a34a", "color_secondary": "#bef264", "rarity": "epic",   "price_coins": 650},
+    {"name": "Electric Storm",     "effect_key": "electric",       "color_primary": "#facc15", "color_secondary": "#fff7d6", "rarity": "epic",   "price_coins": 700},
+    {"name": "Electric Mov",       "effect_key": "electric",       "color_primary": "#a855f7", "color_secondary": "#e9d5ff", "rarity": "epic",   "price_coins": 700},
+    {"name": "Particule Aurii",    "effect_key": "particles",      "color_primary": "#facc15", "color_secondary": "#fef3c7", "rarity": "epic",   "price_coins": 750},
+    {"name": "Particule Argintii", "effect_key": "particles",      "color_primary": "#e5e7eb", "color_secondary": "#ffffff", "rarity": "epic",   "price_coins": 750},
+    {"name": "Particule Rubin",    "effect_key": "particles",      "color_primary": "#dc2626", "color_secondary": "#fecaca", "rarity": "epic",   "price_coins": 750},
+    {"name": "Hologramă",          "effect_key": "hologram",       "color_primary": "#06b6d4", "color_secondary": "#a855f7", "rarity": "epic",   "price_coins": 800},
+    {"name": "Glitch Cyber",       "effect_key": "glitch",         "color_primary": "#22d3ee", "color_secondary": "#ec4899", "rarity": "epic",   "price_coins": 850},
+    # Legendary (1000–2500)
+    {"name": "Strălucire Aurie",   "effect_key": "gold-shimmer",   "color_primary": "#facc15", "color_secondary": "#fef9c3", "rarity": "legendary", "price_coins": 1200},
+    {"name": "Strălucire Diamant", "effect_key": "diamond-shimmer", "color_primary": "#bae6fd", "color_secondary": "#ffffff", "rarity": "legendary", "price_coins": 1500},
+    {"name": "Inel de Foc",        "effect_key": "fire-ring",      "color_primary": "#ea580c", "color_secondary": "#fcd34d", "rarity": "legendary", "price_coins": 1400},
+    {"name": "Inel de Gheață",     "effect_key": "frost-ring",     "color_primary": "#7dd3fc", "color_secondary": "#e0f2fe", "rarity": "legendary", "price_coins": 1400},
+    {"name": "Drăgăstos",          "effect_key": "hearts-orbit",   "color_primary": "#ef4444", "color_secondary": "#fda4af", "rarity": "legendary", "price_coins": 1300},
+    {"name": "Lună Plină",         "effect_key": "moon-glow",      "color_primary": "#fcd34d", "color_secondary": "#fde68a", "rarity": "legendary", "price_coins": 1300},
+    {"name": "Coroană Regală",     "effect_key": "crown-orbit",    "color_primary": "#facc15", "color_secondary": "#fef3c7", "rarity": "legendary", "price_coins": 1800},
+    {"name": "Demonic",            "effect_key": "demonic",        "color_primary": "#7f1d1d", "color_secondary": "#dc2626", "rarity": "legendary", "price_coins": 1700},
+    {"name": "Galactic",           "effect_key": "galaxy",         "color_primary": "#312e81", "color_secondary": "#a855f7", "rarity": "legendary", "price_coins": 2000},
+    {"name": "Nebula Roz",         "effect_key": "galaxy",         "color_primary": "#831843", "color_secondary": "#f472b6", "rarity": "legendary", "price_coins": 2000},
+    {"name": "Soare",              "effect_key": "sun-rays",       "color_primary": "#f59e0b", "color_secondary": "#fde047", "rarity": "legendary", "price_coins": 1900},
+    {"name": "Phoenix",            "effect_key": "phoenix",        "color_primary": "#dc2626", "color_secondary": "#fb923c", "rarity": "legendary", "price_coins": 2200},
+    {"name": "Dragon Verde",       "effect_key": "dragon-scales",  "color_primary": "#16a34a", "color_secondary": "#65a30d", "rarity": "legendary", "price_coins": 2100},
+    {"name": "Dragon Roșu",        "effect_key": "dragon-scales",  "color_primary": "#dc2626", "color_secondary": "#f59e0b", "rarity": "legendary", "price_coins": 2100},
+    {"name": "Sakura",             "effect_key": "petals",         "color_primary": "#f9a8d4", "color_secondary": "#fce7f3", "rarity": "legendary", "price_coins": 1600},
+    {"name": "Frunze de Toamnă",   "effect_key": "petals",         "color_primary": "#ea580c", "color_secondary": "#facc15", "rarity": "legendary", "price_coins": 1600},
+    {"name": "Cyber Punk",         "effect_key": "cyberpunk",      "color_primary": "#22d3ee", "color_secondary": "#ec4899", "rarity": "legendary", "price_coins": 2400},
+    {"name": "Matrix",             "effect_key": "matrix",         "color_primary": "#16a34a", "color_secondary": "#86efac", "rarity": "legendary", "price_coins": 2300},
+    {"name": "Lava",               "effect_key": "lava",           "color_primary": "#dc2626", "color_secondary": "#fbbf24", "rarity": "legendary", "price_coins": 2200},
+    {"name": "Cosmos Suprem",      "effect_key": "cosmos-supreme", "color_primary": "#a855f7", "color_secondary": "#fde047", "rarity": "legendary", "price_coins": 2500},
+]
+
+
 @api.get("/og/video/{video_id}")
-async def og_video_html(video_id: str):
+async def og_video_html(video_id: str, request: Request):
     """Server-rendered HTML for social-media crawlers (Discord/Facebook/Twitter/etc).
 
-    nginx routes any request to `/watch/<id>` with a crawler User-Agent here so
-    the link preview shows the actual episode thumbnail + title instead of the
-    generic SPA shell.  Humans (real browsers) keep hitting the React app.
+    Always returns absolute URLs (Facebook requires it).  Falls back to the
+    Host header from the request when no canonical_url is configured.
     """
     from fastapi.responses import HTMLResponse
     import html as _html
-    v = await db.videos.find_one({"id": video_id}, {"_id": 0})
+    v = await find_video_by_id_or_slug(video_id)
     s = await get_settings()
     site_title = s.get("site_title") or "StreamHub"
+    # Prefer configured canonical, else build from the incoming request — that
+    # way OG cards work even when the admin hasn't set Site/SEO yet.
     base = (s.get("site_canonical_url") or "").rstrip("/")
+    if not base:
+        proto = request.headers.get("x-forwarded-proto") or request.url.scheme or "https"
+        host = request.headers.get("host") or request.url.hostname or ""
+        if host:
+            base = f"{proto}://{host}"
     if not v:
-        # Fall back to homepage card so a missing video doesn't break the embed.
         title = site_title
         desc = s.get("site_description") or ""
-        img = mediaUrl_for_og(s.get("site_og_image") or "", s)
+        img = _absolute_og_image(s.get("site_og_image") or "", base)
         page_url = base or "/"
     else:
         title = f'{v.get("title") or "Video"} — {site_title}'
         desc = (v.get("description") or "").strip()[:200] or (s.get("site_description") or "")
-        img = mediaUrl_for_og(v.get("thumbnail_url") or s.get("site_og_image") or "", s)
+        img = _absolute_og_image(v.get("thumbnail_url") or s.get("site_og_image") or "", base)
         page_url = f"{base}/watch/{video_id}" if base else f"/watch/{video_id}"
     esc = _html.escape
+    image_tags = ""
+    if img:
+        image_tags = (
+            f'<meta property="og:image" content="{esc(img)}">\n'
+            f'<meta property="og:image:secure_url" content="{esc(img)}">\n'
+            f'<meta property="og:image:width" content="1280">\n'
+            f'<meta property="og:image:height" content="720">\n'
+            f'<meta name="twitter:image" content="{esc(img)}">\n'
+        )
     body = f"""<!doctype html>
 <html lang="ro"><head>
 <meta charset="utf-8">
@@ -1952,12 +2290,9 @@ async def og_video_html(video_id: str):
 <meta property="og:title" content="{esc(title)}">
 <meta property="og:description" content="{esc(desc)}">
 <meta property="og:url" content="{esc(page_url)}">
-<meta property="og:image" content="{esc(img)}">
-<meta property="og:image:secure_url" content="{esc(img)}">
-<meta name="twitter:card" content="summary_large_image">
+{image_tags}<meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="{esc(title)}">
 <meta name="twitter:description" content="{esc(desc)}">
-<meta name="twitter:image" content="{esc(img)}">
 <meta http-equiv="refresh" content="0; url={esc(page_url)}">
 </head><body>
 <p><a href="{esc(page_url)}">{esc(title)}</a></p>
@@ -1965,16 +2300,21 @@ async def og_video_html(video_id: str):
     return HTMLResponse(body, headers={"Cache-Control": "public, max-age=300"})
 
 
-def mediaUrl_for_og(rel: str, settings: dict) -> str:
-    """Resolve a possibly-relative media path to an absolute URL for OG tags."""
+def _absolute_og_image(rel: str, base_url: str) -> str:
+    """Return a full http(s):// URL for an og:image value.  Facebook rejects relative paths."""
     if not rel:
         return ""
     if rel.startswith("http://") or rel.startswith("https://"):
         return rel
-    base = (settings.get("site_canonical_url") or "").rstrip("/")
-    if not base:
-        return rel
-    return f"{base}/media/{rel.lstrip('/')}"
+    if not base_url:
+        return ""
+    # Thumbnails live under /api/media/<path>; logo etc. are served the same way.
+    return f"{base_url}/api/media/{rel.lstrip('/')}"
+
+
+# kept for backwards compat — old name still callable, but routes use the new helper above
+def mediaUrl_for_og(rel: str, settings: dict) -> str:
+    return _absolute_og_image(rel, (settings.get("site_canonical_url") or "").rstrip("/"))
 
 
 @api.get("/og/home")
@@ -2286,6 +2626,37 @@ async def secure_media(rel_path: str, exp: int, sig: str):
 
 
 app.include_router(api)
+
+
+# ============ Crawler-aware /watch/<id> safety net ============
+# Belt-and-suspenders: even if nginx isn't configured to redirect social-media
+# crawlers to /api/og/video/<id>, this middleware catches them too.  Humans
+# (no matching UA) fall through to the SPA via Starlette/Uvicorn unchanged.
+_SOCIAL_CRAWLER_RE = re.compile(
+    r"(facebookexternalhit|facebot|twitterbot|discordbot|slackbot|"
+    r"telegrambot|whatsapp|linkedinbot|googlebot|bingbot|embedly|"
+    r"pinterest|redditbot|mastodon|iframely|skypeuripreview|applebot|yahoo|"
+    r"vkshare|w3c_validator|baiduspider|ia_archiver)",
+    re.IGNORECASE,
+)
+_WATCH_PATH_RE = re.compile(r"^/watch/([^/?#]+)")
+
+
+@app.middleware("http")
+async def crawler_og_middleware(request: Request, call_next):
+    """Return SSR OG HTML for known social crawlers hitting /watch/<id> or /.
+    For non-crawlers the request flows normally to the SPA / regular routes.
+    """
+    ua = request.headers.get("user-agent", "")
+    if ua and _SOCIAL_CRAWLER_RE.search(ua):
+        path = request.url.path
+        m = _WATCH_PATH_RE.match(path)
+        if m:
+            return await og_video_html(m.group(1), request)  # type: ignore[arg-type]
+        if path == "/" or path == "":
+            return await og_home_html()  # type: ignore[call-arg]
+    return await call_next(request)
+
 
 app.add_middleware(
     CORSMiddleware,

@@ -1,10 +1,11 @@
 import React, { useEffect, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
-import { Crown, LogIn, UserPlus, LogOut, User as UserIcon, X } from "lucide-react";
+import { Crown, LogIn, UserPlus, LogOut, User as UserIcon, X, ShoppingBag, Coins } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import api, { mediaUrl } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { useT } from "@/contexts/LanguageContext";
+import FramedAvatar from "@/components/FramedAvatar";
 import LiveChat from "./LiveChat";
 
 export default function RightSidebar({ recommendations = null, mobileOpen = false, onMobileClose }) {
@@ -34,6 +35,7 @@ export default function RightSidebar({ recommendations = null, mobileOpen = fals
     recommendations={recommendations}
     onMobileClose={onMobileClose}
     showCloseButton={mobileOpen}
+    selectedFrame={user?.selected_frame || null}
   />;
 
   return (
@@ -67,7 +69,7 @@ export default function RightSidebar({ recommendations = null, mobileOpen = fals
   );
 }
 
-function RightSidebarBody({ user, logout, t, pkgs, chatEnabled, siteCfg, recommendations, onMobileClose, showCloseButton }) {
+function RightSidebarBody({ user, logout, t, pkgs, chatEnabled, siteCfg, recommendations, onMobileClose, showCloseButton, selectedFrame }) {
   return (
     <>
       {showCloseButton && (
@@ -86,16 +88,17 @@ function RightSidebarBody({ user, logout, t, pkgs, chatEnabled, siteCfg, recomme
       {user ? (
         <div data-testid="user-block" className="bg-zinc-900/70 border border-zinc-800 rounded-xl p-4 mb-4">
           <div className="flex items-center gap-3">
-            <div className="h-12 w-12 rounded-full bg-zinc-800 overflow-hidden flex items-center justify-center">
-              {user.avatar_url ? (
-                <img src={mediaUrl(user.avatar_url)} alt="" className="h-full w-full object-cover" />
-              ) : (
-                <UserIcon size={20} className="text-zinc-500" />
-              )}
-            </div>
+            <FramedAvatar
+              src={user.avatar_url}
+              username={user.username}
+              size={48}
+              frame={selectedFrame}
+            />
             <div className="flex-1 min-w-0">
               <div className="font-semibold truncate text-zinc-50">{user.username}</div>
-              <div className="text-xs text-zinc-500 truncate">{user.email}</div>
+              <div className="text-xs text-amber-300 inline-flex items-center gap-1 mt-0.5" data-testid="sidebar-coins">
+                <Coins size={12} /> {user.coins || 0} monede
+              </div>
             </div>
           </div>
           {user.is_pro && (
@@ -111,6 +114,13 @@ function RightSidebarBody({ user, logout, t, pkgs, chatEnabled, siteCfg, recomme
               <LogOut size={12} /> {t("right.signOut")}
             </button>
           </div>
+          <Link
+            to="/shop"
+            className="mt-2 flex items-center justify-center gap-1.5 text-xs font-medium bg-gradient-to-r from-amber-500/20 to-rose-500/20 border border-amber-500/40 text-amber-100 hover:from-amber-500/30 hover:to-rose-500/30 rounded-md py-2 transition"
+            data-testid="shop-link"
+          >
+            <ShoppingBag size={12} /> Magazin Cadre
+          </Link>
         </div>
       ) : (
         <div className="bg-zinc-900/70 border border-zinc-800 rounded-xl p-4 mb-4 space-y-2">

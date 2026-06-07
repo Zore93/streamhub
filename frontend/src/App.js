@@ -17,6 +17,7 @@ import Category from "@/pages/Category";
 import Contact from "@/pages/Contact";
 import EditVideo from "@/pages/EditVideo";
 import VideoList from "@/pages/VideoList";
+import Shop from "@/pages/Shop";
 import SiteHead from "@/components/SiteHead";
 
 function App() {
@@ -36,6 +37,7 @@ function App() {
               <Route path="/discover" element={<VideoList variant="discover" />} />
               <Route path="/shorts" element={<VideoList variant="shorts" />} />
               <Route path="/all-episodes" element={<VideoList variant="all" />} />
+              <Route path="/shop" element={<Shop />} />
               <Route path="/login" element={<Login />} />
               <Route path="/register" element={<Register />} />
               <Route path="/upload" element={<Upload />} />
