@@ -280,19 +280,47 @@ def slugify(s: str) -> str:
 
 async def build_video_slug(title: str, video_id: str) -> str:
     """Return `<slug>-<short>` where short = last 6 chars of the UUID.
-    Guaranteed unique because the UUID suffix makes collisions astronomically rare.
+
+    The slug uses the FULL title (slugified) — no length cap, so long titles
+    fit into the URL completely.  Browsers handle multi-hundred-char URLs
+    fine and search engines reward keyword-rich slugs.
+
+    Guaranteed unique because the trailing 6-char UUID hex segment makes
+    collisions astronomically rare.
     """
-    base = slugify(title)[:60].strip("-") or "video"
+    base = slugify(title).strip("-") or "video"
     short = (video_id or new_id()).replace("-", "")[-6:]
     return f"{base}-{short}"
 
 
 async def find_video_by_id_or_slug(key: str) -> Optional[dict]:
-    """Resolve `key` against either `id` (UUID) or `slug` (SEO URL)."""
+    """Resolve `key` against either `id` (UUID) or `slug` (SEO URL).
+    Also accepts a `legacy_slug` (the slug saved during DB migration) so links
+    shared before the new slug scheme keep working.
+    """
     v = await db.videos.find_one({"id": key}, {"_id": 0})
     if v:
         return v
-    return await db.videos.find_one({"slug": key}, {"_id": 0})
+    v = await db.videos.find_one({"slug": key}, {"_id": 0})
+    if v:
+        return v
+    # Legacy migration: the original site stored slugs in `legacy_slug`.
+    v = await db.videos.find_one({"legacy_slug": key}, {"_id": 0})
+    if v:
+        return v
+    # Last-ditch prefix lookup on slug — handles old shared links that used a
+    # truncated (60-char) version of the slug from before this release.
+    if len(key) > 10:
+        v = await db.videos.find_one({"slug": {"$regex": f"^{re.escape(key)}"}}, {"_id": 0})
+        if v:
+            return v
+    return None
+
+
+async def resolve_video_id(key: str) -> Optional[str]:
+    """Resolve `key` (slug OR uuid) → the canonical Video.id, or None."""
+    v = await find_video_by_id_or_slug(key)
+    return v["id"] if v else None
 
 
 # ============ Coin economy helpers ============
@@ -757,15 +785,19 @@ async def get_video(video_id: str, request: Request, user: Optional[dict] = Depe
 
 @api.post("/videos/{video_id}/view")
 async def add_view(video_id: str):
-    await db.videos.update_one({"id": video_id}, {"$inc": {"views": 1}})
+    vid = await resolve_video_id(video_id)
+    if not vid:
+        raise HTTPException(404, "Not found")
+    await db.videos.update_one({"id": vid}, {"$inc": {"views": 1}})
     return {"ok": True}
 
 
 @api.post("/videos/{video_id}/like")
 async def toggle_like(video_id: str, user: dict = Depends(require_user)):
-    v = await db.videos.find_one({"id": video_id}, {"_id": 0})
+    v = await find_video_by_id_or_slug(video_id)
     if not v:
         raise HTTPException(404, "Not found")
+    vid = v["id"]
     likes = v.get("likes", [])
     coins_awarded = 0
     if user["id"] in likes:
@@ -776,7 +808,7 @@ async def toggle_like(video_id: str, user: dict = Depends(require_user)):
         liked = True
         # Award coins ONLY the first time this user likes this video — prevents
         # like/unlike farming.  We use the `coin_ledger` to record idempotency.
-        reason = f"like:{video_id}"
+        reason = f"like:{vid}"
         existing = await db.coin_ledger.find_one({"user_id": user["id"], "reason": reason})
         if not existing:
             settings = await get_settings()
@@ -784,14 +816,15 @@ async def toggle_like(video_id: str, user: dict = Depends(require_user)):
             if amt > 0:
                 coins_awarded = amt
                 await _award_coins(user["id"], amt, reason)
-    await db.videos.update_one({"id": video_id}, {"$set": {"likes": likes}})
+    await db.videos.update_one({"id": vid}, {"$set": {"likes": likes}})
     return {"liked": liked, "count": len(likes), "coins_awarded": coins_awarded}
 
 
 @api.get("/videos/{video_id}/recommendations")
 async def recommendations(video_id: str, limit: int = 15):
-    v = await db.videos.find_one({"id": video_id}, {"_id": 0})
-    q = {"status": "ready", "id": {"$ne": video_id}}
+    v = await find_video_by_id_or_slug(video_id)
+    vid = v["id"] if v else video_id
+    q = {"status": "ready", "id": {"$ne": vid}}
     if v and v.get("category_id"):
         # try same category first
         same = await db.videos.find(
@@ -801,7 +834,7 @@ async def recommendations(video_id: str, limit: int = 15):
             return same
         # backfill with random others
         need = limit - len(same)
-        exclude_ids = [video_id] + [x["id"] for x in same]
+        exclude_ids = [vid] + [x["id"] for x in same]
         extra = await db.videos.aggregate(
             [
                 {"$match": {"status": "ready", "id": {"$nin": exclude_ids}}},
@@ -878,9 +911,10 @@ async def upload_video(
 async def update_video(
     video_id: str, req: VideoUpdateReq, user: dict = Depends(require_user)
 ):
-    v = await db.videos.find_one({"id": video_id}, {"_id": 0})
+    v = await find_video_by_id_or_slug(video_id)
     if not v:
         raise HTTPException(404, "Not found")
+    vid = v["id"]
     if v["uploader_id"] != user["id"] and user.get("role") != "admin":
         raise HTTPException(403, "Not your video")
     upd = {k: val for k, val in req.model_dump(exclude_unset=True).items() if val is not None}
@@ -904,18 +938,19 @@ async def update_video(
     # Title change triggers slug regeneration (keeps the same trailing UUID
     # short so external links don't have to update unless title changes a lot).
     if "title" in upd and upd["title"] and upd["title"] != v.get("title"):
-        upd["slug"] = await build_video_slug(upd["title"], v["id"])
+        upd["slug"] = await build_video_slug(upd["title"], vid)
     if upd:
-        await db.videos.update_one({"id": video_id}, {"$set": upd})
-    v = await db.videos.find_one({"id": video_id}, {"_id": 0})
+        await db.videos.update_one({"id": vid}, {"$set": upd})
+    v = await db.videos.find_one({"id": vid}, {"_id": 0})
     return v
 
 
 @api.delete("/videos/{video_id}")
 async def delete_video(video_id: str, user: dict = Depends(require_user)):
-    v = await db.videos.find_one({"id": video_id}, {"_id": 0})
+    v = await find_video_by_id_or_slug(video_id)
     if not v:
         raise HTTPException(404, "Not found")
+    vid = v["id"]
     if v["uploader_id"] != user["id"] and user.get("role") != "admin":
         raise HTTPException(403, "Not yours")
     settings = await get_settings()
@@ -937,8 +972,8 @@ async def delete_video(video_id: str, user: dict = Depends(require_user)):
                 (UPLOAD_DIR / t).unlink()
             except Exception:
                 pass
-    await db.videos.delete_one({"id": video_id})
-    await db.comments.delete_many({"video_id": video_id})
+    await db.videos.delete_one({"id": vid})
+    await db.comments.delete_many({"video_id": vid})
     return {"ok": True}
 
 
@@ -972,7 +1007,18 @@ async def _delete_wasabi_url(url: str, settings: dict):
 # ============ COMMENTS ============
 @api.get("/videos/{video_id}/comments")
 async def list_comments(video_id: str):
-    cs = await db.comments.find({"video_id": video_id}, {"_id": 0}).sort("created_at", -1).to_list(200)
+    v = await find_video_by_id_or_slug(video_id)
+    if not v:
+        return []
+    # Match comments by canonical UUID, but ALSO by legacy_id so comments
+    # imported during DB migration (which used the legacy numeric/string id)
+    # remain visible.  Newer comments are inserted with the canonical id.
+    or_keys = [v["id"]]
+    if v.get("legacy_id"):
+        or_keys.append(str(v["legacy_id"]))
+    cs = await db.comments.find(
+        {"video_id": {"$in": or_keys}}, {"_id": 0},
+    ).sort("created_at", -1).to_list(500)
     # Attach the user's CURRENT selected frame (latest, not snapshot) so cadre
     # changes take effect across already-posted comments too.
     user_ids = list({c.get("user_id") for c in cs if c.get("user_id")})
@@ -1007,8 +1053,12 @@ async def add_comment(
 ):
     if not req.content.strip():
         raise HTTPException(400, "Empty content")
+    v = await find_video_by_id_or_slug(video_id)
+    if not v:
+        raise HTTPException(404, "Video not found")
+    vid = v["id"]
     c = Comment(
-        video_id=video_id,
+        video_id=vid,
         user_id=user["id"],
         username=user["username"],
         avatar_url=user.get("avatar_url"),
@@ -1027,12 +1077,12 @@ async def add_comment(
         today_iso_start = _date.today().isoformat()
         already = await db.coin_ledger.count_documents({
             "user_id": user["id"],
-            "reason": f"comment:{video_id}",
+            "reason": f"comment:{vid}",
             "created_at": {"$gte": today_iso_start},
         })
         if already < cap:
             coins_awarded = amt
-            await _award_coins(user["id"], amt, f"comment:{video_id}")
+            await _award_coins(user["id"], amt, f"comment:{vid}")
     out = c.model_dump()
     out["coins_awarded"] = coins_awarded
     # Attach frame doc (if any) for immediate render on the client
@@ -1858,9 +1908,10 @@ async def add_subtitle(
     label: str = Form(...),
     user: dict = Depends(require_user),
 ):
-    v = await db.videos.find_one({"id": video_id}, {"_id": 0})
+    v = await find_video_by_id_or_slug(video_id)
     if not v:
         raise HTTPException(404, "Not found")
+    vid = v["id"]
     if v["uploader_id"] != user["id"] and user.get("role") != "admin":
         raise HTTPException(403, "Not your video")
     if len(v.get("subtitles", [])) >= 10:
@@ -1869,8 +1920,8 @@ async def add_subtitle(
     if ext not in (".srt", ".ass", ".vtt"):
         raise HTTPException(400, "Only .srt, .ass or .vtt allowed")
     sub_id = new_id()
-    orig_name = f"{video_id}_{sub_id}{ext}"
-    vtt_name = f"{video_id}_{sub_id}.vtt"
+    orig_name = f"{vid}_{sub_id}{ext}"
+    vtt_name = f"{vid}_{sub_id}.vtt"
     orig_path = UPLOAD_DIR / "subtitles" / orig_name
     vtt_path = UPLOAD_DIR / "subtitles" / vtt_name
     if ext == ".vtt":
@@ -1914,15 +1965,16 @@ async def add_subtitle(
         id=sub_id, language=language, label=label,
         url=rel_vtt, original_url=rel_orig, format=ext[1:],
     ).model_dump()
-    await db.videos.update_one({"id": video_id}, {"$push": {"subtitles": sub}})
+    await db.videos.update_one({"id": vid}, {"$push": {"subtitles": sub}})
     return sub
 
 
 @api.delete("/videos/{video_id}/subtitles/{sub_id}")
 async def delete_subtitle(video_id: str, sub_id: str, user: dict = Depends(require_user)):
-    v = await db.videos.find_one({"id": video_id}, {"_id": 0})
+    v = await find_video_by_id_or_slug(video_id)
     if not v:
         raise HTTPException(404, "Not found")
+    vid = v["id"]
     if v["uploader_id"] != user["id"] and user.get("role") != "admin":
         raise HTTPException(403, "Not yours")
     subs = v.get("subtitles", [])
@@ -1940,7 +1992,7 @@ async def delete_subtitle(video_id: str, sub_id: str, user: dict = Depends(requi
                 (UPLOAD_DIR / u).unlink()
             except Exception:
                 pass
-    await db.videos.update_one({"id": video_id}, {"$pull": {"subtitles": {"id": sub_id}}})
+    await db.videos.update_one({"id": vid}, {"$pull": {"subtitles": {"id": sub_id}}})
     return {"ok": True}
 
 
@@ -2050,6 +2102,51 @@ async def public_site_config():
 
 
 # ============ Shop / Avatar Frames ============
+@api.get("/shop/leaderboard")
+async def shop_leaderboard(limit: int = 10, viewer: Optional[dict] = Depends(current_user)):
+    """Public top-N users sorted by `coins`.  Also returns the viewer's rank
+    (1-based) and a snapshot of their entry so the UI can render "Tu ești pe
+    locul 47" when they aren't in the top N.
+    """
+    limit = max(1, min(50, int(limit or 10)))
+    # Top-N by coins (admins ARE included — they earn coins like everyone else)
+    top = await db.users.find(
+        {},
+        {"_id": 0, "id": 1, "username": 1, "avatar_url": 1, "coins": 1,
+         "selected_frame_id": 1, "is_pro": 1},
+    ).sort("coins", -1).limit(limit).to_list(limit)
+    # Attach selected_frame doc for visual rendering
+    frame_ids = list({u.get("selected_frame_id") for u in top if u.get("selected_frame_id")})
+    f_by_id: dict = {}
+    if frame_ids:
+        frames = await db.avatar_frames.find({"id": {"$in": frame_ids}}, {"_id": 0}).to_list(len(frame_ids))
+        f_by_id = {f["id"]: f for f in frames}
+    for i, u in enumerate(top, start=1):
+        u["rank"] = i
+        u["selected_frame"] = f_by_id.get(u.get("selected_frame_id"))
+    # Viewer's rank (count of users strictly above + 1)
+    me_rank: Optional[int] = None
+    me_entry: Optional[dict] = None
+    if viewer:
+        my_coins = int(viewer.get("coins", 0) or 0)
+        above = await db.users.count_documents({"coins": {"$gt": my_coins}})
+        me_rank = above + 1
+        me_entry = {
+            "rank": me_rank,
+            "id": viewer["id"],
+            "username": viewer["username"],
+            "avatar_url": viewer.get("avatar_url"),
+            "coins": my_coins,
+            "selected_frame_id": viewer.get("selected_frame_id"),
+            "is_pro": bool(viewer.get("is_pro")),
+        }
+        if viewer.get("selected_frame_id"):
+            me_entry["selected_frame"] = await db.avatar_frames.find_one(
+                {"id": viewer["selected_frame_id"]}, {"_id": 0},
+            )
+    return {"top": top, "me": me_entry}
+
+
 @api.get("/shop/frames")
 async def shop_frames(user: Optional[dict] = Depends(current_user)):
     """List all frames active in the shop, plus which ones the viewer owns."""
@@ -2520,18 +2617,20 @@ async def video_status_ws(websocket: WebSocket, video_id: str):
     `{type: 'video.status', video_id, data}` packets whenever process_video
     flips its progress.  Replaces the older HTTP polling loop on the watch page.
     """
-    cid = await video_status_hub.connect(video_id, websocket)
+    # Resolve slug→uuid so subscribers using SEO URLs receive updates.
+    vid = await resolve_video_id(video_id) or video_id
+    cid = await video_status_hub.connect(vid, websocket)
     try:
         # Send an initial snapshot so the UI doesn't need a separate fetch.
         snap = await db.videos.find_one(
-            {"id": video_id},
+            {"id": vid},
             {"_id": 0, "status": 1, "progress": 1, "renditions": 1, "error": 1,
              "thumbnail_url": 1, "is_short": 1, "duration_sec": 1},
         )
         if snap:
             import json as _json
             await websocket.send_text(_json.dumps(
-                {"type": "video.status", "video_id": video_id, "data": snap}, default=str,
+                {"type": "video.status", "video_id": vid, "data": snap}, default=str,
             ))
         while True:
             await websocket.receive_text()
@@ -2540,7 +2639,7 @@ async def video_status_ws(websocket: WebSocket, video_id: str):
     except Exception as e:  # noqa: BLE001
         logger.debug("video.status ws closed: %s", e)
     finally:
-        await video_status_hub.disconnect(video_id, cid)
+        await video_status_hub.disconnect(vid, cid)
 
 
 def _ban_until_from_req(req: ChatBanReq) -> str:

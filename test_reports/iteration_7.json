@@ -1,0 +1,74 @@
+{
+  "summary": "Iteration 7 hotfix validation — 13/13 backend pytest cases PASS and 11/11 frontend assertions PASS. Verified ALL slug+UUID dual-resolution endpoints (GET/POST view/POST like/GET reco/GET&POST comments/PATCH), new comments via slug store canonical UUID, view counter increments by exactly +3 via slug, legacy_slug resolves, build_video_slug includes the FULL 67-char title with 6-char UUID suffix, /api/shop/leaderboard contract is correct (anon→me:null, authed→me populated, admin at rank 1 with 10,000+ coins), and SSR/crawler middleware returns og:title for facebookexternalhit. Frontend: watch slug URL loads with player+51 comments+recommendations, like button POSTs /api/videos/testsubvideo-1854e5/like (200), new comment appears immediately, /shop renders Leaderboard above filter buttons with 10 leader-row testids + 50 animated frames, Admin Panel Cadre Avatar (50 price inputs) + Economie Monede (3 inputs) regression intact.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "All pages", "issues": ["Announcement DialogOverlay 'AAAAAAAAAA' still blocks pointer events when not dismissed. The init-script localStorage set of `dismissedAnnouncements=['*']` does NOT prevent the modal from re-opening on a fresh tab — the AnnouncementProvider seems to key on the announcement's `id`, not on a wildcard. Tests had to click 'Închide' explicitly. Carry-over from iter6; user-side experience is fine after first dismissal."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration7.py",
+    "/app/test_reports/pytest/iteration7.xml"
+  ],
+  "tests_executed": {
+    "backend": [
+      "GET /api/videos/{uuid} == GET /api/videos/{slug} (same id, same slug) — PASS",
+      "POST /api/videos/{slug}/view x3 → views incremented by exactly +3 on UUID record — PASS",
+      "POST /api/videos/{slug}/like (admin) returns 200 with liked/count — PASS",
+      "POST /api/videos/{slug}/comments → response.video_id == canonical UUID — PASS",
+      "GET /api/videos/{slug}/comments and GET /api/videos/{uuid}/comments return identical sets — PASS",
+      "GET /api/videos/{slug}/recommendations returns list — PASS",
+      "PATCH /api/videos/{slug} updates the canonical record and is readable via UUID — PASS",
+      "build_video_slug on 67-char title includes ALL words + 6-char UUID suffix '1854e5' — PASS",
+      "legacy_slug match: Mongo doc with legacy_slug='foo-bar-baz-iter7' resolves via GET /api/videos/foo-bar-baz-iter7 — PASS",
+      "GET /api/shop/leaderboard?limit=10 anon → {top:[10 entries], me:null}; admin row has rank=1 and 10000+ coins — PASS",
+      "GET /api/shop/leaderboard (admin auth) → me {rank,id,username,coins} populated even when admin IS in top10 — PASS",
+      "GET /api/og/video/{uuid|slug} returns HTML with og:title + absolute og:image — PASS for both forms",
+      "GET http://localhost:8001/watch/{slug|uuid} with User-Agent facebookexternalhit/1.1 returns 200 + og:title HTML — PASS"
+    ],
+    "frontend": [
+      "/login → POST /api/auth/login 200, token stored, redirect to / — PASS",
+      "/watch/testsubvideo-1854e5 renders <video> player + recommendations + 51 [data-testid^=comment-] entries — PASS",
+      "Like button [data-testid=like-btn] click → POST /api/videos/testsubvideo-1854e5/like returns 200 — PASS",
+      "Post comment → POST /api/videos/testsubvideo-1854e5/comments 200 + new comment text visible at top of list — PASS",
+      "/shop [data-testid=leaderboard] renders above filter buttons — PASS",
+      "/shop [data-testid=leader-row-1] = admin with 10,008 coins (#1) — PASS",
+      "/shop renders exactly 10 leader-row-* entries — PASS",
+      "/shop renders 50 [data-testid^=shop-frame-] cards with animated frames — PASS",
+      "/admin all 9 tabs visible incl tab-frames and tab-settings — PASS",
+      "Admin → Cadre Avatar: 50 [data-testid^=frame-price-] inputs — PASS",
+      "Admin → Settings: coins-per-like + coins-per-comment + coins-cap-per-video inputs present — PASS"
+    ]
+  },
+  "action_items": [
+    "(Optional) Allow a wildcard '*' entry in `dismissedAnnouncements` so test scripts and power-users can permanently dismiss all announcements without per-id clicks.",
+    "(Minor data drift) Problem statement claims settings were reset to coins_per_like=1/coins_per_comment=2/cap=10, but DB still has 3/4/3 from iter6. Admin should reset via Admin Panel → Settings → Economie if those defaults matter for launch.",
+    "(Carry-over from iter6) server.py is 2766 lines — refactor into routers/ remains overdue."
+  ],
+  "critical_code_review_comments": [
+    "/app/backend/server.py:296-317 find_video_by_id_or_slug — does FOUR sequential find_one calls (id, slug, legacy_slug, slug-prefix-regex). For unknown keys this is 4 round-trips. Consider a single $or query with all 3 exact-match keys; keep the regex fallback as the 2nd query only when the first returns nothing.",
+    "/app/backend/server.py:786-792 POST /videos/{id}/view — no rate-limiting per-IP/user/session, so view counter is easily inflatable by automation (test confirmed +3 from 3 calls). If accurate view counts matter for ranking/analytics, add a debounce window keyed by (ip+vid) or (user+vid) similar to the like-coin idempotency pattern.",
+    "/app/backend/server.py:2105-2147 shop_leaderboard — when viewer.coins is 0 (or null) `above` counts every user with positive coins, so the rank could be misleadingly large. Consider tie-breaking by `created_at` or `username` to make rank stable across reloads (currently top-N order is also unstable when coins are tied).",
+    "/app/backend/server.py:1010-1021 list_comments — $in over [video_id, legacy_id] is correct; ensure backfill stamped `legacy_id` (not just `legacy_slug`) on migrated video docs, otherwise migrated comments stay invisible. Spot-check: VID 1fa97503... has 51 comments now (16 historic + tests); count via slug == count via UUID confirmed equal.",
+    "/app/backend/server.py build_video_slug — slugify on Romanian/diacritic titles strips diacritics but produces very long ASCII slugs (the 67-char test case produced ~75-char slug). That's fine for browsers, but if you ever index `videos.slug` in Mongo, watch the 1024-byte key limit."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration7.py (new)",
+    "/app/test_reports/pytest/iteration7.xml (junit output)"
+  ],
+  "success_rate": {
+    "backend": "100% (13/13)",
+    "frontend": "100% (11/11 assertions)"
+  },
+  "test_credentials": "admin@streamhub.io / Admin123! — works",
+  "seed_data_creation": "Posted 2 new TEST_iter7_* comments on video 1fa97503-867b-40d6-8cb3-08dea01854e5 (1 via API, 1 via UI). Toggled admin like on the same video — toggled back to neutral via API and once again via UI (admin should now be LIKED, since UI re-liked). Briefly added legacy_slug='foo-bar-baz-iter7' to the video and immediately unset it. Briefly renamed title to 'Sora iubitei mele cu tate mari m-a sedus si mi-am dat drumul in ea' then restored — slug also restored to 'testsubvideo-1854e5'. Admin coins increased by a few from like+comment rewards (now ~10,008).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Full iter7 suite at /app/backend/tests/test_iteration7.py — fully green. Test data video remains: id=1fa97503-867b-40d6-8cb3-08dea01854e5 slug=testsubvideo-1854e5. The new ledger pattern reason='like:<uuid>' (NOT 'like:<slug>') is what makes like-coin idempotency robust to slug→uuid redirection. Admin coins ~10,008 (was 10,000 pre-tests). Settings still 3/4/3 from iter6.",
+  "rca_of_the_issue": "All 5 reported bugs were fixed correctly in this release: (1)+(2)+(3) — the new helper find_video_by_id_or_slug + resolve_video_id is wired into every /videos/{id}/* endpoint, and the comment INSERT uses the resolved canonical UUID (server.py:1059-1068). list_comments additionally $in's over [video_id, legacy_id] to surface migrated docs. (4) build_video_slug no longer truncates — title 'Sora iubitei mele cu tate mari m-a sedus si mi-am dat drumul in ea' produced 'sora-iubitei-mele-cu-tate-mari-m-a-sedus-si-mi-am-dat-drumul-in-ea-1854e5' (verified). (5) SSR endpoint /api/og/video/{key} returns proper og:title+absolute og:image; localhost:8001/watch/{key} crawler middleware also returns og:title HTML — both UUID and slug forms verified. Plus new feature (6) /api/shop/leaderboard correctly returns {top:[10], me:{rank,...}}; me is included even when viewer is in top N (server.py:2128-2147). UI: /shop renders Leaderboard above filter buttons with [data-testid=leaderboard] + 10 leader-row-N rows + me-section conditional on rank>N."
+}

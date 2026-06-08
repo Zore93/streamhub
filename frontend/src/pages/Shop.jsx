@@ -3,31 +3,33 @@ import api from "@/lib/api";
 import { useAuth } from "@/contexts/AuthContext";
 import FramedAvatar from "@/components/FramedAvatar";
 import { Button } from "@/components/ui/button";
-import { Coins, Check, Lock } from "lucide-react";
+import { Coins, Check, Lock, Trophy, Crown } from "lucide-react";
 import { toast } from "sonner";
 import { Link } from "react-router-dom";
 
 const RARITY_ORDER = { legendary: 0, epic: 1, rare: 2, common: 3 };
 
 export default function Shop() {
-  const { user, setUser, refresh } = useAuth();
+  const { user, setUser } = useAuth();
   const [frames, setFrames] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [busy, setBusy] = useState(null); // frame id being purchased
+  const [busy, setBusy] = useState(null);
   const [filter, setFilter] = useState("all");
+  const [leaderboard, setLeaderboard] = useState({ top: [], me: null });
 
   useEffect(() => {
     api.get("/shop/frames")
       .then(({ data }) => { setFrames(data); setLoading(false); })
       .catch(() => setLoading(false));
+    api.get("/shop/leaderboard?limit=10").then(({ data }) => setLeaderboard(data)).catch(() => {});
   }, []);
 
   const reload = () => {
     api.get("/shop/frames").then(({ data }) => setFrames(data)).catch(() => {});
+    api.get("/shop/leaderboard?limit=10").then(({ data }) => setLeaderboard(data)).catch(() => {});
   };
 
-  const RARITY_ORDER_MAP = RARITY_ORDER;
-  const byRarity = (a, b) => (RARITY_ORDER_MAP[a.rarity] - RARITY_ORDER_MAP[b.rarity]) || (a.price_coins - b.price_coins);
+  const byRarity = (a, b) => (RARITY_ORDER[a.rarity] - RARITY_ORDER[b.rarity]) || (a.price_coins - b.price_coins);
   const sortedFrames = [...frames].sort(byRarity);
   const filtered = filter === "all"
     ? sortedFrames
@@ -75,6 +77,8 @@ export default function Shop() {
           <Link to="/login" className="text-rose-400 hover:underline">Conectează-te pentru a cumpăra</Link>
         )}
       </div>
+
+      <Leaderboard data={leaderboard} viewerId={user?.id} />
 
       <div className="flex gap-2 mb-5 flex-wrap" role="tablist">
         {[
@@ -140,6 +144,61 @@ export default function Shop() {
           {filtered.length === 0 && <p className="text-zinc-500 col-span-full text-center py-8">Niciun cadru în această categorie.</p>}
         </div>
       )}
+    </div>
+  );
+}
+
+function Leaderboard({ data, viewerId }) {
+  const { top = [], me } = data || {};
+  if (!top.length) return null;
+  const meIsInTop = me && top.some((u) => u.id === me.id);
+  return (
+    <div className="mb-6 bg-gradient-to-br from-amber-500/10 via-zinc-900 to-rose-500/10 border border-amber-500/30 rounded-xl p-4" data-testid="leaderboard">
+      <div className="flex items-center gap-2 mb-3">
+        <Trophy className="text-amber-300" size={20} />
+        <h2 className="text-lg font-bold text-zinc-100">Top 10 utilizatori</h2>
+        <span className="text-xs text-zinc-500">— după monede</span>
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2">
+        {top.map((u) => (
+          <LeaderRow key={u.id} u={u} highlight={u.id === viewerId} />
+        ))}
+      </div>
+      {me && !meIsInTop && (
+        <div className="mt-3 pt-3 border-t border-amber-500/20">
+          <div className="text-xs text-amber-300/80 mb-1.5">Locul tău:</div>
+          <LeaderRow u={me} highlight />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function LeaderRow({ u, highlight }) {
+  const medal = u.rank === 1 ? "🥇" : u.rank === 2 ? "🥈" : u.rank === 3 ? "🥉" : null;
+  return (
+    <div
+      className={`flex items-center gap-2 px-2 py-1.5 rounded-md ${highlight ? "bg-amber-500/20 border border-amber-400/50" : "bg-zinc-900/60"}`}
+      data-testid={`leader-row-${u.rank}`}
+    >
+      <div className="text-xs font-bold w-6 text-center text-zinc-400">
+        {medal || `#${u.rank}`}
+      </div>
+      <FramedAvatar
+        src={u.avatar_url}
+        username={u.username}
+        size={32}
+        frame={u.selected_frame}
+      />
+      <div className="flex-1 min-w-0">
+        <div className="text-sm font-semibold truncate text-zinc-100 flex items-center gap-1">
+          {u.username}
+          {u.is_pro && <Crown size={10} className="text-amber-300" />}
+        </div>
+        <div className="text-xs text-amber-300 inline-flex items-center gap-1">
+          <Coins size={10} /> {(u.coins || 0).toLocaleString()}
+        </div>
+      </div>
     </div>
   );
 }
