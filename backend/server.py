@@ -1,5 +1,6 @@
 """StreamHub backend - FastAPI app."""
 import asyncio
+import json
 import logging
 import os
 import random
@@ -88,6 +89,12 @@ from transcoder import (
     generate_thumbnails,
     probe_video,
     transcode_to_resolution,
+)
+from languages import (
+    LANGUAGES,
+    LABEL_BY_CODE as LANG_LABEL_BY_CODE,
+    detect_language_from_filename,
+    normalize_language_code,
 )
 
 ROOT = Path(__file__).parent
@@ -546,7 +553,7 @@ async def process_video(video_id: str, src_path: str):
                                     pass
                         new_subs.append({
                             "id": new_id(),
-                            "language": item.get("language") or "",
+                            "language": normalize_language_code(item.get("language") or "") or "und",
                             "label": item.get("label") or "Track",
                             "url": final_url,
                             "original_url": "",
@@ -1039,6 +1046,226 @@ async def upload_video(
     # Schedule background
     background.add_task(process_video, vid_id, str(src_path))
     return v_dict
+
+
+# ============ Chunked / Resumable Video Upload ============
+# Big files (≥4 GB) blow through nginx body limits and any single-shot
+# multipart POST loses progress on flaky connections.  We expose 4 endpoints:
+#   POST   /videos/upload/init          → declare {filename, total_size, …}
+#   POST   /videos/upload/{uid}/chunk   → append the next chunk (binary)
+#   GET    /videos/upload/{uid}/status  → resume info (received_size, next_idx)
+#   POST   /videos/upload/{uid}/finish  → finalise and start transcoding
+# Pending uploads live under UPLOAD_DIR/.chunks/<uid>/ with a `state.json` next
+# to the partial `blob` so the server can recover after a restart.
+
+CHUNKS_DIR = UPLOAD_DIR / ".chunks"
+CHUNKS_DIR.mkdir(exist_ok=True, parents=True)
+
+
+def _chunk_state_path(upload_id: str) -> Path:
+    return CHUNKS_DIR / upload_id / "state.json"
+
+
+def _chunk_blob_path(upload_id: str) -> Path:
+    return CHUNKS_DIR / upload_id / "blob"
+
+
+def _read_chunk_state(upload_id: str) -> Optional[dict]:
+    p = _chunk_state_path(upload_id)
+    if not p.exists():
+        return None
+    try:
+        return json.loads(p.read_text())
+    except Exception:
+        return None
+
+
+def _write_chunk_state(upload_id: str, state: dict) -> None:
+    p = _chunk_state_path(upload_id)
+    p.parent.mkdir(exist_ok=True, parents=True)
+    p.write_text(json.dumps(state))
+
+
+def _purge_chunk_upload(upload_id: str) -> None:
+    d = CHUNKS_DIR / upload_id
+    try:
+        if d.exists():
+            import shutil as _sh
+            _sh.rmtree(d, ignore_errors=True)
+    except Exception:
+        pass
+
+
+@api.post("/videos/upload/init")
+async def upload_video_init(payload: dict, user: dict = Depends(require_user)):
+    """Open a new resumable upload slot.  Returns `upload_id` + `chunk_size_mb`."""
+    settings = await get_settings()
+    if not settings.get("allow_user_uploads", True) and user.get("role") != "admin":
+        raise HTTPException(403, "User uploads disabled by admin")
+    filename = (payload.get("filename") or "").strip() or "video.mp4"
+    total_size = int(payload.get("total_size") or 0)
+    if total_size <= 0:
+        raise HTTPException(400, "total_size required")
+    max_bytes = int(settings.get("max_upload_size_mb", 1024)) * 1024 * 1024
+    if total_size > max_bytes:
+        raise HTTPException(413, f"File exceeds {settings.get('max_upload_size_mb')} MB limit")
+    upload_id = new_id()
+    state = {
+        "upload_id": upload_id,
+        "user_id": user["id"],
+        "filename": filename,
+        "total_size": total_size,
+        "received_size": 0,
+        "mime_type": payload.get("mime_type") or "",
+        "created_at": now_iso(),
+    }
+    _write_chunk_state(upload_id, state)
+    # Touch the blob so `os.path.getsize` always works
+    _chunk_blob_path(upload_id).touch()
+    return {
+        "upload_id": upload_id,
+        "chunk_size_mb": int(settings.get("chunk_upload_chunk_size_mb", 25)),
+        "max_upload_size_mb": int(settings.get("max_upload_size_mb", 1024)),
+        "received_size": 0,
+    }
+
+
+@api.get("/videos/upload/{upload_id}/status")
+async def upload_video_status(upload_id: str, user: dict = Depends(require_user)):
+    state = _read_chunk_state(upload_id)
+    if not state or state.get("user_id") != user["id"]:
+        raise HTTPException(404, "Unknown upload")
+    blob = _chunk_blob_path(upload_id)
+    received = blob.stat().st_size if blob.exists() else 0
+    state["received_size"] = received
+    _write_chunk_state(upload_id, state)
+    return {
+        "upload_id": upload_id,
+        "filename": state.get("filename"),
+        "total_size": state.get("total_size"),
+        "received_size": received,
+        "complete": received >= int(state.get("total_size") or 0),
+    }
+
+
+@api.post("/videos/upload/{upload_id}/chunk")
+async def upload_video_chunk(
+    upload_id: str,
+    request: Request,
+    user: dict = Depends(require_user),
+):
+    """Append the next chunk (raw octet-stream body) to the upload's blob.
+
+    Client must send chunks in order.  If a chunk is lost, the client should
+    call `/status` and re-send from `received_size`.  This avoids the overhead
+    of per-chunk JSON envelopes for multi-GB files.
+    """
+    state = _read_chunk_state(upload_id)
+    if not state or state.get("user_id") != user["id"]:
+        raise HTTPException(404, "Unknown upload")
+    total = int(state.get("total_size") or 0)
+    blob = _chunk_blob_path(upload_id)
+    current = blob.stat().st_size if blob.exists() else 0
+    if current >= total:
+        return {"received_size": current, "complete": True}
+    # Stream the request body directly to disk — never buffer in RAM.
+    # FastAPI/Starlette gives us the raw stream via request.stream().
+    written = 0
+    settings = await get_settings()
+    max_bytes = int(settings.get("max_upload_size_mb", 1024)) * 1024 * 1024
+    with open(blob, "ab") as f:
+        async for chunk in request.stream():
+            if not chunk:
+                continue
+            f.write(chunk)
+            written += len(chunk)
+            if current + written > max_bytes:
+                # Abort: clean up and reject
+                f.close()
+                _purge_chunk_upload(upload_id)
+                raise HTTPException(413, f"File exceeds {settings.get('max_upload_size_mb')} MB limit")
+    new_size = current + written
+    state["received_size"] = new_size
+    _write_chunk_state(upload_id, state)
+    return {
+        "received_size": new_size,
+        "total_size": total,
+        "complete": new_size >= total,
+    }
+
+
+@api.post("/videos/upload/{upload_id}/finish")
+async def upload_video_finish(
+    upload_id: str,
+    payload: dict,
+    background: BackgroundTasks,
+    user: dict = Depends(require_user),
+):
+    """Promote the assembled blob to a real Video doc and start transcoding."""
+    state = _read_chunk_state(upload_id)
+    if not state or state.get("user_id") != user["id"]:
+        raise HTTPException(404, "Unknown upload")
+    blob = _chunk_blob_path(upload_id)
+    if not blob.exists():
+        raise HTTPException(400, "Upload data missing")
+    received = blob.stat().st_size
+    total = int(state.get("total_size") or 0)
+    if received < total:
+        raise HTTPException(400, f"Upload incomplete ({received}/{total} bytes)")
+
+    title = (payload.get("title") or state.get("filename") or "Untitled").strip() or "Untitled"
+    description = (payload.get("description") or "").strip()
+    tags = payload.get("tags") or ""
+    if isinstance(tags, str):
+        tags_list = [t.strip() for t in tags.split(",") if t.strip()]
+    elif isinstance(tags, list):
+        tags_list = [str(t).strip() for t in tags if str(t).strip()]
+    else:
+        tags_list = []
+    category_id = payload.get("category_id") or None
+    access_tier = payload.get("access_tier") or "free"
+    if access_tier not in ("free", "pro"):
+        access_tier = "free"
+    is_short = bool(payload.get("is_short", False))
+
+    # Move blob into the canonical originals/<id><ext> path
+    vid_id = new_id()
+    orig_ext = (Path(state.get("filename") or "video.mp4").suffix or ".mp4").lower()
+    src_path = UPLOAD_DIR / "originals" / f"{vid_id}{orig_ext}"
+    src_path.parent.mkdir(exist_ok=True, parents=True)
+    blob.rename(src_path)
+
+    v = Video(
+        id=vid_id,
+        title=title,
+        description=description,
+        tags=tags_list,
+        category_id=category_id,
+        uploader_id=user["id"],
+        uploader_username=user["username"],
+        access_tier=access_tier,
+        is_short=is_short,
+        original_filename=state.get("filename") or "",
+        original_size_bytes=received,
+        status="processing",
+    )
+    v_dict = v.model_dump()
+    v_dict["slug"] = await build_video_slug(title, vid_id)
+    await db.videos.insert_one(v_dict)
+    v_dict.pop("_id", None)
+    # Clean up the chunk state directory (blob has been moved out already)
+    _purge_chunk_upload(upload_id)
+    background.add_task(process_video, vid_id, str(src_path))
+    return v_dict
+
+
+@api.delete("/videos/upload/{upload_id}")
+async def upload_video_abort(upload_id: str, user: dict = Depends(require_user)):
+    state = _read_chunk_state(upload_id)
+    if not state or state.get("user_id") != user["id"]:
+        raise HTTPException(404, "Unknown upload")
+    _purge_chunk_upload(upload_id)
+    return {"ok": True}
 
 
 @api.patch("/videos/{video_id}")
@@ -2038,8 +2265,8 @@ async def root():
 async def add_subtitle(
     video_id: str,
     file: UploadFile = File(...),
-    language: str = Form(...),
-    label: str = Form(...),
+    language: str = Form(""),
+    label: str = Form(""),
     user: dict = Depends(require_user),
 ):
     v = await find_video_by_id_or_slug(video_id)
@@ -2048,9 +2275,25 @@ async def add_subtitle(
     vid = v["id"]
     if v["uploader_id"] != user["id"] and user.get("role") != "admin":
         raise HTTPException(403, "Not your video")
-    if len(v.get("subtitles", [])) >= 10:
-        raise HTTPException(400, "Max 10 subtitles per video")
-    ext = (Path(file.filename or "sub.srt").suffix or ".srt").lower()
+    if len(v.get("subtitles", [])) >= 100:
+        raise HTTPException(400, "Max 100 subtitles per video")
+    # Auto-detect language + label from the filename when the caller did not
+    # supply them explicitly.  Example heuristics:
+    #   episode01.ja-jp.srt  → ja  → "Japanese"
+    #   [ROM] sub.srt        → ro  → "Romanian"
+    #   subtitle.Romanian.srt→ ro  → "Romanian"
+    fname = file.filename or "sub.srt"
+    if not (language or "").strip() or not (label or "").strip():
+        detected = detect_language_from_filename(fname)
+        if not (language or "").strip():
+            language = detected["language"]
+        if not (label or "").strip():
+            label = detected["label"]
+    if not language:
+        language = "und"
+    if not label:
+        label = "Track"
+    ext = (Path(fname).suffix or ".srt").lower()
     if ext not in (".srt", ".ass", ".vtt"):
         raise HTTPException(400, "Only .srt, .ass or .vtt allowed")
     sub_id = new_id()
@@ -2211,6 +2454,12 @@ async def public_player_config():
     return {"allow_video_download": bool(s.get("allow_video_download", False))}
 
 
+@api.get("/languages")
+async def public_languages():
+    """All ISO 639 language entries for the subtitle / language pickers."""
+    return LANGUAGES
+
+
 @api.get("/site/config")
 async def public_site_config():
     """Public site identity / SEO + localisation + chat config consumed by the frontend."""
@@ -2232,6 +2481,11 @@ async def public_site_config():
         "coins_per_like": int(s.get("coins_per_like", 1)),
         "coins_per_comment": int(s.get("coins_per_comment", 2)),
         "coins_comment_daily_cap_per_video": int(s.get("coins_comment_daily_cap_per_video", 10)),
+        "home_hero_text": s.get("home_hero_text") or "",
+        "bulk_upload_enabled": bool(s.get("bulk_upload_enabled", True)),
+        "bulk_upload_concurrency": int(s.get("bulk_upload_concurrency", 3)),
+        "chunk_upload_chunk_size_mb": int(s.get("chunk_upload_chunk_size_mb", 25)),
+        "max_upload_size_mb": int(s.get("max_upload_size_mb", 1024)),
     }
 
 

@@ -566,7 +566,7 @@ function FramesTab() {
               </tr>
             ))}
             {frames.length === 0 && (
-              <tr><td colSpan={7} className="text-zinc-500 py-6 text-center">Niciun cadru. Apasă „Adaugă cele 50 implicite".</td></tr>
+              <tr><td colSpan={7} className="text-zinc-500 py-6 text-center">Niciun cadru. Apasă „Adaugă cele 50 implicite”.</td></tr>
             )}
           </tbody>
         </table>
@@ -688,19 +688,40 @@ function ChatModerationTab() {
 
 function SettingsTab() {
   const [s, setS] = useState(null);
-  useEffect(() => { api.get("/admin/settings").then((r) => setS(r.data)); }, []);
+  const [pristine, setPristine] = useState(null);
+  useEffect(() => {
+    api.get("/admin/settings").then((r) => { setS(r.data); setPristine(r.data); });
+  }, []);
   if (!s) return <div className="text-zinc-500">Loading...</div>;
   const upd = (k, v) => setS({ ...s, [k]: v });
+  const dirty = pristine && JSON.stringify(s) !== JSON.stringify(pristine);
   const save = async () => {
     const { data } = await api.patch("/admin/settings", s);
-    setS(data); toast.success("Settings saved");
+    setS(data);
+    setPristine(data);
+    toast.success("Settings saved");
   };
+  const reset = () => setS(pristine);
   const toggleRes = (r) => {
     const cur = s.enabled_resolutions || [];
     upd("enabled_resolutions", cur.includes(r) ? cur.filter((x) => x !== r) : [...cur, r]);
   };
   return (
-    <div className="mt-6 space-y-6 max-w-3xl" data-testid="admin-settings">
+    <div className="mt-6 space-y-6 max-w-3xl pb-24" data-testid="admin-settings">
+      {/* Sticky save bar — always visible while editing settings */}
+      <div className={`sticky top-0 z-30 -mx-4 px-4 py-2.5 backdrop-blur-md border-b transition-all ${dirty ? "bg-rose-500/15 border-rose-500/50" : "bg-zinc-900/80 border-zinc-800"}`}>
+        <div className="flex items-center justify-between gap-2 max-w-3xl mx-auto">
+          <span className="text-xs text-zinc-300">
+            {dirty ? <span className="text-rose-300 font-semibold">● Modificări nesalvate</span> : <span className="text-zinc-500">Toate setările sunt salvate</span>}
+          </span>
+          <div className="flex gap-2">
+            {dirty && <Button onClick={reset} size="sm" variant="ghost" data-testid="reset-settings">Anulează</Button>}
+            <Button onClick={save} size="sm" disabled={!dirty} className="pro-gradient text-white border-0" data-testid="save-settings">
+              Salvează toate setările
+            </Button>
+          </div>
+        </div>
+      </div>
       <Section title="Localization">
         <Field label="Default site language">
           <Select value={s.default_language || "ro"} onValueChange={(v) => upd("default_language", v)}>
@@ -746,8 +767,11 @@ function SettingsTab() {
       </Section>
       <Section title="FFmpeg & Uploads">
         <Field label="Concurrent transcodes"><Input type="number" value={s.ffmpeg_concurrency} onChange={(e) => upd("ffmpeg_concurrency", parseInt(e.target.value) || 1)} className="bg-zinc-950 border-zinc-800" /></Field>
-        <Field label="Max upload size (MB)"><Input type="number" value={s.max_upload_size_mb} onChange={(e) => upd("max_upload_size_mb", parseInt(e.target.value) || 100)} className="bg-zinc-950 border-zinc-800" /></Field>
+        <Field label="Max upload size (MB)"><Input type="number" value={s.max_upload_size_mb} onChange={(e) => upd("max_upload_size_mb", parseInt(e.target.value) || 100)} className="bg-zinc-950 border-zinc-800" data-testid="max-upload-mb" /></Field>
         <Field label="Allow user uploads"><Switch checked={s.allow_user_uploads} onCheckedChange={(v) => upd("allow_user_uploads", v)} /></Field>
+        <Field label="Bulk upload (multi-file)"><Switch checked={!!s.bulk_upload_enabled} onCheckedChange={(v) => upd("bulk_upload_enabled", v)} data-testid="bulk-upload-toggle" /></Field>
+        <Field label="Bulk upload concurrency (1-6)"><Input type="number" min={1} max={6} value={s.bulk_upload_concurrency ?? 3} onChange={(e) => upd("bulk_upload_concurrency", Math.max(1, Math.min(6, parseInt(e.target.value) || 3)))} className="bg-zinc-950 border-zinc-800" /></Field>
+        <Field label="Chunk size (MB) — chunked uploads"><Input type="number" min={1} max={500} value={s.chunk_upload_chunk_size_mb ?? 25} onChange={(e) => upd("chunk_upload_chunk_size_mb", Math.max(1, parseInt(e.target.value) || 25))} className="bg-zinc-950 border-zinc-800" /></Field>
         <Field label="Allow video download (player button)"><Switch checked={!!s.allow_video_download} onCheckedChange={(v) => upd("allow_video_download", v)} data-testid="allow-download-toggle" /></Field>
         <div>
           <Label className="mb-2 block">Enabled resolutions</Label>
@@ -833,6 +857,18 @@ function SettingsTab() {
       <Section title="Site / SEO">
         <Field label="Site title"><Input value={s.site_title || ""} onChange={(e) => upd("site_title", e.target.value)} className="bg-zinc-950 border-zinc-800" data-testid="site-title-input" /></Field>
         <Field label="Description"><Input value={s.site_description || ""} onChange={(e) => upd("site_description", e.target.value)} className="bg-zinc-950 border-zinc-800" /></Field>
+        <div className="col-span-2">
+          <Label>Home page hero text (overrides translation)</Label>
+          <Textarea
+            rows={2}
+            value={s.home_hero_text || ""}
+            onChange={(e) => upd("home_hero_text", e.target.value)}
+            className="bg-zinc-950 border-zinc-800"
+            placeholder="Watch hentai subtitled in Romanian in 1080P - 4096P quality."
+            data-testid="home-hero-input"
+          />
+          <p className="text-xs text-zinc-500 mt-1">Apare în header-ul homepage-ului. Lasă gol pentru a folosi traducerea implicită.</p>
+        </div>
         <Field label="Favicon URL"><Input value={s.site_favicon_url || ""} onChange={(e) => upd("site_favicon_url", e.target.value)} className="bg-zinc-950 border-zinc-800" placeholder="https://.../favicon.ico" /></Field>
         <Field label="Canonical URL"><Input value={s.site_canonical_url || ""} onChange={(e) => upd("site_canonical_url", e.target.value)} className="bg-zinc-950 border-zinc-800" placeholder="https://gleague.eu" /></Field>
         <Field label="Default OG image (for link previews)"><Input value={s.site_og_image || ""} onChange={(e) => upd("site_og_image", e.target.value)} className="bg-zinc-950 border-zinc-800" placeholder="https://.../share.png or path on Wasabi" /></Field>
@@ -853,7 +889,6 @@ function SettingsTab() {
       <Section title="GitHub auto-update">
         <GithubUpdateControls />
       </Section>
-      <Button onClick={save} className="pro-gradient text-white border-0" data-testid="save-settings">Save All Settings</Button>
     </div>
   );
 }

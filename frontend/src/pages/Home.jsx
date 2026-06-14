@@ -38,7 +38,7 @@ function Section({ title, Icon, videos, seeMoreTo, testId, vertical = false, see
 }
 
 export default function Home() {
-  const { t } = useT();
+  const { t, siteCfg } = useT();
   const [latest, setLatest] = useState([]);
   const [popular, setPopular] = useState([]);
   const [shorts, setShorts] = useState([]);
@@ -60,12 +60,13 @@ export default function Home() {
     shorts.length === 0;
 
   const seeMore = t("home.seeMore");
+  const heroText = (siteCfg?.home_hero_text || "").trim() || t("site.tagline");
 
   return (
     <div data-testid="home-page">
       <header className="mb-10">
-        <h1 className="text-sm sm:text-base lg:text-lg font-bold tracking-tight text-zinc-50 font-heading">
-          {t("site.tagline")}
+        <h1 className="text-sm sm:text-base lg:text-lg font-bold tracking-tight text-zinc-50 font-heading whitespace-pre-line" data-testid="home-hero-text">
+          {heroText}
         </h1>
       </header>
       {isEmpty && (

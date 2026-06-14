@@ -12,6 +12,7 @@ import { Trash2, Plus, ArrowLeft, FileText, Star, StarOff } from "lucide-react";
 import { toast } from "sonner";
 
 // Common subtitle languages — keeps the picker small but covers most cases.
+// Used only as a fallback if /api/languages isn't reachable.
 const COMMON_LANGS = [
   { code: "ro", label: "Română" },
   { code: "en", label: "English" },
@@ -36,24 +37,64 @@ export default function EditVideo() {
   const nav = useNavigate();
   const [v, setV] = useState(null);
   const [cats, setCats] = useState([]);
+  const [allLangs, setAllLangs] = useState([]);
   const [subFile, setSubFile] = useState(null);
   const [subLang, setSubLang] = useState("ro");
   const [subLangCustom, setSubLangCustom] = useState("");
   const [subLabel, setSubLabel] = useState("Română");
+  const [autoDetected, setAutoDetected] = useState(false);
   const [busy, setBusy] = useState(false);
 
   const load = async () => {
     const { data } = await api.get(`/videos/${id}`);
     setV(data);
   };
-  useEffect(() => { load(); api.get("/categories").then((r) => setCats(r.data)); }, [id]);
+  useEffect(() => {
+    load();
+    api.get("/categories").then((r) => setCats(r.data));
+    api.get("/languages").then((r) => setAllLangs(r.data)).catch(() => setAllLangs(COMMON_LANGS));
+  }, [id]);
 
   // Auto-suggest label when language changes
   useEffect(() => {
     if (subLang === "other") return;
-    const found = COMMON_LANGS.find((l) => l.code === subLang);
+    const found = allLangs.find((l) => l.code === subLang) || COMMON_LANGS.find((l) => l.code === subLang);
     if (found) setSubLabel(found.label);
-  }, [subLang]);
+  }, [subLang, allLangs]);
+
+  // Auto-detect language from filename when the user picks a subtitle file
+  useEffect(() => {
+    if (!subFile) { setAutoDetected(false); return; }
+    const name = subFile.name.toLowerCase();
+    // Lightweight client-side detection — full check runs server-side too.
+    const PATTERNS = [
+      ["ja", /\b(ja|jp|jpn|japanese)\b|jpsub|japsub/],
+      ["ro", /\b(ro|rom|ron|romanian|romana)\b|rosub/],
+      ["en", /\b(en|eng|english)\b|engsub/],
+      ["es", /\b(es|esp|spa|spanish)\b|spasub/],
+      ["fr", /\b(fr|fra|french|francais)\b|frasub/],
+      ["de", /\b(de|deu|ger|german|deutsch)\b/],
+      ["it", /\b(it|ita|italian|italiano)\b/],
+      ["pt", /\b(pt|por|portuguese)\b/],
+      ["ko", /\b(ko|kor|korean)\b/],
+      ["zh", /\b(zh|chi|chn|chinese|mandarin)\b/],
+      ["ru", /\b(ru|rus|russian)\b/],
+      ["ar", /\b(ar|ara|arabic)\b/],
+      ["tr", /\b(tr|tur|turkish)\b/],
+      ["pl", /\b(pl|pol|polish)\b/],
+      ["nl", /\b(nl|nld|dutch)\b/],
+    ];
+    const base = name.replace(/\.[^.]+$/, "").replace(/[._\-\[\]\(\)]+/g, " ");
+    for (const [code, re] of PATTERNS) {
+      if (re.test(base)) {
+        setSubLang(code);
+        setAutoDetected(true);
+        return;
+      }
+    }
+    setAutoDetected(false);
+  }, [subFile]);
+
 
   const isShortVideo = useMemo(() => !!v?.is_short, [v]);
 
@@ -172,17 +213,23 @@ export default function EditVideo() {
             <FileText size={18} className="text-rose-500" />
             <h2 className="text-xl font-semibold font-heading">Subtitles</h2>
           </div>
-          <span className="text-xs text-zinc-500">{(v.subtitles || []).length}/10</span>
+          <span className="text-xs text-zinc-500">{(v.subtitles || []).length}/100</span>
         </div>
         <form onSubmit={addSubtitle} className="grid grid-cols-1 sm:grid-cols-4 gap-2 items-end mb-4">
           <div className="sm:col-span-1">
             <Label>Language</Label>
             <Select value={subLang} onValueChange={setSubLang}>
               <SelectTrigger className="bg-zinc-950 border-zinc-800" data-testid="sub-lang"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                {COMMON_LANGS.map((l) => <SelectItem key={l.code} value={l.code}>{l.label}</SelectItem>)}
+              <SelectContent className="max-h-72">
+                {(allLangs.length ? allLangs : COMMON_LANGS).map((l) => (
+                  <SelectItem key={l.code} value={l.code}>{l.label}</SelectItem>
+                ))}
+                <SelectItem value="other">Other / custom</SelectItem>
               </SelectContent>
             </Select>
+            {autoDetected && (
+              <p className="text-[10px] text-emerald-400 mt-1">Limbă detectată automat din nume fișier</p>
+            )}
             {subLang === "other" && (
               <Input
                 value={subLangCustom}

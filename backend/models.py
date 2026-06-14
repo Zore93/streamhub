@@ -194,6 +194,9 @@ class AppSettings(BaseModel):
     # Upload
     max_upload_size_mb: int = 1024
     allow_user_uploads: bool = True
+    bulk_upload_enabled: bool = True  # admin can disable multi-file upload UI
+    bulk_upload_concurrency: int = 3  # how many chunks/files to send in parallel
+    chunk_upload_chunk_size_mb: int = 25  # client target chunk size
     # Storage
     storage_backend: str = "local"  # local | wasabi
     wasabi_access_key: str = ""
@@ -229,6 +232,7 @@ class AppSettings(BaseModel):
     # Site / SEO
     site_title: str = "StreamHub"
     site_description: str = "A premium video-sharing community."
+    home_hero_text: str = ""  # custom tagline shown on /; falls back to i18n if empty
     site_favicon_url: str = ""
     site_logo_url: str = ""   # left-sidebar brand logo; replaces the "S" + name when set
     site_seo_keywords: str = ""

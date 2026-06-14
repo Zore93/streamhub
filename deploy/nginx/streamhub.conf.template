@@ -46,7 +46,11 @@ server {
     ssl_certificate_key /etc/letsencrypt/live/__DOMAIN__/privkey.pem;
     include /etc/nginx/conf.d/ssl-params.conf;
 
-    client_max_body_size 4096m;   # large uploads (configurable in admin too)
+    # Chunks are 25MB by default (admin-configurable) so 512m is plenty of
+    # headroom for any single chunk.  The total upload size is enforced by the
+    # backend against site_config.max_upload_size_mb, not by nginx.
+    client_max_body_size 512m;
+    client_body_timeout 600s;
     proxy_request_buffering off;
     proxy_read_timeout 3600s;
     proxy_send_timeout 3600s;
