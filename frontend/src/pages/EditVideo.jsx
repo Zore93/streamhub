@@ -218,15 +218,20 @@ export default function EditVideo() {
             <Plus size={14} className="mr-1" /> {busy ? "Uploading…" : "Add"}
           </Button>
         </form>
-        <p className="text-xs text-zinc-500 mb-3">.srt and .ass files are auto-converted to WebVTT by the server. The first subtitle in the list shows by default in the player.</p>
+        <p className="text-xs text-zinc-500 mb-3">.srt and .ass files are auto-converted to WebVTT by the server. Subtitrările încorporate în fișierul video (MKV / MP4) sunt extrase și adăugate automat. Primul subtitlu din listă este afișat implicit în player.</p>
         <div className="space-y-2">
           {(v.subtitles || []).map((s, i) => (
             <div key={s.id} className="flex items-center justify-between bg-zinc-950 border border-zinc-800 rounded-md p-3" data-testid={`sub-${s.id}`}>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 {i === 0 && <Star size={14} className="text-amber-400 fill-amber-400" />}
                 <span className="font-semibold">{s.label}</span>
-                <span className="text-xs text-zinc-500">({s.language} · {s.format})</span>
+                <span className="text-xs text-zinc-500">({s.language || "und"}{s.format ? ` · ${s.format}` : ""})</span>
                 {i === 0 && <span className="text-[10px] uppercase tracking-wider text-amber-400 bg-amber-400/10 px-1.5 py-0.5 rounded">default</span>}
+                {s.source === "embedded" && (
+                  <span className="text-[10px] uppercase tracking-wider text-sky-300 bg-sky-400/10 border border-sky-400/30 px-1.5 py-0.5 rounded" title="Extras automat din fișierul video">
+                    extras
+                  </span>
+                )}
               </div>
               <div className="flex items-center gap-1">
                 {i !== 0 && (

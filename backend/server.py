@@ -83,6 +83,7 @@ from models import (
 from chat import hub as chat_hub, video_status_hub
 from transcoder import (
     RESOLUTIONS,
+    extract_embedded_subtitles,
     filter_resolutions_for_source,
     generate_thumbnails,
     probe_video,
@@ -522,6 +523,47 @@ async def process_video(video_id: str, src_path: str):
                 },
             )
             await _publish_status(video_id)
+            # ----- Auto-extract embedded text subtitles (MKV / MP4 / MOV) ----
+            try:
+                sub_dir = UPLOAD_DIR / "subtitles"
+                sub_dir.mkdir(parents=True, exist_ok=True)
+                extracted = await extract_embedded_subtitles(src_path, str(sub_dir), video_id)
+                if extracted:
+                    new_subs: List[dict] = []
+                    for item in extracted:
+                        local_path = Path(item["rel_path"])
+                        rel = f"subtitles/{local_path.name}"
+                        final_url = rel
+                        if use_wasabi:
+                            uploaded = await wasabi_upload(
+                                str(local_path), rel, settings, "text/vtt; charset=utf-8",
+                            )
+                            if uploaded:
+                                final_url = uploaded
+                                try:
+                                    local_path.unlink()
+                                except Exception:
+                                    pass
+                        new_subs.append({
+                            "id": new_id(),
+                            "language": item.get("language") or "",
+                            "label": item.get("label") or "Track",
+                            "url": final_url,
+                            "original_url": "",
+                            "source": "embedded",  # mark for the UI
+                        })
+                    if new_subs:
+                        await db.videos.update_one(
+                            {"id": video_id},
+                            {"$push": {"subtitles": {"$each": new_subs}}},
+                        )
+                        logger.info(
+                            "Extracted %d embedded subtitle(s) from %s",
+                            len(new_subs), Path(src_path).name,
+                        )
+            except Exception as _sub_err:  # noqa: BLE001
+                # Subtitle extraction must NEVER break a video upload.
+                logger.warning("subtitle extraction failed: %s", _sub_err)
             # Decide which resolutions
             enabled = settings.get("enabled_resolutions", ["360p", "720p", "1080p"])
             target_resolutions = filter_resolutions_for_source(src_h or 1080, enabled)

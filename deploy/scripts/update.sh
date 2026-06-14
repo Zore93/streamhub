@@ -83,7 +83,30 @@ else
     $GIT --no-pager diff --name-only "$BEFORE" "$AFTER"
 fi
 
-# ─── 2) rebuild + restart ───────────────────────────────────────────────────
+# ─── 2) regenerate nginx config from template ───────────────────────────────
+# `streamhub.conf` is gitignored (it contains the substituted DOMAIN), so it
+# must be regenerated from `streamhub.conf.template` after every git pull —
+# otherwise new map/location blocks (e.g. social-crawler routing) silently
+# stay on the old config.
+DOMAIN=""
+if [[ -f "$ENV_FILE" ]]; then
+    # shellcheck disable=SC1090
+    DOMAIN=$(grep -E '^DOMAIN=' "$ENV_FILE" | head -n1 | cut -d= -f2- | tr -d '"' | tr -d "'")
+fi
+if [[ -z "$DOMAIN" ]]; then
+    red "DOMAIN not found in $ENV_FILE — cannot regenerate nginx config."
+    red "Add  DOMAIN=your.domain.tld  to $ENV_FILE and re-run."
+    exit 1
+fi
+
+NGINX_TEMPLATE="$REPO_DIR/deploy/nginx/streamhub.conf.template"
+NGINX_CONF="$REPO_DIR/deploy/nginx/streamhub.conf"
+if [[ -f "$NGINX_TEMPLATE" ]]; then
+    blue "→ Regenerating nginx/streamhub.conf from template (DOMAIN=$DOMAIN)"
+    sed "s|__DOMAIN__|$DOMAIN|g" "$NGINX_TEMPLATE" > "$NGINX_CONF"
+fi
+
+# ─── 3) rebuild + restart ───────────────────────────────────────────────────
 cd "$REPO_DIR/deploy"
 
 DC="docker compose -f $COMPOSE_FILE --env-file $ENV_FILE"
@@ -105,7 +128,20 @@ else
     fi
 fi
 
-# ─── 3) post-update health check ────────────────────────────────────────────
+# Reload nginx so any change in streamhub.conf takes effect even when nginx
+# itself was untouched by the rebuild (nginx config is bind-mounted, not baked
+# into the image, so `up -d` alone doesn't pick up edits to the .conf file).
+if docker ps --format '{{.Names}}' | grep -q '^sh-nginx$'; then
+    blue "→ Reloading nginx"
+    if docker exec sh-nginx nginx -t >/dev/null 2>&1; then
+        docker exec sh-nginx nginx -s reload || true
+    else
+        red "nginx config test FAILED — not reloading.  Run:"
+        red "    docker exec -it sh-nginx nginx -t"
+    fi
+fi
+
+# ─── 4) post-update health check ────────────────────────────────────────────
 # Backend isn't exposed on the host; it's proxied by nginx.  We exec into the
 # container and use python (guaranteed to exist — it's the runtime) to hit the
 # loopback API.  Curl/wget aren't in the slim image.

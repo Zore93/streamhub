@@ -91,6 +91,55 @@ export default function VideoPlayer({ video, currentRendition, resolution, setRe
     const v = ref.current; if (!v) return;
     if (v.paused) v.play(); else v.pause();
   };
+
+  // ─── Double-click to seek ±10s ────────────────────────────────────────
+  // Single click toggles play/pause (already wired); a second click within
+  // 280 ms on the LEFT or RIGHT third of the player skips 10 seconds.  We
+  // also intercept dblclick to undo the toggle the first click triggered.
+  const clickTimerRef = useRef(null);
+  const handlePlayerClick = (e) => {
+    // Ignore clicks that originate from interactive controls
+    const tag = (e.target.tagName || "").toLowerCase();
+    if (["button", "input", "a", "select", "svg", "path"].includes(tag)) return;
+    if (clickTimerRef.current) {
+      clearTimeout(clickTimerRef.current);
+      clickTimerRef.current = null;
+      return; // a dblclick will handle the skip; suppress play/pause
+    }
+    clickTimerRef.current = setTimeout(() => {
+      clickTimerRef.current = null;
+      togglePlay();
+    }, 280);
+  };
+
+  const handlePlayerDblClick = (e) => {
+    const v = ref.current;
+    const wrap = wrapRef.current;
+    if (!v || !wrap) return;
+    const rect = wrap.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const third = rect.width / 3;
+    if (x < third) {
+      v.currentTime = Math.max(0, v.currentTime - 10);
+      showSkipBubble("-10s", "left");
+    } else if (x > rect.width - third) {
+      v.currentTime = Math.min(duration || v.duration || v.currentTime + 10, v.currentTime + 10);
+      showSkipBubble("+10s", "right");
+    } else {
+      // middle third → fullscreen
+      toggleFullscreen();
+    }
+  };
+
+  // Tiny floating bubble shown for ~600 ms on each skip
+  const [skipHint, setSkipHint] = useState(null); // { text, side }
+  const skipTimerRef = useRef(null);
+  const showSkipBubble = (text, side) => {
+    setSkipHint({ text, side });
+    if (skipTimerRef.current) clearTimeout(skipTimerRef.current);
+    skipTimerRef.current = setTimeout(() => setSkipHint(null), 600);
+  };
+
   const seek = (e) => {
     const v = ref.current; if (!v) return;
     const t = parseFloat(e.target.value);
@@ -149,13 +198,34 @@ export default function VideoPlayer({ video, currentRendition, resolution, setRe
         crossOrigin="anonymous"
         className="w-full h-full"
         onTimeUpdate={() => setSavedTime(ref.current?.currentTime || 0)}
-        onClick={togglePlay}
+        onClick={handlePlayerClick}
+        onDoubleClick={handlePlayerDblClick}
         poster={video.thumbnail_url ? mediaUrl(video.thumbnail_url) : undefined}
       >
         {(video.subtitles || []).map((s, i) => (
-          <track key={s.id} id={s.id} kind="subtitles" src={mediaUrl(s.url)} srcLang={s.language} label={s.label} default={i === 0} />
+          <track
+            key={s.id}
+            id={s.id}
+            kind="subtitles"
+            src={mediaUrl(s.url)}
+            srcLang={s.language || "und"}
+            label={s.label || `Track ${i + 1}`}
+            default={i === 0}
+          />
         ))}
       </video>
+
+      {/* Skip ±10s overlay bubble */}
+      {skipHint && (
+        <div
+          className={`absolute top-1/2 -translate-y-1/2 ${skipHint.side === "left" ? "left-8" : "right-8"} pointer-events-none`}
+          data-testid="skip-bubble"
+        >
+          <div className="bg-black/70 text-white font-bold text-2xl px-5 py-3 rounded-full backdrop-blur-md border border-white/20 animate-pulse">
+            {skipHint.text}
+          </div>
+        </div>
+      )}
 
       {/* Bottom control bar — auto-hides after 2.5 s of inactivity while playing */}
       <div
