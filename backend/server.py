@@ -9,7 +9,7 @@ import secrets
 import shutil
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from dotenv import load_dotenv
 from fastapi import (
@@ -1096,6 +1096,57 @@ def _purge_chunk_upload(upload_id: str) -> None:
         pass
 
 
+def _scan_chunk_uploads() -> List[Dict]:
+    """Return a metadata snapshot of every pending upload under CHUNKS_DIR."""
+    out: List[Dict] = []
+    if not CHUNKS_DIR.exists():
+        return out
+    now_ts = time.time()
+    for child in CHUNKS_DIR.iterdir():
+        if not child.is_dir():
+            continue
+        try:
+            state = _read_chunk_state(child.name) or {}
+            blob = child / "blob"
+            size = blob.stat().st_size if blob.exists() else 0
+            mtime = child.stat().st_mtime
+            out.append({
+                "upload_id": child.name,
+                "user_id": state.get("user_id"),
+                "filename": state.get("filename") or "?",
+                "total_size": int(state.get("total_size", 0) or 0),
+                "received_size": size,
+                "created_at": state.get("created_at"),
+                "age_hours": round((now_ts - mtime) / 3600.0, 2),
+                "stale": (now_ts - mtime) >= 86400,  # ≥24h with no activity
+            })
+        except Exception:
+            continue
+    return out
+
+
+def _cleanup_stale_chunks(max_age_hours: float = 24.0) -> int:
+    """Remove every chunk directory untouched for `max_age_hours`.  Returns
+    the number of pending uploads purged.
+    """
+    if not CHUNKS_DIR.exists():
+        return 0
+    cutoff = time.time() - max_age_hours * 3600
+    purged = 0
+    for child in list(CHUNKS_DIR.iterdir()):
+        try:
+            if not child.is_dir():
+                continue
+            if child.stat().st_mtime < cutoff:
+                _purge_chunk_upload(child.name)
+                purged += 1
+        except Exception:
+            continue
+    if purged:
+        logger.info("Janitor: purged %d stale chunked upload(s)", purged)
+    return purged
+
+
 @api.post("/videos/upload/init")
 async def upload_video_init(payload: dict, user: dict = Depends(require_user)):
     """Open a new resumable upload slot.  Returns `upload_id` + `chunk_size_mb`."""
@@ -1207,56 +1258,66 @@ async def upload_video_finish(
         raise HTTPException(404, "Unknown upload")
     blob = _chunk_blob_path(upload_id)
     if not blob.exists():
+        _purge_chunk_upload(upload_id)
         raise HTTPException(400, "Upload data missing")
     received = blob.stat().st_size
     total = int(state.get("total_size") or 0)
     if received < total:
+        # Don't purge here — the client may retry the missing chunks.
         raise HTTPException(400, f"Upload incomplete ({received}/{total} bytes)")
 
-    title = (payload.get("title") or state.get("filename") or "Untitled").strip() or "Untitled"
-    description = (payload.get("description") or "").strip()
-    tags = payload.get("tags") or ""
-    if isinstance(tags, str):
-        tags_list = [t.strip() for t in tags.split(",") if t.strip()]
-    elif isinstance(tags, list):
-        tags_list = [str(t).strip() for t in tags if str(t).strip()]
-    else:
-        tags_list = []
-    category_id = payload.get("category_id") or None
-    access_tier = payload.get("access_tier") or "free"
-    if access_tier not in ("free", "pro"):
-        access_tier = "free"
-    is_short = bool(payload.get("is_short", False))
+    success = False
+    try:
+        title = (payload.get("title") or state.get("filename") or "Untitled").strip() or "Untitled"
+        description = (payload.get("description") or "").strip()
+        tags = payload.get("tags") or ""
+        if isinstance(tags, str):
+            tags_list = [t.strip() for t in tags.split(",") if t.strip()]
+        elif isinstance(tags, list):
+            tags_list = [str(t).strip() for t in tags if str(t).strip()]
+        else:
+            tags_list = []
+        category_id = payload.get("category_id") or None
+        access_tier = payload.get("access_tier") or "free"
+        if access_tier not in ("free", "pro"):
+            access_tier = "free"
+        is_short = bool(payload.get("is_short", False))
 
-    # Move blob into the canonical originals/<id><ext> path
-    vid_id = new_id()
-    orig_ext = (Path(state.get("filename") or "video.mp4").suffix or ".mp4").lower()
-    src_path = UPLOAD_DIR / "originals" / f"{vid_id}{orig_ext}"
-    src_path.parent.mkdir(exist_ok=True, parents=True)
-    blob.rename(src_path)
+        # Move blob into the canonical originals/<id><ext> path
+        vid_id = new_id()
+        orig_ext = (Path(state.get("filename") or "video.mp4").suffix or ".mp4").lower()
+        src_path = UPLOAD_DIR / "originals" / f"{vid_id}{orig_ext}"
+        src_path.parent.mkdir(exist_ok=True, parents=True)
+        blob.rename(src_path)
 
-    v = Video(
-        id=vid_id,
-        title=title,
-        description=description,
-        tags=tags_list,
-        category_id=category_id,
-        uploader_id=user["id"],
-        uploader_username=user["username"],
-        access_tier=access_tier,
-        is_short=is_short,
-        original_filename=state.get("filename") or "",
-        original_size_bytes=received,
-        status="processing",
-    )
-    v_dict = v.model_dump()
-    v_dict["slug"] = await build_video_slug(title, vid_id)
-    await db.videos.insert_one(v_dict)
-    v_dict.pop("_id", None)
-    # Clean up the chunk state directory (blob has been moved out already)
-    _purge_chunk_upload(upload_id)
-    background.add_task(process_video, vid_id, str(src_path))
-    return v_dict
+        v = Video(
+            id=vid_id,
+            title=title,
+            description=description,
+            tags=tags_list,
+            category_id=category_id,
+            uploader_id=user["id"],
+            uploader_username=user["username"],
+            access_tier=access_tier,
+            is_short=is_short,
+            original_filename=state.get("filename") or "",
+            original_size_bytes=received,
+            status="processing",
+        )
+        v_dict = v.model_dump()
+        v_dict["slug"] = await build_video_slug(title, vid_id)
+        await db.videos.insert_one(v_dict)
+        v_dict.pop("_id", None)
+        background.add_task(process_video, vid_id, str(src_path))
+        success = True
+        return v_dict
+    finally:
+        # ALWAYS clean up the chunk staging directory — even if the DB insert or
+        # rename fails, we don't want orphaned `.chunks/<uid>/` directories on
+        # disk.  When we got far enough that the blob was renamed out, the
+        # rmtree is a no-op on the blob file itself but still removes state.json.
+        if success:
+            _purge_chunk_upload(upload_id)
 
 
 @api.delete("/videos/upload/{upload_id}")
@@ -1266,6 +1327,42 @@ async def upload_video_abort(upload_id: str, user: dict = Depends(require_user))
         raise HTTPException(404, "Unknown upload")
     _purge_chunk_upload(upload_id)
     return {"ok": True}
+
+
+# ============ Admin: pending chunked uploads janitor ============
+@api.get("/admin/uploads/pending")
+async def admin_list_pending_uploads(admin: dict = Depends(require_admin)):
+    """List every chunk staging directory + summary stats so admin can see
+    orphaned uploads at a glance."""
+    items = _scan_chunk_uploads()
+    total_bytes = sum(i.get("received_size", 0) for i in items)
+    stale = [i for i in items if i.get("stale")]
+    return {
+        "items": items,
+        "count": len(items),
+        "stale_count": len(stale),
+        "total_bytes": total_bytes,
+    }
+
+
+@api.post("/admin/uploads/cleanup")
+async def admin_cleanup_pending_uploads(
+    payload: dict = None, admin: dict = Depends(require_admin),
+):
+    """Purge all pending chunked uploads older than `max_age_hours` (default
+    24h).  Pass `{"force": true}` to wipe ALL pending uploads regardless of
+    age — useful when migrating servers."""
+    payload = payload or {}
+    if payload.get("force"):
+        purged = 0
+        for child in list(CHUNKS_DIR.iterdir()) if CHUNKS_DIR.exists() else []:
+            if child.is_dir():
+                _purge_chunk_upload(child.name)
+                purged += 1
+        return {"ok": True, "purged": purged, "mode": "force"}
+    max_age = float(payload.get("max_age_hours", 24))
+    purged = _cleanup_stale_chunks(max_age_hours=max_age)
+    return {"ok": True, "purged": purged, "mode": "stale", "max_age_hours": max_age}
 
 
 @api.patch("/videos/{video_id}")
@@ -2249,9 +2346,36 @@ async def startup():
         # Don't let a bad/missing default crash the whole app on startup.
         logger.exception(f"[startup] non-fatal: {e}")
 
+    # Boot-time cleanup of stale chunked uploads — anything older than 24h is
+    # almost certainly an abandoned browser session.  Also start a periodic
+    # janitor task that re-runs the cleanup every 6h so long-lived servers
+    # don't accumulate orphans between restarts.
+    try:
+        purged = _cleanup_stale_chunks(max_age_hours=24)
+        if purged:
+            logger.info("[startup] purged %d stale chunked upload(s) >24h", purged)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[startup] stale-chunks cleanup error: %s", e)
+
+    async def _chunks_janitor():
+        while True:
+            try:
+                await asyncio.sleep(6 * 3600)  # 6h
+                _cleanup_stale_chunks(max_age_hours=24)
+            except asyncio.CancelledError:
+                return
+            except Exception as e:  # noqa: BLE001
+                logger.warning("[janitor] error: %s", e)
+
+    app.state.chunks_janitor = asyncio.create_task(_chunks_janitor())
+
 
 @app.on_event("shutdown")
 async def shutdown():
+    # Cancel the background janitor task (if it was started)
+    task = getattr(app.state, "chunks_janitor", None)
+    if task and not task.done():
+        task.cancel()
     client.close()
 
 

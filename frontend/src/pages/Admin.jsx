@@ -889,6 +889,71 @@ function SettingsTab() {
       <Section title="GitHub auto-update">
         <GithubUpdateControls />
       </Section>
+      <Section title="Disk maintenance">
+        <PendingUploadsCard />
+      </Section>
+    </div>
+  );
+}
+
+
+function PendingUploadsCard() {
+  const [info, setInfo] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const load = () => api.get("/admin/uploads/pending").then((r) => setInfo(r.data));
+  useEffect(() => { load(); }, []);
+  const cleanup = async (force) => {
+    if (!window.confirm(force ? "Șterge TOATE upload-urile în așteptare?" : "Șterge upload-urile abandonate (>24h)?")) return;
+    setBusy(true);
+    try {
+      const { data } = await api.post("/admin/uploads/cleanup", { force });
+      toast.success(`${data.purged} upload(uri) șterse`);
+      load();
+    } finally { setBusy(false); }
+  };
+  if (!info) return <div className="text-xs text-zinc-500 col-span-2">Loading...</div>;
+  const totalMB = Math.round((info.total_bytes || 0) / (1024 * 1024));
+  return (
+    <div className="col-span-2 bg-zinc-950 border border-zinc-800 rounded-md p-3 space-y-3" data-testid="pending-uploads-card">
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <div>
+          <p className="text-sm font-semibold text-zinc-100">Upload-uri în așteptare</p>
+          <p className="text-xs text-zinc-500">
+            {info.count} în total · {info.stale_count} abandonate (>24h) · {totalMB} MB pe disc
+          </p>
+        </div>
+        <div className="flex gap-2 flex-wrap">
+          <Button size="sm" variant="outline" onClick={() => load()} disabled={busy}>Reîmprospătează</Button>
+          <Button size="sm" onClick={() => cleanup(false)} disabled={busy || info.stale_count === 0} data-testid="cleanup-stale-btn">
+            Șterge cele abandonate ({info.stale_count})
+          </Button>
+          <Button size="sm" variant="destructive" onClick={() => cleanup(true)} disabled={busy || info.count === 0}>
+            Șterge TOATE
+          </Button>
+        </div>
+      </div>
+      {info.items?.length > 0 && (
+        <div className="max-h-48 overflow-y-auto border border-zinc-800 rounded">
+          <table className="w-full text-xs">
+            <thead className="bg-zinc-900 text-zinc-400 sticky top-0">
+              <tr><th className="text-left p-2">Fișier</th><th className="text-left p-2">User</th><th className="text-right p-2">Progres</th><th className="text-right p-2">Vârstă</th></tr>
+            </thead>
+            <tbody>
+              {info.items.map((it) => {
+                const pct = it.total_size ? Math.round((it.received_size / it.total_size) * 100) : 0;
+                return (
+                  <tr key={it.upload_id} className={`border-t border-zinc-900 ${it.stale ? "text-amber-300" : ""}`}>
+                    <td className="p-2 truncate max-w-[12rem]">{it.filename}</td>
+                    <td className="p-2 text-zinc-500 truncate max-w-[6rem]">{(it.user_id || "?").slice(0, 8)}</td>
+                    <td className="p-2 text-right">{pct}% · {Math.round(it.received_size / 1024 / 1024)} MB</td>
+                    <td className="p-2 text-right">{it.age_hours}h</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
