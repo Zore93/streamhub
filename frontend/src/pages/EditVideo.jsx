@@ -154,6 +154,25 @@ export default function EditVideo() {
     toast.success("Default subtitle updated");
   };
 
+  const reextractEmbedded = async () => {
+    setBusy(true);
+    try {
+      const { data } = await api.post(`/videos/${id}/extract-embedded-subs`);
+      if (data.added > 0) {
+        toast.success(`${data.added} subtitrare(i) noi extrase din fișierul sursă.`);
+      } else if (data.extracted > 0) {
+        toast.info(`${data.extracted} subtitrare(i) găsite, dar toate erau deja prezente.`);
+      } else {
+        toast.info(data.message || "Nicio subtitrare text găsită în sursă.");
+      }
+      await load();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Re-extracting failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <div className="max-w-3xl mx-auto" data-testid="edit-video-page">
       <Button variant="ghost" onClick={() => nav(-1)} className="mb-3"><ArrowLeft size={14} className="mr-2" /> Back</Button>
@@ -208,12 +227,25 @@ export default function EditVideo() {
 
       {/* Subtitles */}
       <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6 mt-6" data-testid="subtitles-section">
-        <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
           <div className="flex items-center gap-2">
             <FileText size={18} className="text-rose-500" />
             <h2 className="text-xl font-semibold font-heading">Subtitles</h2>
           </div>
-          <span className="text-xs text-zinc-500">{(v.subtitles || []).length}/100</span>
+          <div className="flex items-center gap-2 flex-wrap">
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={reextractEmbedded}
+              disabled={busy}
+              data-testid="reextract-embedded-btn"
+              title="Re-run automatic extraction of subtitles embedded in the source .mkv/.mp4"
+            >
+              {busy ? "..." : "Re-extract embedded"}
+            </Button>
+            <span className="text-xs text-zinc-500">{(v.subtitles || []).length}/100</span>
+          </div>
         </div>
         <form onSubmit={addSubtitle} className="grid grid-cols-1 sm:grid-cols-4 gap-2 items-end mb-4">
           <div className="sm:col-span-1">

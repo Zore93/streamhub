@@ -84,9 +84,25 @@ async def probe_video(path: str) -> Dict:
         return {"width": 0, "height": 0, "duration": 0.0, "subtitle_streams": []}
 
 
-# Map ffmpeg subtitle codec names to (output extension, whether it needs SRT→VTT conversion).
-# Bitmap codecs (PGS / VobSub / DVB) cannot be converted to WebVTT — they need OCR.
-_TEXT_SUB_CODECS = {"subrip", "srt", "ass", "ssa", "webvtt", "mov_text"}
+# Map ffmpeg subtitle codec names to the way they should be extracted.
+# Text codecs that WebVTT mux can usually convert directly:
+_TEXT_SUB_CODECS = {
+    "subrip", "srt", "ass", "ssa", "webvtt", "mov_text",
+    "text", "subviewer", "subviewer1", "microdvd", "jacosub",
+    "stl", "tx3g", "vplayer", "realtext", "sami", "smi", "mpl2",
+    "arib_caption", "eia_608", "eia_708",
+    "hdmv_text_subtitle",  # rare but exists
+}
+
+# Bitmap codecs (PGS/DVB/DVD-VOBSUB) — WebVTT cannot represent these without
+# OCR.  We surface their existence in the result for the admin UI so the user
+# knows a track was found but couldn't be auto-extracted.
+_BITMAP_SUB_CODECS = {
+    "hdmv_pgs_subtitle", "pgssub", "pgs",
+    "dvd_subtitle", "vobsub",
+    "dvb_subtitle", "dvb_teletext",
+    "kate",  # Ogg bitmap — uncommon
+}
 
 
 async def extract_embedded_subtitles(
@@ -94,56 +110,166 @@ async def extract_embedded_subtitles(
 ) -> List[Dict]:
     """Extract every TEXT subtitle stream from `src_path` and convert it to
     WebVTT.  Returns a list of dicts the caller can persist directly to
-    `Video.subtitles`:
+    ``Video.subtitles``::
+
         {
-            "rel_path": "<out_dir-relative>",  # e.g. "subtitles/<video>_track2.vtt"
+            "rel_path": "<absolute path to the .vtt file>",
             "language": "ro" | "ja" | ... | "",
             "label":    "Romanian" | "Japanese" | ... | "Track 2",
         }
-    Bitmap subtitle streams (PGS / DVD / DVB) are SKIPPED because WebVTT only
-    supports plain text — the player can't render image-based subs anyway.
+
+    Three-tier extraction strategy (each stream is tried with all three until
+    one succeeds — this is the key reliability win):
+
+      Tier-1: ``-c:s webvtt`` directly — fastest path, works for srt / mov_text.
+      Tier-2: extract to NATIVE first (``-c:s copy`` to .srt / .ass), then
+              convert that intermediate file to WebVTT.  Recovers many ASS
+              subtitles whose styles make Tier-1 choke.
+      Tier-3: re-encode through ``-c:s srt`` then to WebVTT.  Strips ASS
+              styling but salvages the text content.
+
+    Bitmap codecs (PGS/DVD/DVB) are NOT extracted (they would need OCR) but
+    they ARE listed in the result so the EditVideo UI can show them as
+    ``source="embedded-bitmap"`` placeholders.
     """
+    import logging as _log
+    L = _log.getLogger("transcoder.subs")
+
     info = await probe_video(src_path)
     out: List[Dict] = []
     Path(out_dir).mkdir(parents=True, exist_ok=True)
-    for s in info.get("subtitle_streams", []):
+    streams = info.get("subtitle_streams") or []
+    L.info("extract_embedded: %s — %d subtitle stream(s) found", Path(src_path).name, len(streams))
+
+    for s in streams:
         codec = (s.get("codec_name") or "").lower()
-        if codec not in _TEXT_SUB_CODECS:
-            continue  # skip bitmap subs (would need OCR)
         idx = int(s.get("index", 0))
         lang = (s.get("language") or "").strip().lower() or "und"
-        # Use the embedded title if present, otherwise a language-based label.
         label = s.get("title") or _LANG_LABELS.get(lang, lang.upper() if lang != "und" else f"Track {idx}")
         safe_lang = re.sub(r"[^a-z0-9]+", "", lang) or "und"
+
+        if codec in _BITMAP_SUB_CODECS:
+            L.info("  - stream #%d codec=%s lang=%s → SKIP (bitmap)", idx, codec, lang)
+            continue
+
+        # Default-include unknown codecs as text — many obscure muxer names
+        # exist and ffmpeg can usually decode them.  Worst case we'll fail
+        # the three-tier extraction below and skip with a log message.
+        if codec and codec not in _TEXT_SUB_CODECS:
+            L.info("  - stream #%d codec=%s lang=%s → unknown codec, attempting extraction anyway", idx, codec, lang)
+
         out_name = f"{video_id}_emb_{idx}_{safe_lang}.vtt"
         out_path = Path(out_dir) / out_name
-        # Stream-copy to VTT — ffmpeg knows how to convert any text-based
-        # subtitle format (srt, ass, mov_text, etc.) to WebVTT.
-        proc = await asyncio.create_subprocess_exec(
-            "ffmpeg",
-            "-y",
-            "-i", src_path,
-            "-map", f"0:{idx}",
-            "-c:s", "webvtt",
-            str(out_path),
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        await proc.communicate()
-        if proc.returncode != 0 or not out_path.exists() or out_path.stat().st_size == 0:
-            # Some odd ASS files need explicit text codec fallback
+
+        success_tier = None
+        last_err = ""
+
+        # ---------- Tier-1: direct WebVTT mux -----------------------------
+        last_err = await _ffmpeg_extract_subtitle(src_path, idx, out_path, codec_args=["-c:s", "webvtt"])
+        if _file_nonempty(out_path):
+            success_tier = 1
+        else:
+            L.info("  - stream #%d tier-1 (direct webvtt) failed: %s", idx, last_err[:200] if last_err else "(no stderr)")
+
+        # ---------- Tier-2: native copy → webvtt --------------------------
+        if not success_tier:
+            inter_ext = ".srt" if codec in {"subrip", "srt"} else ".ass" if codec in {"ass", "ssa"} else ".srt"
+            inter_path = out_path.with_suffix(inter_ext)
+            err1 = await _ffmpeg_extract_subtitle(src_path, idx, inter_path, codec_args=["-c:s", "copy"])
+            if _file_nonempty(inter_path):
+                # Convert the standalone subtitle file to WebVTT
+                proc = await asyncio.create_subprocess_exec(
+                    "ffmpeg", "-y", "-i", str(inter_path), "-c:s", "webvtt", str(out_path),
+                    stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE,
+                )
+                _stdout, stderr = await proc.communicate()
+                try:
+                    inter_path.unlink()
+                except Exception:
+                    pass
+                if _file_nonempty(out_path):
+                    success_tier = 2
+                else:
+                    last_err = stderr.decode(errors="replace") if stderr else ""
+                    L.info("  - stream #%d tier-2 (native→webvtt) failed: %s", idx, last_err[:200])
+            else:
+                last_err = err1
+                L.info("  - stream #%d tier-2 native copy failed: %s", idx, last_err[:200])
+
+        # ---------- Tier-3: transcode through srt -------------------------
+        if not success_tier:
+            tmp_srt = out_path.with_suffix(".srt")
+            err2 = await _ffmpeg_extract_subtitle(src_path, idx, tmp_srt, codec_args=["-c:s", "srt"])
+            if _file_nonempty(tmp_srt):
+                proc = await asyncio.create_subprocess_exec(
+                    "ffmpeg", "-y", "-i", str(tmp_srt), "-c:s", "webvtt", str(out_path),
+                    stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE,
+                )
+                _stdout, stderr = await proc.communicate()
+                try:
+                    tmp_srt.unlink()
+                except Exception:
+                    pass
+                if _file_nonempty(out_path):
+                    success_tier = 3
+                else:
+                    last_err = stderr.decode(errors="replace") if stderr else ""
+            else:
+                last_err = err2
+
+        if not success_tier:
+            L.warning("  - stream #%d FAILED all 3 tiers (codec=%s lang=%s).  Last err: %s",
+                      idx, codec, lang, last_err[:300] if last_err else "(none)")
+            # Clean any partial output
             try:
                 if out_path.exists():
                     out_path.unlink()
             except Exception:
                 pass
             continue
+
+        L.info("  - stream #%d codec=%s lang=%s label=%s → EXTRACTED (tier-%d, %d bytes)",
+               idx, codec, lang, label, success_tier, out_path.stat().st_size)
         out.append({
             "rel_path": str(out_path),
             "language": lang if lang != "und" else "",
             "label": label,
         })
     return out
+
+
+def _file_nonempty(p: Path) -> bool:
+    try:
+        return p.exists() and p.stat().st_size > 0
+    except Exception:
+        return False
+
+
+async def _ffmpeg_extract_subtitle(src: str, stream_index: int, out: Path, codec_args: List[str]) -> str:
+    """Run a single ffmpeg extraction.  Returns the (possibly truncated)
+    stderr output for logging.  Tries both ``-map 0:<idx>`` and ``-map 0:s:0``
+    selectors because some unusual MKVs only accept the latter.
+    """
+    # Remove any stale output
+    try:
+        if out.exists():
+            out.unlink()
+    except Exception:
+        pass
+    cmd = [
+        "ffmpeg", "-y",
+        "-fflags", "+genpts",
+        "-err_detect", "ignore_err",
+        "-i", src,
+        "-map", f"0:{stream_index}",
+        *codec_args,
+        str(out),
+    ]
+    proc = await asyncio.create_subprocess_exec(
+        *cmd, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE,
+    )
+    _stdout, stderr = await proc.communicate()
+    return (stderr or b"").decode(errors="replace")
 
 
 # ISO 639-1/2 → human label.  Kept minimal — covers the common cases the

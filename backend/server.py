@@ -2470,6 +2470,98 @@ async def add_subtitle(
     return sub
 
 
+@api.post("/videos/{video_id}/extract-embedded-subs")
+async def reextract_embedded_subtitles(video_id: str, user: dict = Depends(require_user)):
+    """Re-run subtitle extraction on an already-processed video.
+
+    Use this when a freshly uploaded MKV had its embedded subtitles missed
+    (e.g. an ASS track with custom styling that failed the WebVTT mux on the
+    original pass).  The improved 3-tier extractor lives in
+    :func:`transcoder.extract_embedded_subtitles`.
+
+    Only the video owner or an admin can trigger this.  Does NOT re-transcode
+    the video — it only inspects the source file and appends any *new*
+    subtitle tracks that weren't already present.
+    """
+    v = await find_video_by_id_or_slug(video_id)
+    if not v:
+        raise HTTPException(404, "Not found")
+    vid = v["id"]
+    if v.get("uploader_id") != user["id"] and user.get("role") != "admin":
+        raise HTTPException(403, "Not your video")
+
+    # Locate the source file.  After successful transcoding, the source lives
+    # at UPLOAD_DIR/originals/<id>.<ext>.  We try a few extensions because the
+    # stored value isn't always known at this point.
+    src: Optional[Path] = None
+    for ext in (".mkv", ".mp4", ".mov", ".webm", ".avi", ".ts"):
+        candidate = UPLOAD_DIR / "originals" / f"{vid}{ext}"
+        if candidate.exists():
+            src = candidate
+            break
+    # Some installs may have nuked the original after Wasabi upload — try the
+    # `original_filename` field too.
+    if src is None and v.get("original_filename"):
+        cand = UPLOAD_DIR / "originals" / v["original_filename"]
+        if cand.exists():
+            src = cand
+    if src is None:
+        raise HTTPException(
+            404,
+            "Source file not found locally. Re-upload required, or restore from Wasabi to /uploads/originals/.",
+        )
+
+    sub_dir = UPLOAD_DIR / "subtitles"
+    sub_dir.mkdir(parents=True, exist_ok=True)
+    extracted = await extract_embedded_subtitles(str(src), str(sub_dir), vid)
+    if not extracted:
+        return {"ok": True, "extracted": 0, "added": 0, "message": "Nicio subtitrare text găsită în sursă."}
+
+    settings = await get_settings()
+    use_wasabi = bool(settings.get("storage_provider") == "wasabi" and settings.get("wasabi_access_key"))
+
+    # Skip tracks already present (by URL filename — embedded subs use a
+    # deterministic name pattern <vid>_emb_<streamidx>_<lang>.vtt).
+    existing_urls = {(s.get("url") or "") for s in (v.get("subtitles") or [])}
+    new_subs: list[dict] = []
+    for item in extracted:
+        local_path = Path(item["rel_path"])
+        rel = f"subtitles/{local_path.name}"
+        if rel in existing_urls or any(rel in u for u in existing_urls):
+            try:
+                local_path.unlink()
+            except Exception:
+                pass
+            continue
+        final_url = rel
+        if use_wasabi:
+            uploaded = await wasabi_upload(
+                str(local_path), rel, settings, "text/vtt; charset=utf-8",
+            )
+            if uploaded:
+                final_url = uploaded
+                try:
+                    local_path.unlink()
+                except Exception:
+                    pass
+        new_subs.append({
+            "id": new_id(),
+            "language": normalize_language_code(item.get("language") or "") or "und",
+            "label": item.get("label") or "Track",
+            "url": final_url,
+            "original_url": "",
+            "source": "embedded",
+        })
+    if new_subs:
+        await db.videos.update_one({"id": vid}, {"$push": {"subtitles": {"$each": new_subs}}})
+    return {
+        "ok": True,
+        "extracted": len(extracted),
+        "added": len(new_subs),
+        "skipped_duplicates": len(extracted) - len(new_subs),
+    }
+
+
 @api.delete("/videos/{video_id}/subtitles/{sub_id}")
 async def delete_subtitle(video_id: str, sub_id: str, user: dict = Depends(require_user)):
     v = await find_video_by_id_or_slug(video_id)
