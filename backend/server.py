@@ -3041,6 +3041,39 @@ async def og_home_html():
     img = mediaUrl_for_og(s.get("site_og_image") or "", s)
     page_url = base or "/"
     esc = _html.escape
+
+    # Build a server-rendered list of the latest 20 ready videos so Googlebot
+    # actually has CONTENT to index — the SPA's client-rendered grid is
+    # invisible to Search engines that don't execute JS aggressively.
+    recent_html: list[str] = []
+    try:
+        recent = await db.videos.find(
+            {"status": "ready"},
+            {"_id": 0, "id": 1, "title": 1, "slug": 1, "description": 1, "thumbnail_url": 1, "tags": 1},
+        ).sort("created_at", -1).limit(20).to_list(20)
+        for v in recent:
+            link = f"{base}/watch/{v.get('slug') or v['id']}"
+            img_abs = mediaUrl_for_og(v.get("thumbnail_url") or "", s)
+            recent_html.append(
+                f'<li><a href="{esc(link)}"><img src="{esc(img_abs)}" alt="{esc(v["title"])}" '
+                f'width="320" height="180" loading="lazy"></a>'
+                f'<h2><a href="{esc(link)}">{esc(v["title"])}</a></h2>'
+                f'<p>{esc((v.get("description") or "")[:200])}</p></li>'
+            )
+    except Exception:
+        pass
+
+    # Also expose categories so they get crawled.
+    cats_html: list[str] = []
+    try:
+        cats = await db.categories.find({}, {"_id": 0, "name": 1, "slug": 1}).to_list(200)
+        for c in cats:
+            cats_html.append(
+                f'<li><a href="{esc(base)}/category/{esc(c["slug"])}">{esc(c["name"])}</a></li>'
+            )
+    except Exception:
+        pass
+
     body = f"""<!doctype html>
 <html lang="ro"><head>
 <meta charset="utf-8">
@@ -3057,16 +3090,119 @@ async def og_home_html():
 <meta name="twitter:title" content="{esc(title)}">
 <meta name="twitter:description" content="{esc(desc)}">
 <meta name="twitter:image" content="{esc(img)}">
-<meta http-equiv="refresh" content="0; url={esc(page_url)}">
-</head><body><p><a href="{esc(page_url)}">{esc(title)}</a></p></body></html>"""
+<meta name="robots" content="index, follow, max-image-preview:large">
+<link rel="sitemap" type="application/xml" href="{esc(base)}/sitemap.xml">
+</head>
+<body>
+<h1>{esc(title)}</h1>
+<p>{esc(desc)}</p>
+<nav><h2>Categorii</h2><ul>{''.join(cats_html)}</ul></nav>
+<section><h2>Episoade recente</h2><ul>{''.join(recent_html)}</ul></section>
+<p><a href="{esc(page_url)}">Deschide site-ul →</a></p>
+</body></html>"""
     return HTMLResponse(
         body,
         status_code=200,
         headers={
-            "Cache-Control": "public, max-age=300",
+            "Cache-Control": "public, max-age=600",
             "Accept-Ranges": "none",
             "Content-Type": "text/html; charset=utf-8",
         },
+    )
+
+
+# ============ SEO: robots.txt + sitemap.xml (mounted at app root) ============
+@app.get("/robots.txt", include_in_schema=False)
+async def robots_txt():
+    """Tell search engines which paths are crawlable + where the sitemap is.
+
+    Disallow `/api/` and admin / internal paths so Googlebot doesn't waste
+    its crawl budget on JSON endpoints.
+    """
+    s = await get_settings()
+    base = (s.get("site_canonical_url") or "").rstrip("/")
+    sitemap_loc = f"{base}/sitemap.xml" if base else "/sitemap.xml"
+    body = (
+        "User-agent: *\n"
+        "Allow: /\n"
+        "Disallow: /api/\n"
+        "Disallow: /admin\n"
+        "Disallow: /edit-video/\n"
+        "Disallow: /upload\n"
+        "Disallow: /login\n"
+        "Disallow: /register\n"
+        "Disallow: /shop\n"
+        f"Sitemap: {sitemap_loc}\n"
+    )
+    from fastapi.responses import PlainTextResponse
+    return PlainTextResponse(body, headers={"Cache-Control": "public, max-age=3600"})
+
+
+@app.get("/sitemap.xml", include_in_schema=False)
+async def sitemap_xml():
+    """XML sitemap listing the homepage, every category, and every public video.
+
+    Submitted to Google Search Console at:
+      https://search.google.com/search-console
+    """
+    from fastapi.responses import Response as _XMLResponse
+    import html as _html
+    esc = _html.escape
+    s = await get_settings()
+    base = (s.get("site_canonical_url") or "").rstrip("/")
+    if not base:
+        base = ""  # falls back to relative URLs (Google will use the request host)
+
+    urls: list[str] = []
+
+    def add(loc: str, lastmod: str = "", priority: str = "0.5", changefreq: str = "weekly") -> None:
+        u = f"  <url>\n    <loc>{esc(base + loc) if loc.startswith('/') else esc(loc)}</loc>\n"
+        if lastmod:
+            u += f"    <lastmod>{esc(lastmod[:10])}</lastmod>\n"
+        u += f"    <changefreq>{changefreq}</changefreq>\n    <priority>{priority}</priority>\n  </url>"
+        urls.append(u)
+
+    add("/", priority="1.0", changefreq="daily")
+    add("/popular", priority="0.7", changefreq="daily")
+    add("/discover", priority="0.7", changefreq="daily")
+    add("/shorts", priority="0.7", changefreq="daily")
+    add("/all-episodes", priority="0.7", changefreq="daily")
+
+    try:
+        cats = await db.categories.find({}, {"_id": 0, "slug": 1}).to_list(500)
+        for c in cats:
+            add(f"/category/{c['slug']}", priority="0.6", changefreq="weekly")
+    except Exception:
+        pass
+
+    try:
+        # Cap at 5000 — Google's sitemap limit is 50k but most VPS DBs are
+        # smaller and a single XML response should stay under 50MB anyway.
+        cur = db.videos.find(
+            {"status": "ready"},
+            {"_id": 0, "id": 1, "slug": 1, "title": 1, "thumbnail_url": 1, "created_at": 1, "updated_at": 1},
+        ).sort("created_at", -1).limit(5000)
+        async for v in cur:
+            slug_or_id = v.get("slug") or v["id"]
+            add(
+                f"/watch/{slug_or_id}",
+                lastmod=str(v.get("updated_at") or v.get("created_at") or ""),
+                priority="0.8",
+                changefreq="monthly",
+            )
+    except Exception:
+        pass
+
+    xml = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
+        + "\n".join(urls)
+        + "\n</urlset>\n"
+    )
+    return _XMLResponse(
+        content=xml,
+        media_type="application/xml",
+        headers={"Cache-Control": "public, max-age=3600"},
     )
 
 

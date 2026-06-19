@@ -55,6 +55,18 @@ server {
     proxy_read_timeout 3600s;
     proxy_send_timeout 3600s;
 
+    # ── SEO: robots.txt + sitemap.xml served by the backend ─────────────
+    # Critical for Google to discover and index pages after migration.
+    location = /robots.txt {
+        proxy_pass http://sh_backend;
+        proxy_set_header Host $host;
+    }
+    location = /sitemap.xml {
+        proxy_pass http://sh_backend;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
     # ── Social-media crawler routing ───────────────────────────────────────
     # When a known crawler (see top-of-file `map`) hits /watch/<id> we rewrite
     # to the backend's server-rendered OG-card endpoint so link previews show
