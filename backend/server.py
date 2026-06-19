@@ -2980,12 +2980,27 @@ async def og_video_html(video_id: str, request: Request):
             f'<meta property="og:image:height" content="720">\n'
             f'<meta name="twitter:image" content="{esc(img)}">\n'
         )
+    # Keywords: combine the admin-configured `site_seo_keywords` with the
+    # per-video tags so each episode appears in Google for searches that
+    # match either the global keywords OR the episode-specific tags.
+    site_kw = (s.get("site_seo_keywords") or "").strip()
+    video_kw_parts: List[str] = []
+    if v:
+        for t in (v.get("tags") or []):
+            t = str(t).strip()
+            if t:
+                video_kw_parts.append(t)
+        if v.get("title"):
+            video_kw_parts.append(v["title"])
+    all_kw = ", ".join([k for k in ([site_kw] + video_kw_parts) if k])
+    keywords_tag = f'<meta name="keywords" content="{esc(all_kw)}">\n' if all_kw else ""
     body = f"""<!doctype html>
 <html lang="ro"><head>
 <meta charset="utf-8">
 <title>{esc(title)}</title>
 <meta name="description" content="{esc(desc)}">
-<link rel="canonical" href="{esc(page_url)}">
+{keywords_tag}<link rel="canonical" href="{esc(page_url)}">
+<meta name="robots" content="index, follow, max-image-preview:large">
 <meta property="og:type" content="video.other">
 <meta property="og:site_name" content="{esc(site_title)}">
 <meta property="og:title" content="{esc(title)}">
@@ -3079,7 +3094,7 @@ async def og_home_html():
 <meta charset="utf-8">
 <title>{esc(title)}</title>
 <meta name="description" content="{esc(desc)}">
-<link rel="canonical" href="{esc(page_url)}">
+{(f'<meta name="keywords" content="{esc(s.get("site_seo_keywords") or "")}">' + chr(10)) if s.get("site_seo_keywords") else ""}<link rel="canonical" href="{esc(page_url)}">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="{esc(title)}">
 <meta property="og:title" content="{esc(title)}">
@@ -3139,7 +3154,7 @@ async def robots_txt():
 
 
 @app.get("/sitemap.xml", include_in_schema=False)
-async def sitemap_xml():
+async def sitemap_xml(request: Request):
     """XML sitemap listing the homepage, every category, and every public video.
 
     Submitted to Google Search Console at:
@@ -3151,7 +3166,12 @@ async def sitemap_xml():
     s = await get_settings()
     base = (s.get("site_canonical_url") or "").rstrip("/")
     if not base:
-        base = ""  # falls back to relative URLs (Google will use the request host)
+        # Fall back to whatever scheme+host the request came in on so the
+        # XML works even when the admin hasn't configured a canonical URL.
+        proto = request.headers.get("x-forwarded-proto") or request.url.scheme or "https"
+        host = request.headers.get("host") or request.url.hostname or ""
+        if host:
+            base = f"{proto}://{host}"
 
     urls: list[str] = []
 
@@ -3499,15 +3519,57 @@ _SOCIAL_CRAWLER_RE = re.compile(
 )
 _WATCH_PATH_RE = re.compile(r"^/watch/([^/?#]+)")
 
+# Legacy URL recovery: any `.html` URL at the app root MAY have been an
+# article slug from the previous CMS.  We try to resolve it via
+# `find_video_by_id_or_slug` and 301-redirect to the canonical `/watch/<slug>`.
+_LEGACY_HTML_RE = re.compile(r"^/([^/?#]+\.html)$", re.IGNORECASE)
+
 
 @app.middleware("http")
 async def crawler_og_middleware(request: Request, call_next):
-    """Return SSR OG HTML for known social crawlers hitting /watch/<id> or /.
-    For non-crawlers the request flows normally to the SPA / regular routes.
+    """Crawler-aware OG SSR + legacy `.html` URL redirector.
+
+    Two responsibilities:
+      1. For known social-media crawlers hitting /watch/<id> or /,
+         return server-rendered HTML with proper OG tags.
+      2. For ANY visitor (human or bot) hitting a legacy `*.html` URL
+         that was indexed before the migration, issue a HTTP 301 redirect
+         to the canonical `/watch/<slug>` so old links + Google's cached
+         results still resolve.  Recovers historic SEO authority.
+
+    Non-matching requests flow straight through to the SPA / regular routes.
     """
+    path = request.url.path or "/"
+
+    # ── 1) Legacy *.html → /watch/<slug> 301 redirect ───────────────────
+    legacy_match = _LEGACY_HTML_RE.match(path)
+    if legacy_match:
+        legacy_name = legacy_match.group(1)  # "title_xxxx.html"
+        try:
+            from fastapi.responses import RedirectResponse
+            # Try a few resolution strategies:
+            #   - exact legacy_slug match (with or without .html suffix)
+            #   - bare stem match (drop the .html)
+            stem = legacy_name[:-5]
+            v = None
+            for key in (legacy_name, stem):
+                v = await find_video_by_id_or_slug(key)
+                if v:
+                    break
+            # Last-ditch: pattern `<slug>_<rand>.html` — pull off the `_<rand>` part
+            if v is None and "_" in stem:
+                v = await find_video_by_id_or_slug(stem.rsplit("_", 1)[0])
+            if v:
+                # 301 = permanent → Google transfers the SEO authority from
+                # the old URL to the new one.
+                target = f"/watch/{v.get('slug') or v['id']}"
+                return RedirectResponse(target, status_code=301)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("legacy html redirect lookup failed for %s: %s", path, e)
+
+    # ── 2) Crawler OG SSR ───────────────────────────────────────────────
     ua = request.headers.get("user-agent", "")
     if ua and _SOCIAL_CRAWLER_RE.search(ua):
-        path = request.url.path
         m = _WATCH_PATH_RE.match(path)
         if m:
             return await og_video_html(m.group(1), request)  # type: ignore[arg-type]
