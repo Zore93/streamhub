@@ -2994,6 +2994,57 @@ async def og_video_html(video_id: str, request: Request):
             video_kw_parts.append(v["title"])
     all_kw = ", ".join([k for k in ([site_kw] + video_kw_parts) if k])
     keywords_tag = f'<meta name="keywords" content="{esc(all_kw)}">\n' if all_kw else ""
+    # ---------------------------------------------------------------------
+    # Build a SEO-rich `<body>` with the actual video content so Googlebot has
+    # something to rank.  The previous version was nearly empty + had a
+    # client meta-refresh which Google interprets as "this page redirects,
+    # index the target instead" — killing per-episode indexing.
+    # ---------------------------------------------------------------------
+    tags_html = ""
+    if v and v.get("tags"):
+        tags_html = "<p><strong>Tags:</strong> " + ", ".join(esc(t) for t in v["tags"]) + "</p>"
+
+    # Related videos — gives Googlebot internal links between episodes,
+    # which compounds your site's internal PageRank.
+    related_html: list[str] = []
+    if v:
+        try:
+            related = await db.videos.find(
+                {"status": "ready", "id": {"$ne": v["id"]}},
+                {"_id": 0, "id": 1, "slug": 1, "title": 1, "thumbnail_url": 1},
+            ).sort("created_at", -1).limit(10).to_list(10)
+            for rv in related:
+                rlink = f"{base}/watch/{rv.get('slug') or rv['id']}" if base else f"/watch/{rv.get('slug') or rv['id']}"
+                rimg = mediaUrl_for_og(rv.get("thumbnail_url") or "", s)
+                related_html.append(
+                    f'<li><a href="{esc(rlink)}"><img src="{esc(rimg)}" '
+                    f'alt="{esc(rv["title"])}" width="220" height="124" loading="lazy"></a>'
+                    f'<a href="{esc(rlink)}">{esc(rv["title"])}</a></li>'
+                )
+        except Exception:
+            pass
+
+    # Schema.org VideoObject JSON-LD — what powers Google's video carousel
+    # and rich snippets.  Requires absolute URLs.
+    json_ld = ""
+    if v:
+        from datetime import datetime as _dt
+        ld = {
+            "@context": "https://schema.org",
+            "@type": "VideoObject",
+            "name": v.get("title") or "",
+            "description": (v.get("description") or "")[:5000] or v.get("title") or "",
+            "thumbnailUrl": img or None,
+            "uploadDate": (v.get("created_at") or _dt.utcnow().isoformat()),
+            "contentUrl": page_url,
+            "embedUrl": page_url,
+        }
+        if v.get("duration_sec"):
+            d = int(v["duration_sec"])
+            ld["duration"] = f"PT{d // 3600}H{(d % 3600) // 60}M{d % 60}S"
+        import json as _json
+        json_ld = f'<script type="application/ld+json">{_json.dumps({k: v_ for k, v_ in ld.items() if v_ is not None}, ensure_ascii=False)}</script>'
+
     body = f"""<!doctype html>
 <html lang="ro"><head>
 <meta charset="utf-8">
@@ -3009,9 +3060,22 @@ async def og_video_html(video_id: str, request: Request):
 {image_tags}<meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="{esc(title)}">
 <meta name="twitter:description" content="{esc(desc)}">
-<meta http-equiv="refresh" content="0; url={esc(page_url)}">
-</head><body>
-<p><a href="{esc(page_url)}">{esc(title)}</a></p>
+{json_ld}
+</head>
+<body>
+<header>
+  <h1>{esc(v.get("title") if v else title)}</h1>
+  {f'<img src="{esc(img)}" alt="{esc(v.get("title") or "")}" width="1280" height="720">' if (img and v) else ""}
+</header>
+<article>
+  <p>{esc(desc or v.get("title") or "") if v else esc(desc)}</p>
+  {tags_html}
+  <p><a href="{esc(page_url)}">Vizionează episodul →</a></p>
+</article>
+<aside>
+  <h2>Episoade asemănătoare</h2>
+  <ul>{''.join(related_html)}</ul>
+</aside>
 </body></html>"""
     return HTMLResponse(
         body,
