@@ -3349,6 +3349,60 @@ async def _gsc_query_dashboard(sa: dict, site_url: str, days: int, max_rows: int
     }
 
 
+# ============ SEO: Google Indexing API (request re-crawl) ============
+@api.post("/admin/seo/request-indexing")
+async def admin_seo_request_indexing(payload: dict, admin: dict = Depends(require_admin)):
+    """Ping Google Indexing API to request (re)crawling for one or more URLs.
+
+    Note: The Indexing API is *officially* limited to JobPosting and
+    BroadcastEvent pages, but in practice Google still processes the request
+    for arbitrary URLs and often triggers a Googlebot visit within hours.
+    Daily quota is ~200 URL notifications per project.
+    """
+    urls = payload.get("urls") or []
+    if not isinstance(urls, list) or not urls:
+        raise HTTPException(400, "`urls` must be a non-empty list.")
+    urls = [str(u).strip() for u in urls if str(u).strip()][:50]  # safety cap per call
+    if not urls:
+        raise HTTPException(400, "No valid URLs provided.")
+
+    s = await get_settings()
+    sa_raw = s.get("gsc_service_account_json") or ""
+    if not sa_raw:
+        raise HTTPException(400, "Google Search Console credentials not configured.")
+    try:
+        sa = json.loads(sa_raw)
+    except Exception:
+        raise HTTPException(500, "Stored GSC credentials are corrupt; please re-upload.")
+
+    def _publish(url: str) -> dict:
+        from google.oauth2 import service_account
+        from googleapiclient.discovery import build
+        from googleapiclient.errors import HttpError
+        creds = service_account.Credentials.from_service_account_info(
+            sa, scopes=["https://www.googleapis.com/auth/indexing"],
+        )
+        svc = build("indexing", "v3", credentials=creds, cache_discovery=False)
+        try:
+            resp = svc.urlNotifications().publish(
+                body={"url": url, "type": "URL_UPDATED"}
+            ).execute()
+            return {"url": url, "ok": True, "notify_time": (resp.get("urlNotificationMetadata", {}).get("latestUpdate", {}) or {}).get("notifyTime")}
+        except HttpError as e:
+            status = getattr(getattr(e, "resp", None), "status", None)
+            msg = (e.content or b"").decode("utf-8", "replace") if hasattr(e, "content") else str(e)
+            return {"url": url, "ok": False, "status": status, "error": msg[:300]}
+        except Exception as e:  # noqa: BLE001
+            return {"url": url, "ok": False, "error": str(e)[:300]}
+
+    def _run_all():
+        return [_publish(u) for u in urls]
+
+    results = await asyncio.to_thread(_run_all)
+    ok_count = sum(1 for r in results if r.get("ok"))
+    return {"ok": ok_count == len(results), "submitted": len(results), "success": ok_count, "results": results}
+
+
 # ============ SEO: robots.txt + sitemap.xml (mounted at app root) ============
 @app.get("/robots.txt", include_in_schema=False)
 async def robots_txt():

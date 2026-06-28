@@ -14,7 +14,7 @@ import { useT } from "@/contexts/LanguageContext";
 import {
   Trash2, Plus, RefreshCw, Eye, Heart, MessageCircle, Users, Video as VideoIcon, Crown,
   Pencil, Ban, ShieldOff, Upload as UploadIcon, ImageOff,
-  TrendingUp, Search, AlertTriangle, CheckCircle2, ExternalLink,
+  TrendingUp, Search, AlertTriangle, CheckCircle2, ExternalLink, Send,
 } from "lucide-react";
 
 const RES_OPTIONS = ["360p", "720p", "1080p", "2048p", "4096p"];
@@ -1700,12 +1700,18 @@ function SEODashboardTab() {
               </div>
 
               <div className="mt-2">
-                <h3 className="font-heading text-base mb-2">
-                  🧟 Episoade neindexate <span className="text-zinc-500 text-sm">({data.zombie_count})</span>
-                </h3>
+                <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
+                  <h3 className="font-heading text-base">
+                    🧟 Episoade neindexate <span className="text-zinc-500 text-sm">({data.zombie_count})</span>
+                  </h3>
+                  {data.zombies && data.zombies.length > 0 && (
+                    <BulkIndexButton zombies={data.zombies} onDone={() => loadDashboard(days)} />
+                  )}
+                </div>
                 <p className="text-xs text-zinc-500 mb-2">
                   Episoade publicate care nu au primit nicio impresie Google în perioada selectată.
-                  Optimizează titlul/descrierea sau cere indexarea manuală în Search Console → Inspect URL.
+                  Apasă <strong>„Request indexing"</strong> pentru a notifica Google să recrawl-eze pagina
+                  (folosește Google Indexing API · cotă ~200/zi).
                 </p>
                 {data.zombies && data.zombies.length > 0 ? (
                   <div className="bg-zinc-950 border border-zinc-800 rounded-lg overflow-hidden" data-testid="seo-zombies">
@@ -1716,6 +1722,7 @@ function SEODashboardTab() {
                             <th className="text-left p-2 text-xs font-semibold text-zinc-400">Titlu</th>
                             <th className="text-left p-2 text-xs font-semibold text-zinc-400">URL</th>
                             <th className="text-left p-2 text-xs font-semibold text-zinc-400">Publicat</th>
+                            <th className="text-right p-2 text-xs font-semibold text-zinc-400">Acțiune</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -1728,6 +1735,9 @@ function SEODashboardTab() {
                                 </a>
                               </td>
                               <td className="p-2 text-xs text-zinc-500">{(z.created_at || "").slice(0, 10)}</td>
+                              <td className="p-2 text-right">
+                                <RequestIndexButton url={z.url} />
+                              </td>
                             </tr>
                           ))}
                         </tbody>
@@ -1743,6 +1753,76 @@ function SEODashboardTab() {
         </Section>
       )}
     </div>
+  );
+}
+
+function RequestIndexButton({ url }) {
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState(false);
+  const submit = async () => {
+    setBusy(true);
+    try {
+      const res = await api.post("/admin/seo/request-indexing", { urls: [url] });
+      const r = (res.data?.results || [])[0] || {};
+      if (r.ok) {
+        toast.success("✓ Request indexing trimis. Google va recrawl-a URL-ul.");
+        setDone(true);
+      } else {
+        toast.error(r.error || "Eroare la cerere");
+      }
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Eroare la cerere");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Button
+      size="sm"
+      variant={done ? "outline" : "default"}
+      onClick={submit}
+      disabled={busy || done}
+      className={done ? "" : "pro-gradient text-white border-0"}
+      data-testid={`seo-index-btn-${url}`}
+    >
+      {done ? <><CheckCircle2 className="w-3 h-3 mr-1" /> Trimis</> : <><Send className="w-3 h-3 mr-1" /> {busy ? "..." : "Index"}</>}
+    </Button>
+  );
+}
+
+function BulkIndexButton({ zombies, onDone }) {
+  const [busy, setBusy] = useState(false);
+  const submit = async () => {
+    const urls = zombies.slice(0, 50).map((z) => z.url);
+    if (!window.confirm(`Trimite cerere de indexare pentru ${urls.length} URL-uri? (cotă Google ~200/zi)`)) return;
+    setBusy(true);
+    try {
+      const res = await api.post("/admin/seo/request-indexing", { urls });
+      const { success = 0, submitted = 0 } = res.data || {};
+      if (success === submitted) {
+        toast.success(`✓ ${success}/${submitted} URL-uri trimise cu succes`);
+      } else if (success > 0) {
+        toast.warning(`${success}/${submitted} reușite. Verifică quota Google.`);
+      } else {
+        toast.error(`Toate cele ${submitted} au eșuat. Verifică Indexing API enabled + permisiuni service account.`);
+      }
+      onDone?.();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Eroare la cerere");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Button
+      size="sm"
+      onClick={submit}
+      disabled={busy || zombies.length === 0}
+      className="pro-gradient text-white border-0"
+      data-testid="seo-bulk-index-btn"
+    >
+      <Send className="w-3 h-3 mr-1" /> {busy ? "Se trimite…" : `Index toate (${Math.min(zombies.length, 50)})`}
+    </Button>
   );
 }
 
