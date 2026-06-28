@@ -62,6 +62,7 @@ Build a full-stack video-sharing platform inspired by hentairosub.ro with:
 - ✅ **Privacy**: user emails are hidden from public `/api/users/{id}` responses; only the owner and admins receive the `email` field.
 - ✅ **Page title sync**: `<title>` resets to the site default when navigating back from /watch/:id → /.
 - ✅ **Resolution badge fix**: thumbnail badge now considers `max(rendition heights, original_height, original_width)` so 4K-source videos always display the 4K badge.
+- ✅ **SEO Dashboard with Google Search Console API (Feb 2026)** — new Admin → SEO tab. Admin uploads a Google service-account JSON + GSC site URL; backend validates JSON shape + runs a smoke `searchanalytics.query`; dashboard endpoint returns totals (clicks/impressions/CTR/position), top pages, top queries, and "zombie" video pages (published episodes with 0 impressions in window). Credentials stored in `settings.gsc_service_account_json` + `gsc_site_url`. UI shows period selector (7/28/90 days), metric cards, ranked tables, and an unindexed-episodes list with direct URLs. Endpoints: `POST/DELETE /api/admin/seo/credentials`, `GET /api/admin/seo/dashboard?days=N`. Tests: `/app/backend/tests/test_iteration9_seo.py` (13/13 pass).
 
 ## Roadmap / Future improvements
 - P2 — Multi-language metadata (currently `description` is single string)
