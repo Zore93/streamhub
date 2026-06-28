@@ -14,6 +14,7 @@ import { useT } from "@/contexts/LanguageContext";
 import {
   Trash2, Plus, RefreshCw, Eye, Heart, MessageCircle, Users, Video as VideoIcon, Crown,
   Pencil, Ban, ShieldOff, Upload as UploadIcon, ImageOff,
+  TrendingUp, Search, AlertTriangle, CheckCircle2, ExternalLink,
 } from "lucide-react";
 
 const RES_OPTIONS = ["360p", "720p", "1080p", "2048p", "4096p"];
@@ -38,6 +39,7 @@ export default function Admin() {
           <TabsTrigger value="frames" data-testid="tab-frames">Cadre Avatar</TabsTrigger>
           <TabsTrigger value="announcements" data-testid="tab-announcements">Announcements</TabsTrigger>
           <TabsTrigger value="chat" data-testid="tab-chat">Live Chat</TabsTrigger>
+          <TabsTrigger value="seo" data-testid="tab-seo">SEO</TabsTrigger>
           <TabsTrigger value="settings" data-testid="tab-settings">Settings</TabsTrigger>
         </TabsList>
         <TabsContent value="dashboard"><Dashboard /></TabsContent>
@@ -48,6 +50,7 @@ export default function Admin() {
         <TabsContent value="frames"><FramesTab /></TabsContent>
         <TabsContent value="announcements"><AnnouncementsTab /></TabsContent>
         <TabsContent value="chat"><ChatModerationTab /></TabsContent>
+        <TabsContent value="seo"><SEODashboardTab /></TabsContent>
         <TabsContent value="settings"><SettingsTab /></TabsContent>
       </Tabs>
     </div>
@@ -1431,6 +1434,358 @@ function GithubUpdateControls() {
         </div>
       )}
       <p className="text-xs text-zinc-500">If diagnostics report "could not read Username", the backend can't auth to GitHub. Use the token form above (recommended) — the PAT is embedded into the on-disk git remote URL.</p>
+    </div>
+  );
+}
+
+function SEODashboardTab() {
+  const [s, setS] = useState({ gsc_service_account_json: "", gsc_site_url: "" });
+  const [siteUrl, setSiteUrl] = useState("");
+  const [saJson, setSaJson] = useState("");
+  const [savingCreds, setSavingCreds] = useState(false);
+  const [credsConfigured, setCredsConfigured] = useState(false);
+  const [clientEmail, setClientEmail] = useState("");
+  const [smokeError, setSmokeError] = useState("");
+  const [days, setDays] = useState(28);
+  const [loading, setLoading] = useState(false);
+  const [data, setData] = useState(null);
+  const [error, setError] = useState("");
+
+  const loadSettings = async () => {
+    try {
+      const res = await api.get("/admin/settings");
+      const conf = res.data || {};
+      setS(conf);
+      setSiteUrl(conf.gsc_site_url || "");
+      setCredsConfigured(!!(conf.gsc_service_account_json && conf.gsc_site_url));
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const loadDashboard = async (d = days) => {
+    setLoading(true);
+    setError("");
+    setData(null);
+    try {
+      const res = await api.get(`/admin/seo/dashboard?days=${d}`);
+      setData(res.data);
+    } catch (e) {
+      setError(e?.response?.data?.detail || e.message || "Failed to load dashboard");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { loadSettings(); }, []);
+  useEffect(() => {
+    if (credsConfigured) loadDashboard(days);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [credsConfigured]);
+
+  const onFileUpload = async (e) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    const txt = await f.text();
+    setSaJson(txt);
+    toast.success(`Loaded ${f.name}`);
+  };
+
+  const saveCredentials = async () => {
+    if (!siteUrl.trim() || !saJson.trim()) {
+      toast.error("Completează site URL și JSON-ul service account.");
+      return;
+    }
+    setSavingCreds(true);
+    setSmokeError("");
+    setClientEmail("");
+    try {
+      const res = await api.post("/admin/seo/credentials", {
+        site_url: siteUrl.trim(),
+        service_account_json: saJson,
+      });
+      setClientEmail(res.data?.client_email || "");
+      setSmokeError(res.data?.smoke_test_error || "");
+      if (res.data?.smoke_test_error) {
+        toast.warning("Credențiale salvate, dar smoke test eșuat — vezi mesajul de mai jos.");
+      } else {
+        toast.success("Credențiale Google Search Console salvate cu succes!");
+      }
+      setCredsConfigured(true);
+      setSaJson(""); // wipe local copy after save
+      await loadDashboard(days);
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Eroare la salvare");
+    } finally {
+      setSavingCreds(false);
+    }
+  };
+
+  const deleteCredentials = async () => {
+    if (!window.confirm("Sigur vrei să ștergi credențialele Google Search Console?")) return;
+    try {
+      await api.delete("/admin/seo/credentials");
+      toast.success("Credențiale șterse.");
+      setCredsConfigured(false);
+      setData(null);
+      setSiteUrl("");
+      setClientEmail("");
+      setSmokeError("");
+    } catch (e) {
+      toast.error("Eroare la ștergere");
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <Section title="🔍 Google Search Console — Credențiale">
+        <p className="text-xs text-zinc-400">
+          Pentru a vedea date SEO reale (clicks, impresii, CTR, poziție), trebuie să configurezi un
+          <em> service account</em> Google și să-l adaugi ca utilizator în Search Console.
+          <a
+            href="https://console.cloud.google.com/iam-admin/serviceaccounts"
+            target="_blank" rel="noreferrer"
+            className="text-violet-400 hover:underline ml-1"
+          >
+            Deschide Google Cloud Console <ExternalLink className="inline w-3 h-3" />
+          </a>
+        </p>
+        <ol className="text-xs text-zinc-500 list-decimal list-inside space-y-1 pl-2">
+          <li>Creează un proiect Google Cloud (sau folosește unul existent) și activează <strong>Search Console API</strong>.</li>
+          <li>Creează un Service Account → Keys → Add Key → JSON. Salvează fișierul.</li>
+          <li>În Search Console (search.google.com/search-console) → Settings → Users and permissions → Add user. Adaugă <em>client_email</em>-ul din JSON ca <strong>Owner</strong> sau <strong>Full</strong>.</li>
+          <li>Încarcă JSON-ul mai jos și introdu site URL-ul exact așa cum apare în Search Console (ex: <code>https://hentairosub.ro/</code> sau <code>sc-domain:hentairosub.ro</code>).</li>
+        </ol>
+
+        <Field label="Site URL (din Search Console)">
+          <Input
+            value={siteUrl}
+            onChange={(e) => setSiteUrl(e.target.value)}
+            placeholder="https://hentairosub.ro/  sau  sc-domain:hentairosub.ro"
+            className="bg-zinc-950 border-zinc-800"
+            data-testid="seo-site-url-input"
+          />
+        </Field>
+
+        <div className="col-span-2">
+          <Label>Service Account JSON</Label>
+          <div className="flex gap-2 my-2">
+            <input
+              type="file"
+              accept=".json,application/json"
+              onChange={onFileUpload}
+              className="text-xs text-zinc-400 file:mr-2 file:py-1 file:px-3 file:rounded file:border-0 file:bg-violet-600 file:text-white file:cursor-pointer"
+              data-testid="seo-sa-file"
+            />
+            <span className="text-xs text-zinc-500 self-center">sau lipește JSON-ul direct mai jos</span>
+          </div>
+          <Textarea
+            rows={6}
+            value={saJson}
+            onChange={(e) => setSaJson(e.target.value)}
+            placeholder='{"type":"service_account","project_id":"...","client_email":"...","private_key":"..."}'
+            className="bg-zinc-950 border-zinc-800 font-mono text-xs"
+            data-testid="seo-sa-json"
+          />
+          <p className="text-xs text-zinc-500 mt-1">JSON-ul este stocat în baza de date (settings.gsc_service_account_json). Nu este expus public.</p>
+        </div>
+
+        <div className="flex gap-2 flex-wrap">
+          <Button
+            onClick={saveCredentials}
+            disabled={savingCreds || !siteUrl.trim() || !saJson.trim()}
+            className="pro-gradient text-white border-0"
+            data-testid="seo-save-creds-btn"
+          >
+            {savingCreds ? "Se salvează…" : "Salvează credențialele"}
+          </Button>
+          {credsConfigured && (
+            <Button variant="outline" onClick={deleteCredentials} data-testid="seo-delete-creds-btn">
+              <Trash2 className="w-4 h-4 mr-1" /> Șterge credențialele
+            </Button>
+          )}
+          {credsConfigured && (
+            <span className="self-center text-xs flex items-center gap-1 text-emerald-400">
+              <CheckCircle2 className="w-4 h-4" /> Configurate · {s.gsc_site_url}
+            </span>
+          )}
+        </div>
+
+        {clientEmail && (
+          <p className="text-xs text-emerald-400 break-all">
+            <strong>Service Account:</strong> {clientEmail}
+          </p>
+        )}
+        {smokeError && (
+          <div className="bg-amber-950/40 border border-amber-700/40 rounded p-3 text-xs text-amber-200 flex gap-2">
+            <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+            <div>
+              <strong>Smoke test a eșuat:</strong> {smokeError}<br />
+              <em className="text-amber-300/70">
+                Verifică dacă ai adăugat email-ul service account-ului în Search Console → Settings → Users and permissions.
+              </em>
+            </div>
+          </div>
+        )}
+      </Section>
+
+      {credsConfigured && (
+        <Section title="📊 Metrici Search Console">
+          <div className="flex gap-2 items-center flex-wrap">
+            <Label className="m-0">Perioadă:</Label>
+            <Select value={String(days)} onValueChange={(v) => { const d = parseInt(v); setDays(d); loadDashboard(d); }}>
+              <SelectTrigger className="w-32 bg-zinc-950 border-zinc-800" data-testid="seo-days-select"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="7">Ultimele 7 zile</SelectItem>
+                <SelectItem value="28">Ultimele 28 zile</SelectItem>
+                <SelectItem value="90">Ultimele 90 zile</SelectItem>
+              </SelectContent>
+            </Select>
+            <Button variant="outline" size="sm" onClick={() => loadDashboard(days)} disabled={loading} data-testid="seo-refresh-btn">
+              <RefreshCw className={`w-4 h-4 mr-1 ${loading ? "animate-spin" : ""}`} /> Reîmprospătează
+            </Button>
+            {data && (
+              <span className="text-xs text-zinc-500">{data.start_date} → {data.end_date}</span>
+            )}
+          </div>
+
+          {error && (
+            <div className="bg-red-950/40 border border-red-700/40 rounded p-3 text-xs text-red-200 flex gap-2">
+              <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+              <div>{error}</div>
+            </div>
+          )}
+
+          {loading && <p className="text-sm text-zinc-400">Se încarcă datele Search Console…</p>}
+
+          {data && (
+            <>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3" data-testid="seo-totals">
+                <MetricCard label="Clicks" value={data.totals.clicks.toLocaleString()} icon={TrendingUp} />
+                <MetricCard label="Impresii" value={data.totals.impressions.toLocaleString()} icon={Eye} />
+                <MetricCard label="CTR" value={(data.totals.ctr * 100).toFixed(2) + "%"} icon={Search} />
+                <MetricCard label="Poziție medie" value={data.totals.position.toFixed(1)} icon={TrendingUp} />
+              </div>
+
+              <div className="grid md:grid-cols-2 gap-4 mt-2">
+                <div>
+                  <h3 className="font-heading text-base mb-2">🔗 Top pagini</h3>
+                  <SeoTable
+                    rows={data.top_pages}
+                    columns={[
+                      { key: "page", label: "URL", render: (v) => <a href={v} target="_blank" rel="noreferrer" className="text-violet-400 hover:underline break-all text-xs">{v.replace(data.site_url.replace(/\/$/, ""), "") || "/"}</a> },
+                      { key: "clicks", label: "Clk", num: true },
+                      { key: "impressions", label: "Imp", num: true },
+                      { key: "position", label: "Poz", num: true, format: (v) => v.toFixed(1) },
+                    ]}
+                    empty="Nicio pagină în clasament încă."
+                    testid="seo-top-pages"
+                  />
+                </div>
+
+                <div>
+                  <h3 className="font-heading text-base mb-2">🔎 Top căutări (queries)</h3>
+                  <SeoTable
+                    rows={data.top_queries}
+                    columns={[
+                      { key: "query", label: "Query", render: (v) => <span className="text-xs">{v}</span> },
+                      { key: "clicks", label: "Clk", num: true },
+                      { key: "impressions", label: "Imp", num: true },
+                      { key: "position", label: "Poz", num: true, format: (v) => v.toFixed(1) },
+                    ]}
+                    empty="Nicio căutare înregistrată."
+                    testid="seo-top-queries"
+                  />
+                </div>
+              </div>
+
+              <div className="mt-2">
+                <h3 className="font-heading text-base mb-2">
+                  🧟 Episoade neindexate <span className="text-zinc-500 text-sm">({data.zombie_count})</span>
+                </h3>
+                <p className="text-xs text-zinc-500 mb-2">
+                  Episoade publicate care nu au primit nicio impresie Google în perioada selectată.
+                  Optimizează titlul/descrierea sau cere indexarea manuală în Search Console → Inspect URL.
+                </p>
+                {data.zombies && data.zombies.length > 0 ? (
+                  <div className="bg-zinc-950 border border-zinc-800 rounded-lg overflow-hidden" data-testid="seo-zombies">
+                    <div className="max-h-96 overflow-y-auto">
+                      <table className="w-full text-sm">
+                        <thead className="bg-zinc-900 sticky top-0">
+                          <tr>
+                            <th className="text-left p-2 text-xs font-semibold text-zinc-400">Titlu</th>
+                            <th className="text-left p-2 text-xs font-semibold text-zinc-400">URL</th>
+                            <th className="text-left p-2 text-xs font-semibold text-zinc-400">Publicat</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {data.zombies.map((z) => (
+                            <tr key={z.video_id} className="border-t border-zinc-800 hover:bg-zinc-900/50">
+                              <td className="p-2 text-xs">{z.title}</td>
+                              <td className="p-2">
+                                <a href={z.url} target="_blank" rel="noreferrer" className="text-violet-400 hover:underline text-xs break-all">
+                                  {z.url}
+                                </a>
+                              </td>
+                              <td className="p-2 text-xs text-zinc-500">{(z.created_at || "").slice(0, 10)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-sm text-emerald-400">🎉 Toate episoadele au primit cel puțin o impresie!</p>
+                )}
+              </div>
+            </>
+          )}
+        </Section>
+      )}
+    </div>
+  );
+}
+
+function MetricCard({ label, value, icon: Icon }) {
+  return (
+    <div className="bg-zinc-950 border border-zinc-800 rounded-lg p-4">
+      <div className="flex items-center justify-between mb-1">
+        <span className="text-xs text-zinc-400">{label}</span>
+        {Icon ? <Icon className="w-4 h-4 text-violet-400" /> : null}
+      </div>
+      <div className="text-2xl font-heading font-bold">{value}</div>
+    </div>
+  );
+}
+
+function SeoTable({ rows, columns, empty, testid }) {
+  if (!rows || rows.length === 0) {
+    return <p className="text-xs text-zinc-500">{empty}</p>;
+  }
+  return (
+    <div className="bg-zinc-950 border border-zinc-800 rounded-lg overflow-hidden" data-testid={testid}>
+      <div className="max-h-80 overflow-y-auto">
+        <table className="w-full text-sm">
+          <thead className="bg-zinc-900 sticky top-0">
+            <tr>
+              {columns.map((c) => (
+                <th key={c.key} className={`p-2 text-xs font-semibold text-zinc-400 ${c.num ? "text-right" : "text-left"}`}>{c.label}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.slice(0, 50).map((r, i) => (
+              <tr key={i} className="border-t border-zinc-800 hover:bg-zinc-900/50">
+                {columns.map((c) => {
+                  const v = r[c.key];
+                  const display = c.render ? c.render(v) : (c.format ? c.format(v) : v);
+                  return <td key={c.key} className={`p-2 text-xs ${c.num ? "text-right tabular-nums" : ""}`}>{display}</td>;
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

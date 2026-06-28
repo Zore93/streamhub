@@ -229,6 +229,9 @@ class AppSettings(BaseModel):
     contact_email: str = ""
     # Player
     allow_video_download: bool = False
+    # SEO / Google Search Console
+    gsc_service_account_json: str = ""  # raw JSON of the service account key
+    gsc_site_url: str = ""              # e.g. https://hentairosub.ro/
     # Site / SEO
     site_title: str = "StreamHub"
     site_description: str = "A premium video-sharing community."

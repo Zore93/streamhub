@@ -3190,6 +3190,165 @@ async def og_home_html():
     )
 
 
+# ============ SEO: Google Search Console dashboard ============
+@api.post("/admin/seo/credentials")
+async def admin_seo_save_credentials(payload: dict, admin: dict = Depends(require_admin)):
+    """Save the service-account JSON key + GSC site URL.
+
+    Validation is lightweight — we only parse the JSON, verify the email looks
+    like a service account, and run a smoke `searchanalytics.query` so the
+    admin gets immediate feedback if the credentials don't have access to the
+    property yet.
+    """
+    site_url = (payload.get("site_url") or "").strip()
+    sa_raw = (payload.get("service_account_json") or "").strip()
+    if not site_url or not sa_raw:
+        raise HTTPException(400, "site_url and service_account_json are required")
+    try:
+        sa = json.loads(sa_raw)
+    except Exception:
+        raise HTTPException(400, "service_account_json is not valid JSON")
+    if sa.get("type") != "service_account":
+        raise HTTPException(400, "JSON does not look like a service-account key (type≠service_account)")
+    client_email = sa.get("client_email") or ""
+    # Smoke test — try a 1-day query to confirm the SA has access
+    err = await _gsc_smoke_test(sa, site_url)
+    await db.settings.update_one(
+        {"_id": "main"},
+        {"$set": {"gsc_service_account_json": sa_raw, "gsc_site_url": site_url}},
+        upsert=True,
+    )
+    return {
+        "ok": True,
+        "client_email": client_email,
+        "site_url": site_url,
+        "smoke_test_error": err,  # null on success; string with the error otherwise
+    }
+
+
+@api.delete("/admin/seo/credentials")
+async def admin_seo_delete_credentials(admin: dict = Depends(require_admin)):
+    await db.settings.update_one(
+        {"_id": "main"},
+        {"$set": {"gsc_service_account_json": "", "gsc_site_url": ""}},
+        upsert=True,
+    )
+    return {"ok": True}
+
+
+@api.get("/admin/seo/dashboard")
+async def admin_seo_dashboard(days: int = 28, admin: dict = Depends(require_admin)):
+    """Fetch Google Search Console analytics for the configured site.
+
+    Returns aggregated totals, top pages, top queries, and a list of every
+    `/watch/<slug>` from our DB that has 0 impressions in the time window
+    ("zombie" pages — Google hasn't indexed them yet).
+    """
+    s = await get_settings()
+    sa_raw = s.get("gsc_service_account_json") or ""
+    site_url = s.get("gsc_site_url") or ""
+    if not sa_raw or not site_url:
+        raise HTTPException(400, "Google Search Console credentials not configured.")
+    try:
+        sa = json.loads(sa_raw)
+    except Exception:
+        raise HTTPException(500, "Stored GSC credentials are corrupt; please re-upload.")
+    days = max(1, min(90, int(days or 28)))
+    return await _gsc_query_dashboard(sa, site_url, days)
+
+
+async def _gsc_smoke_test(sa: dict, site_url: str) -> Optional[str]:
+    """Run a tiny GSC query to detect setup errors early. Returns the error
+    string when the SA can't access the property, else None.
+    """
+    try:
+        await _gsc_query_dashboard(sa, site_url, days=1, max_rows=1)
+        return None
+    except HTTPException as e:
+        return str(e.detail)
+    except Exception as e:  # noqa: BLE001
+        return str(e)
+
+
+async def _gsc_query_dashboard(sa: dict, site_url: str, days: int, max_rows: int = 100) -> dict:
+    """Call the Search Console searchanalytics.query endpoint.  Runs in a
+    thread-pool because the google-api-python-client is synchronous.
+    """
+    from datetime import date, timedelta
+
+    def _run():
+        from google.oauth2 import service_account
+        from googleapiclient.discovery import build
+        creds = service_account.Credentials.from_service_account_info(
+            sa, scopes=["https://www.googleapis.com/auth/webmasters.readonly"],
+        )
+        svc = build("searchconsole", "v1", credentials=creds, cache_discovery=False)
+        end = date.today()
+        start = end - timedelta(days=days)
+        common = {"startDate": start.isoformat(), "endDate": end.isoformat(), "rowLimit": max_rows}
+        # Three parallel calls (in this thread)
+        totals = svc.searchanalytics().query(siteUrl=site_url, body={**common, "rowLimit": 1}).execute()
+        pages = svc.searchanalytics().query(siteUrl=site_url, body={**common, "dimensions": ["page"]}).execute()
+        queries = svc.searchanalytics().query(siteUrl=site_url, body={**common, "dimensions": ["query"]}).execute()
+        return totals, pages, queries, start.isoformat(), end.isoformat()
+
+    try:
+        totals, pages, queries, sd, ed = await asyncio.to_thread(_run)
+    except Exception as e:  # noqa: BLE001
+        msg = str(e)
+        if "403" in msg or "PERMISSION_DENIED" in msg:
+            raise HTTPException(403,
+                f"Service account lacks access to {site_url}. "
+                "Adaugă email-ul SA în Search Console → Settings → Users.")
+        if "404" in msg or "NOT_FOUND" in msg:
+            raise HTTPException(404, f"Site {site_url} not found in Search Console.")
+        raise HTTPException(500, f"GSC query failed: {msg[:300]}")
+
+    def _agg(row):
+        return {
+            "clicks": int(row.get("clicks", 0) or 0),
+            "impressions": int(row.get("impressions", 0) or 0),
+            "ctr": float(row.get("ctr", 0) or 0),
+            "position": float(row.get("position", 0) or 0),
+        }
+
+    totals_row = (totals.get("rows") or [{}])[0]
+    top_pages = [{"page": (r.get("keys") or [""])[0], **_agg(r)} for r in (pages.get("rows") or [])]
+    top_queries = [{"query": (r.get("keys") or [""])[0], **_agg(r)} for r in (queries.get("rows") or [])]
+
+    # Find "zombie" pages — videos in our DB whose URL got 0 impressions.
+    indexed_pages = {p["page"] for p in top_pages if p["impressions"] > 0}
+    base = site_url.rstrip("/")
+    zombies: list[dict] = []
+    cur = db.videos.find(
+        {"status": "ready"},
+        {"_id": 0, "id": 1, "slug": 1, "title": 1, "created_at": 1},
+    ).sort("created_at", -1).limit(500)
+    async for v in cur:
+        url = f"{base}/watch/{v.get('slug') or v['id']}"
+        if url not in indexed_pages:
+            zombies.append({
+                "url": url,
+                "title": v.get("title"),
+                "video_id": v["id"],
+                "slug": v.get("slug"),
+                "created_at": v.get("created_at"),
+            })
+
+    return {
+        "site_url": site_url,
+        "start_date": sd,
+        "end_date": ed,
+        "days": days,
+        "totals": _agg(totals_row),
+        "top_pages": top_pages,
+        "top_queries": top_queries,
+        "zombies": zombies[:100],
+        "zombie_count": len(zombies),
+        "indexed_count": len(indexed_pages),
+    }
+
+
 # ============ SEO: robots.txt + sitemap.xml (mounted at app root) ============
 @app.get("/robots.txt", include_in_schema=False)
 async def robots_txt():
