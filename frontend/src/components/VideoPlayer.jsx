@@ -184,23 +184,45 @@ export default function VideoPlayer({ video, currentRendition, resolution, setRe
     }, 100);
   }, [video.subtitles?.length, currentRendition?.url]);
 
+  // `hasPlayed` flips true the first time the user actually starts playback,
+  // after which we hide the overlay poster so the video can be seen.
+  const [hasPlayed, setHasPlayed] = useState(false);
+  useEffect(() => {
+    const v = ref.current;
+    if (!v) return;
+    const onFirstPlay = () => setHasPlayed(true);
+    v.addEventListener("playing", onFirstPlay);
+    return () => v.removeEventListener("playing", onFirstPlay);
+  }, []);
+
   if (!currentRendition) return null;
+
+  // Best-quality thumbnail to use as poster.  `thumbnail_options` is the full
+  // list (10-20 stills extracted by ffmpeg); `thumbnail_url` is the admin's
+  // chosen primary thumbnail.  Fall back through the list for legacy videos.
+  const posterRel =
+    video.thumbnail_url
+    || (Array.isArray(video.thumbnail_options) && video.thumbnail_options[0])
+    || null;
+  const posterUrl = posterRel ? mediaUrl(posterRel) : "";
 
   return (
     <div
       ref={wrapRef}
       className={`relative w-full h-full bg-black group player-wrap ${controlsVisible ? "controls-visible" : "controls-hidden"}`}
       data-testid="video-player"
+      style={posterUrl ? { backgroundImage: `url(${posterUrl})`, backgroundSize: "cover", backgroundPosition: "center", backgroundRepeat: "no-repeat" } : undefined}
     >
       <video
         ref={ref}
         src={mediaUrl(currentRendition.url)}
         crossOrigin="anonymous"
-        className="w-full h-full"
+        className="w-full h-full relative z-10"
+        preload="metadata"
         onTimeUpdate={() => setSavedTime(ref.current?.currentTime || 0)}
         onClick={handlePlayerClick}
         onDoubleClick={handlePlayerDblClick}
-        poster={video.thumbnail_url ? mediaUrl(video.thumbnail_url) : undefined}
+        poster={posterUrl || undefined}
       >
         {(video.subtitles || []).map((s, i) => (
           <track
@@ -214,6 +236,19 @@ export default function VideoPlayer({ video, currentRendition, resolution, setRe
           />
         ))}
       </video>
+
+      {/* Overlay poster — guarantees the thumbnail shows even when the
+          browser hides the <video poster> attribute after loading metadata.
+          Disappears the moment playback starts. */}
+      {posterUrl && !hasPlayed && (
+        <img
+          src={posterUrl}
+          alt=""
+          className="absolute inset-0 w-full h-full object-cover pointer-events-none z-0"
+          loading="eager"
+          data-testid="player-poster"
+        />
+      )}
 
       {/* Skip ±10s overlay bubble */}
       {skipHint && (
