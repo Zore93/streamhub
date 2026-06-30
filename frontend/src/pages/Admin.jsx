@@ -893,6 +893,13 @@ function SettingsTab() {
         <p className="text-xs text-zinc-500">Messages from /contact are sent to this address (requires SMTP to be enabled).</p>
       </Section>
       <Section title="💬 Discord community">
+        <Field label="Enable Discord widget">
+          <Switch
+            checked={s.discord_widget_enabled ?? true}
+            onCheckedChange={(v) => upd("discord_widget_enabled", v)}
+            data-testid="discord-enabled-switch"
+          />
+        </Field>
         <Field label="Invite URL">
           <Input
             value={s.discord_invite_url || ""}

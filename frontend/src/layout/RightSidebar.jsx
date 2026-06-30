@@ -164,7 +164,7 @@ function RightSidebarBody({ user, logout, t, pkgs, chatEnabled, siteCfg, recomme
       )}
 
       {/* Discord widget - appears under chat on home/listing pages */}
-      {!recommendations && (siteCfg?.discord_invite_url || siteCfg?.discord_guild_id) && (
+      {!recommendations && (siteCfg?.discord_widget_enabled ?? true) && (siteCfg?.discord_invite_url || siteCfg?.discord_guild_id) && (
         <DiscordWidget
           guildId={siteCfg?.discord_guild_id || ""}
           inviteUrl={siteCfg?.discord_invite_url || ""}

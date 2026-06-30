@@ -258,6 +258,7 @@ class AppSettings(BaseModel):
     # Localization
     default_language: str = "ro"  # ro | en
     # Discord community
+    discord_widget_enabled: bool = True
     discord_invite_url: str = "https://discord.gg/5dGdSbzT4E"
     discord_guild_id: str = ""  # numeric guild ID for the embeddable widget
     # Shorts detection
