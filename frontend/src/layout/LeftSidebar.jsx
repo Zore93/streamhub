@@ -7,6 +7,7 @@ import {
 import api, { mediaUrl } from "@/lib/api";
 import { useAuth } from "@/contexts/AuthContext";
 import { useT } from "@/contexts/LanguageContext";
+import { categoryLabel } from "@/i18n";
 
 export default function LeftSidebar({ mobileOpen = false, onClose }) {
   const [cats, setCats] = useState([]);
@@ -79,7 +80,7 @@ export default function LeftSidebar({ mobileOpen = false, onClose }) {
       {cats.map((c) => (
         <Link key={c.id} to={`/category/${c.id}`} className={baseCls} data-testid={`cat-${c.slug}`}>
           <Folder size={16} />
-          <span className="truncate">{c.name}</span>
+          <span className="truncate">{categoryLabel(c, lang)}</span>
         </Link>
       ))}
 

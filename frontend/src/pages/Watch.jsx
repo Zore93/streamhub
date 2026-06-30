@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import api, { mediaUrl, BACKEND_URL } from "@/lib/api";
 import { useAuth } from "@/contexts/AuthContext";
 import { useT } from "@/contexts/LanguageContext";
+import { categoryLabel } from "@/i18n";
 import { Layout } from "@/layout/Layout";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -16,7 +17,7 @@ export default function Watch() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { user, refresh } = useAuth();
-  const { t } = useT();
+  const { t, lang } = useT();
   const [video, setVideo] = useState(null);
   const [recs, setRecs] = useState([]);
   const [comments, setComments] = useState([]);
@@ -121,7 +122,7 @@ export default function Watch() {
       setComments([data, ...comments]);
       setComment("");
       if (data.coins_awarded > 0) {
-        toast.success(`+${data.coins_awarded} monede pentru comentariu!`, { icon: "🪙" });
+        toast.success(`+${data.coins_awarded} ${t("common.coins")}!`, { icon: "🪙" });
         refresh?.();
       }
     } catch (err) {
@@ -134,7 +135,7 @@ export default function Watch() {
     const { data } = await api.post(`/videos/${id}/like`);
     setVideo({ ...video, likes: data.liked ? [...(video.likes || []), user.id] : (video.likes || []).filter((x) => x !== user.id) });
     if (data.coins_awarded > 0) {
-      toast.success(`+${data.coins_awarded} monede pentru like!`, { icon: "🪙" });
+      toast.success(`+${data.coins_awarded} ${t("common.coins")}!`, { icon: "🪙" });
       refresh?.();
     }
   };
@@ -226,7 +227,7 @@ export default function Watch() {
               className="inline-flex items-center gap-1.5 text-sm text-zinc-300 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 px-3 py-1 rounded-full transition-colors"
               data-testid="video-category-link"
             >
-              <Folder size={12} /> {category.name}
+              <Folder size={12} /> {categoryLabel(category, lang)}
             </a>
           )}
         </div>

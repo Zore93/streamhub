@@ -174,6 +174,39 @@ const EN = {
   "common.edit": "Edit",
   "common.back": "Back",
   "common.close": "Close",
+  "common.coins": "coins",
+  "common.loading": "Loading...",
+
+  // Shop
+  "shop.title": "Frame Shop",
+  "shop.subtitle": "Earn coins by liking or commenting on videos. Buy animated avatar frames.",
+  "shop.signInToBuy": "Sign in to purchase",
+  "shop.filter.all": "All",
+  "shop.filter.legendary": "Legendary",
+  "shop.filter.epic": "Epic",
+  "shop.filter.rare": "Rare",
+  "shop.filter.common": "Common",
+  "shop.filter.owned": "Owned",
+  "shop.empty": "No frames in this category.",
+  "shop.owned": "Owned",
+  "shop.buy": "Buy",
+  "shop.insufficient": "Insufficient",
+  "shop.purchased": "Frame \"{name}\" purchased!",
+  "shop.purchaseError": "Purchase failed",
+  "shop.signInError": "Sign in to purchase",
+  "shop.leaderboard.title": "Top 10 Users",
+  "shop.leaderboard.subtitle": "— by coins",
+  "shop.leaderboard.yourRank": "Your position:",
+  "shop.rarity.common": "common",
+  "shop.rarity.rare": "rare",
+  "shop.rarity.epic": "epic",
+  "shop.rarity.legendary": "legendary",
+  "shop.shopNav": "Frame Shop",
+
+  // Pagination
+  "page.previous": "Previous",
+  "page.next": "Next",
+  "page.pageOf": "Page {current} of {total}",
 };
 
 const RO = {
@@ -331,6 +364,39 @@ const RO = {
   "common.edit": "Editează",
   "common.back": "Înapoi",
   "common.close": "Închide",
+  "common.coins": "monede",
+  "common.loading": "Se încarcă...",
+
+  // Shop
+  "shop.title": "Magazin de Cadre",
+  "shop.subtitle": "Câștigi monede dând like sau comentând la videoclipuri. Cumpără cadre animate pentru avatar.",
+  "shop.signInToBuy": "Conectează-te pentru a cumpăra",
+  "shop.filter.all": "Toate",
+  "shop.filter.legendary": "Legendare",
+  "shop.filter.epic": "Epice",
+  "shop.filter.rare": "Rare",
+  "shop.filter.common": "Comune",
+  "shop.filter.owned": "Deținute",
+  "shop.empty": "Niciun cadru în această categorie.",
+  "shop.owned": "Deținut",
+  "shop.buy": "Cumpără",
+  "shop.insufficient": "Insuficient",
+  "shop.purchased": "Cadru \"{name}\" cumpărat!",
+  "shop.purchaseError": "Eroare la cumpărare",
+  "shop.signInError": "Conectează-te pentru a cumpăra",
+  "shop.leaderboard.title": "Top 10 utilizatori",
+  "shop.leaderboard.subtitle": "— după monede",
+  "shop.leaderboard.yourRank": "Locul tău:",
+  "shop.rarity.common": "comună",
+  "shop.rarity.rare": "rară",
+  "shop.rarity.epic": "epică",
+  "shop.rarity.legendary": "legendară",
+  "shop.shopNav": "Magazin Cadre",
+
+  // Pagination
+  "page.previous": "Anterioară",
+  "page.next": "Următoare",
+  "page.pageOf": "Pagina {current} din {total}",
 };
 
 export const STRINGS = { en: EN, ro: RO };
@@ -344,6 +410,16 @@ export function t(lang, key, fallback) {
   if (dict[key] != null) return dict[key];
   if (EN[key] != null) return EN[key];
   return fallback ?? key;
+}
+
+/**
+ * Returns the display name for a category given the active language.
+ * Falls back to the Romanian (default) `name` when `name_en` is empty.
+ */
+export function categoryLabel(category, lang) {
+  if (!category) return "";
+  if (lang === "en" && category.name_en) return category.name_en;
+  return category.name || "";
 }
 
 export default STRINGS;

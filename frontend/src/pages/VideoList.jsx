@@ -1,10 +1,13 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { Flame, Shuffle, Smartphone, ListVideo, Search, Filter, Crown, Sparkles, X } from "lucide-react";
 import api from "@/lib/api";
 import VideoCard from "@/components/VideoCard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import Pagination from "@/components/Pagination";
 import { useT } from "@/contexts/LanguageContext";
+import { categoryLabel } from "@/i18n";
 
 const PAGE_SIZE = 24;
 const MAX_CATEGORIES = 2;
@@ -12,22 +15,26 @@ const MAX_CATEGORIES = 2;
 /**
  * Generic listing page used by /popular, /discover, /shorts, /all-episodes.
  * Discover variant additionally exposes a search bar + tier/category filters.
- * Pagination is "load more" style (skip/limit) to keep the implementation tiny.
+ * Pagination is numbered (1..N) and reflected in the URL path: `/popular/page/2`.
  */
 export default function VideoList({ variant }) {
-  const { t } = useT();
+  const { t, lang } = useT();
+  const params = useParams();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const currentPage = Math.max(1, parseInt(params.page, 10) || 1);
 
   const cfg = useMemo(() => {
     switch (variant) {
       case "popular":
-        return { section: "popular", kind: null, titleKey: "page.popular", Icon: Flame };
+        return { section: "popular", kind: null, titleKey: "page.popular", Icon: Flame, base: "/popular" };
       case "discover":
-        return { section: "random", kind: null, titleKey: "page.discover", Icon: Shuffle };
+        return { section: "random", kind: null, titleKey: "page.discover", Icon: Shuffle, base: "/discover" };
       case "shorts":
-        return { section: "latest", kind: "short", titleKey: "page.shorts", Icon: Smartphone };
+        return { section: "latest", kind: "short", titleKey: "page.shorts", Icon: Smartphone, base: "/shorts" };
       case "all":
       default:
-        return { section: "latest", kind: null, titleKey: "page.allEpisodes", Icon: ListVideo };
+        return { section: "latest", kind: null, titleKey: "page.allEpisodes", Icon: ListVideo, base: "/all-episodes" };
     }
   }, [variant]);
 
@@ -43,14 +50,9 @@ export default function VideoList({ variant }) {
 
   // Listing state
   const [items, setItems] = useState([]);
-  const [skip, setSkip] = useState(0);
-  const [done, setDone] = useState(false);
+  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
-
-  // Reset whenever variant changes (route swap)
-  useEffect(() => {
-    setItems([]); setSkip(0); setDone(false);
-  }, [variant]);
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   // Load categories for the Discover filter pills
   useEffect(() => {
@@ -65,59 +67,64 @@ export default function VideoList({ variant }) {
     return () => clearTimeout(id);
   }, [search, isDiscover]);
 
-  const fetchPage = useCallback(async (currentSkip) => {
+  const buildParams = useCallback(() => {
+    const p = new URLSearchParams();
+    if (cfg.kind) p.set("kind", cfg.kind);
+    if (isDiscover) {
+      if (debouncedSearch) p.set("q", debouncedSearch);
+      if (accessTier) p.set("access_tier", accessTier);
+      if (selectedCats.length > 0) {
+        p.set("category_ids", selectedCats.slice(0, MAX_CATEGORIES).join(","));
+      }
+    }
+    return p;
+  }, [cfg.kind, isDiscover, debouncedSearch, accessTier, selectedCats]);
+
+  const fetchPage = useCallback(async (page) => {
     setLoading(true);
     try {
-      const params = new URLSearchParams({
-        section: cfg.section,
-        limit: String(PAGE_SIZE),
-        skip: String(currentSkip),
-      });
-      if (cfg.kind) params.set("kind", cfg.kind);
-      if (isDiscover) {
-        if (debouncedSearch) params.set("q", debouncedSearch);
-        if (accessTier) params.set("access_tier", accessTier);
-        if (selectedCats.length > 0) {
-          params.set("category_ids", selectedCats.slice(0, MAX_CATEGORIES).join(","));
-        }
-      }
-      const { data } = await api.get(`/videos?${params.toString()}`);
-      setItems((prev) => {
-        // Random pages can repeat — dedupe by id.
-        const seen = new Set(prev.map((v) => v.id));
-        const merged = [...prev];
-        for (const v of data) if (!seen.has(v.id)) merged.push(v);
-        return merged;
-      });
-      if (data.length < PAGE_SIZE) setDone(true);
+      const skip = (page - 1) * PAGE_SIZE;
+      const params = buildParams();
+      params.set("section", cfg.section);
+      params.set("limit", String(PAGE_SIZE));
+      params.set("skip", String(skip));
+      // Fire list + count in parallel.
+      const countParams = buildParams();
+      const [{ data: list }, { data: counted }] = await Promise.all([
+        api.get(`/videos?${params.toString()}`),
+        api.get(`/videos/count?${countParams.toString()}`),
+      ]);
+      setItems(list);
+      setTotal(counted.count || 0);
     } finally {
       setLoading(false);
     }
-  }, [cfg.section, cfg.kind, isDiscover, debouncedSearch, accessTier, selectedCats]);
+  }, [cfg.section, buildParams]);
 
-  // Initial load (and after variant reset) for non-discover routes
+  // Reload whenever the page in the URL changes
   useEffect(() => {
-    if (isDiscover) return;
-    if (items.length === 0 && !done) fetchPage(0);
+    fetchPage(currentPage);
+    window.scrollTo({ top: 0, behavior: "smooth" });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [variant]);
+  }, [currentPage, variant]);
 
-  // Discover: reload whenever filters change.  Reset pagination first.
+  // Discover: reload (and reset to page 1) whenever filters change
   const filterKey = `${debouncedSearch}|${accessTier}|${selectedCats.join(",")}`;
   const lastFilterKey = useRef("");
   useEffect(() => {
     if (!isDiscover) return;
     if (lastFilterKey.current === filterKey) return;
+    if (lastFilterKey.current !== "") {
+      // Filters changed → navigate back to page 1
+      if (currentPage !== 1) {
+        navigate(cfg.base, { replace: false });
+      } else {
+        fetchPage(1);
+      }
+    }
     lastFilterKey.current = filterKey;
-    setItems([]); setSkip(0); setDone(false);
-    fetchPage(0);
-  }, [isDiscover, filterKey, fetchPage]);
-
-  const loadMore = async () => {
-    const next = skip + PAGE_SIZE;
-    setSkip(next);
-    await fetchPage(next);
-  };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filterKey]);
 
   const toggleCat = (id) => {
     setSelectedCats((prev) => {
@@ -130,6 +137,11 @@ export default function VideoList({ variant }) {
   const clearAll = () => {
     setSearch(""); setDebouncedSearch(""); setAccessTier(""); setSelectedCats([]);
   };
+
+  const buildHref = useCallback((p) => {
+    if (p <= 1) return cfg.base + location.search;
+    return `${cfg.base}/page/${p}${location.search}`;
+  }, [cfg.base, location.search]);
 
   const Icon = cfg.Icon;
   const isShorts = variant === "shorts";
@@ -252,7 +264,7 @@ export default function VideoList({ variant }) {
                           onClick={() => toggleCat(c.id)}
                           testId={`cat-${c.slug || c.id}`}
                         >
-                          {c.name}
+                          {categoryLabel(c, lang)}
                         </FilterPill>
                       );
                     })}
@@ -282,19 +294,11 @@ export default function VideoList({ variant }) {
         </p>
       )}
 
-      <div className="flex justify-center mt-10">
-        {!done && items.length > 0 && (
-          <Button
-            onClick={loadMore}
-            variant="outline"
-            disabled={loading}
-            className="border-zinc-700 hover:bg-zinc-800"
-            data-testid="load-more"
-          >
-            {loading ? t("page.loading") : t("page.loadMore")}
-          </Button>
-        )}
-      </div>
+      <Pagination
+        currentPage={currentPage}
+        totalPages={totalPages}
+        buildHref={buildHref}
+      />
     </div>
   );
 }

@@ -4,6 +4,7 @@ import api from "@/lib/api";
 import { uploadVideoChunked } from "@/lib/chunkedUpload";
 import { useAuth } from "@/contexts/AuthContext";
 import { useT } from "@/contexts/LanguageContext";
+import { categoryLabel } from "@/i18n";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
@@ -24,7 +25,7 @@ function humanSize(bytes) {
 
 export default function Upload() {
   const { user } = useAuth();
-  const { t, siteCfg } = useT();
+  const { t, siteCfg, lang } = useT();
   const nav = useNavigate();
   const [files, setFiles] = useState([]);        // staged files awaiting metadata
   const [tasks, setTasks] = useState([]);        // upload progress per file
@@ -275,7 +276,7 @@ export default function Upload() {
               <SelectTrigger className="bg-zinc-950 border-zinc-800" data-testid="upload-category"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="none">{t("upload.categoryNone")}</SelectItem>
-                {categories.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
+                {categories.map((c) => <SelectItem key={c.id} value={c.id}>{categoryLabel(c, lang)}</SelectItem>)}
               </SelectContent>
             </Select>
           </div>

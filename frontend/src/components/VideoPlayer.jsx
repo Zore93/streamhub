@@ -217,7 +217,7 @@ export default function VideoPlayer({ video, currentRendition, resolution, setRe
         ref={ref}
         src={mediaUrl(currentRendition.url)}
         crossOrigin="anonymous"
-        className="w-full h-full relative z-10"
+        className="w-full h-full"
         preload="metadata"
         onTimeUpdate={() => setSavedTime(ref.current?.currentTime || 0)}
         onClick={handlePlayerClick}
@@ -244,16 +244,30 @@ export default function VideoPlayer({ video, currentRendition, resolution, setRe
         <img
           src={posterUrl}
           alt=""
-          className="absolute inset-0 w-full h-full object-cover pointer-events-none z-0"
+          className="absolute inset-0 w-full h-full object-cover pointer-events-none z-10"
           loading="eager"
           data-testid="player-poster"
         />
       )}
 
+      {/* Big central play button — YouTube/Vimeo-style.  Shown only before
+          first playback to make it obvious users should click to start. */}
+      {!hasPlayed && (
+        <button
+          onClick={togglePlay}
+          aria-label="Play"
+          className="absolute inset-0 m-auto w-20 h-20 sm:w-24 sm:h-24 rounded-full bg-black/60 hover:bg-rose-600/90 backdrop-blur-sm border-2 border-white/80 hover:border-white text-white shadow-2xl transition-all hover:scale-110 active:scale-95 z-20 flex items-center justify-center"
+          style={{ top: "50%", left: "50%", transform: "translate(-50%, -50%)" }}
+          data-testid="player-big-play"
+        >
+          <Play size={42} fill="currentColor" className="ml-1.5" />
+        </button>
+      )}
+
       {/* Skip ±10s overlay bubble */}
       {skipHint && (
         <div
-          className={`absolute top-1/2 -translate-y-1/2 ${skipHint.side === "left" ? "left-8" : "right-8"} pointer-events-none`}
+          className={`absolute top-1/2 -translate-y-1/2 ${skipHint.side === "left" ? "left-8" : "right-8"} pointer-events-none z-30`}
           data-testid="skip-bubble"
         >
           <div className="bg-black/70 text-white font-bold text-2xl px-5 py-3 rounded-full backdrop-blur-md border border-white/20 animate-pulse">
@@ -264,7 +278,7 @@ export default function VideoPlayer({ video, currentRendition, resolution, setRe
 
       {/* Bottom control bar — auto-hides after 2.5 s of inactivity while playing */}
       <div
-        className={`absolute bottom-0 left-0 right-0 px-3 pt-10 pb-3 bg-gradient-to-t from-black/85 via-black/40 to-transparent transition-opacity duration-300 ${
+        className={`absolute bottom-0 left-0 right-0 px-3 pt-10 pb-3 bg-gradient-to-t from-black/85 via-black/40 to-transparent transition-opacity duration-300 z-30 ${
           controlsVisible ? "opacity-100" : "opacity-0 pointer-events-none"
         }`}
       >

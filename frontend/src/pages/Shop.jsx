@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import api from "@/lib/api";
 import { useAuth } from "@/contexts/AuthContext";
+import { useT } from "@/contexts/LanguageContext";
 import FramedAvatar from "@/components/FramedAvatar";
 import { Button } from "@/components/ui/button";
 import { Coins, Check, Lock, Trophy, Crown } from "lucide-react";
@@ -11,6 +12,7 @@ const RARITY_ORDER = { legendary: 0, epic: 1, rare: 2, common: 3 };
 
 export default function Shop() {
   const { user, setUser } = useAuth();
+  const { t } = useT();
   const [frames, setFrames] = useState([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(null);
@@ -39,17 +41,17 @@ export default function Shop() {
 
   const buy = async (frame) => {
     if (!user) {
-      toast.error("Conectează-te pentru a cumpăra");
+      toast.error(t("shop.signInError"));
       return;
     }
     setBusy(frame.id);
     try {
       const { data } = await api.post(`/shop/frames/${frame.id}/purchase`);
       setUser(data.user);
-      toast.success(`Cadru "${frame.name}" cumpărat!`);
+      toast.success(t("shop.purchased", undefined, { name: frame.name }));
       reload();
     } catch (e) {
-      const msg = e.response?.data?.detail || "Eroare la cumpărare";
+      const msg = e.response?.data?.detail || t("shop.purchaseError");
       toast.error(msg);
     } finally {
       setBusy(null);
@@ -60,34 +62,31 @@ export default function Shop() {
     <div className="max-w-7xl mx-auto" data-testid="shop-page">
       <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
         <div>
-          <h1 className="text-3xl font-bold font-heading">Magazin de Cadre</h1>
-          <p className="text-zinc-400 text-sm mt-1">
-            Câștigi monede dând <span className="text-rose-300">like</span> sau comentând la videoclipuri.
-            Cumpără cadre animate pentru avatar.
-          </p>
+          <h1 className="text-3xl font-bold font-heading">{t("shop.title")}</h1>
+          <p className="text-zinc-400 text-sm mt-1">{t("shop.subtitle")}</p>
         </div>
         {user && (
           <div className="inline-flex items-center gap-2 bg-amber-500/15 border border-amber-500/40 px-4 py-2 rounded-md" data-testid="shop-balance">
             <Coins className="text-amber-300" size={18} />
             <span className="font-bold text-amber-200 text-lg">{user.coins || 0}</span>
-            <span className="text-amber-300/80 text-sm">monede</span>
+            <span className="text-amber-300/80 text-sm">{t("common.coins")}</span>
           </div>
         )}
         {!user && (
-          <Link to="/login" className="text-rose-400 hover:underline">Conectează-te pentru a cumpăra</Link>
+          <Link to="/login" className="text-rose-400 hover:underline">{t("shop.signInToBuy")}</Link>
         )}
       </div>
 
-      <Leaderboard data={leaderboard} viewerId={user?.id} />
+      <Leaderboard data={leaderboard} viewerId={user?.id} t={t} />
 
       <div className="flex gap-2 mb-5 flex-wrap" role="tablist">
         {[
-          ["all", "Toate"],
-          ["legendary", "Legendare"],
-          ["epic", "Epice"],
-          ["rare", "Rare"],
-          ["common", "Comune"],
-          ["owned", "Deținute"],
+          ["all", t("shop.filter.all")],
+          ["legendary", t("shop.filter.legendary")],
+          ["epic", t("shop.filter.epic")],
+          ["rare", t("shop.filter.rare")],
+          ["common", t("shop.filter.common")],
+          ["owned", t("shop.filter.owned")],
         ].map(([k, label]) => (
           <button
             key={k}
@@ -101,7 +100,7 @@ export default function Shop() {
       </div>
 
       {loading ? (
-        <div className="text-zinc-500">Se încarcă...</div>
+        <div className="text-zinc-500">{t("common.loading")}</div>
       ) : (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
           {filtered.map((f) => {
@@ -119,13 +118,13 @@ export default function Shop() {
                   frame={f}
                 />
                 <div className="text-sm font-semibold text-zinc-100 text-center line-clamp-1">{f.name}</div>
-                <RarityBadge rarity={f.rarity} />
+                <RarityBadge rarity={f.rarity} t={t} />
                 <div className="flex items-center gap-1 text-amber-300 font-bold text-sm">
                   <Coins size={14} /> {f.price_coins}
                 </div>
                 {f.owned ? (
                   <Button variant="secondary" size="sm" className="w-full" disabled>
-                    <Check size={14} className="mr-1" /> Deținut
+                    <Check size={14} className="mr-1" /> {t("shop.owned")}
                   </Button>
                 ) : (
                   <Button
@@ -135,20 +134,20 @@ export default function Shop() {
                     onClick={() => buy(f)}
                     data-testid={`buy-frame-${f.id}`}
                   >
-                    {!canAfford ? <><Lock size={14} className="mr-1" /> Insuficient</> : busy === f.id ? "..." : "Cumpără"}
+                    {!canAfford ? <><Lock size={14} className="mr-1" /> {t("shop.insufficient")}</> : busy === f.id ? "..." : t("shop.buy")}
                   </Button>
                 )}
               </div>
             );
           })}
-          {filtered.length === 0 && <p className="text-zinc-500 col-span-full text-center py-8">Niciun cadru în această categorie.</p>}
+          {filtered.length === 0 && <p className="text-zinc-500 col-span-full text-center py-8">{t("shop.empty")}</p>}
         </div>
       )}
     </div>
   );
 }
 
-function Leaderboard({ data, viewerId }) {
+function Leaderboard({ data, viewerId, t }) {
   const { top = [], me } = data || {};
   if (!top.length) return null;
   const meIsInTop = me && top.some((u) => u.id === me.id);
@@ -156,8 +155,8 @@ function Leaderboard({ data, viewerId }) {
     <div className="mb-6 bg-gradient-to-br from-amber-500/10 via-zinc-900 to-rose-500/10 border border-amber-500/30 rounded-xl p-4" data-testid="leaderboard">
       <div className="flex items-center gap-2 mb-3">
         <Trophy className="text-amber-300" size={20} />
-        <h2 className="text-lg font-bold text-zinc-100">Top 10 utilizatori</h2>
-        <span className="text-xs text-zinc-500">— după monede</span>
+        <h2 className="text-lg font-bold text-zinc-100">{t("shop.leaderboard.title")}</h2>
+        <span className="text-xs text-zinc-500">{t("shop.leaderboard.subtitle")}</span>
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2">
         {top.map((u) => (
@@ -166,7 +165,7 @@ function Leaderboard({ data, viewerId }) {
       </div>
       {me && !meIsInTop && (
         <div className="mt-3 pt-3 border-t border-amber-500/20">
-          <div className="text-xs text-amber-300/80 mb-1.5">Locul tău:</div>
+          <div className="text-xs text-amber-300/80 mb-1.5">{t("shop.leaderboard.yourRank")}</div>
           <LeaderRow u={me} highlight />
         </div>
       )}
@@ -210,16 +209,17 @@ function rarityBorder(r) {
   return "border-zinc-800 hover:border-zinc-700";
 }
 
-function RarityBadge({ rarity }) {
+function RarityBadge({ rarity, t }) {
   const colors = {
     common: "bg-zinc-800 text-zinc-300 border-zinc-700",
     rare: "bg-blue-500/15 text-blue-300 border-blue-500/40",
     epic: "bg-purple-500/15 text-purple-300 border-purple-500/40",
     legendary: "bg-amber-500/15 text-amber-300 border-amber-500/40",
   };
+  const label = t ? t(`shop.rarity.${rarity}`) : rarity;
   return (
     <span className={`text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded border ${colors[rarity] || colors.common}`}>
-      {rarity}
+      {label}
     </span>
   );
 }

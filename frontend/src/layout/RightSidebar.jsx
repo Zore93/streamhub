@@ -97,7 +97,7 @@ function RightSidebarBody({ user, logout, t, pkgs, chatEnabled, siteCfg, recomme
             <div className="flex-1 min-w-0">
               <div className="font-semibold truncate text-zinc-50">{user.username}</div>
               <div className="text-xs text-amber-300 inline-flex items-center gap-1 mt-0.5" data-testid="sidebar-coins">
-                <Coins size={12} /> {user.coins || 0} monede
+                <Coins size={12} /> {user.coins || 0} {t("common.coins")}
               </div>
             </div>
           </div>
@@ -119,7 +119,7 @@ function RightSidebarBody({ user, logout, t, pkgs, chatEnabled, siteCfg, recomme
             className="mt-2 flex items-center justify-center gap-1.5 text-xs font-medium bg-gradient-to-r from-amber-500/20 to-rose-500/20 border border-amber-500/40 text-amber-100 hover:from-amber-500/30 hover:to-rose-500/30 rounded-md py-2 transition"
             data-testid="shop-link"
           >
-            <ShoppingBag size={12} /> Magazin Cadre
+            <ShoppingBag size={12} /> {t("shop.shopNav")}
           </Link>
         </div>
       ) : (

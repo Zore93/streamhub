@@ -77,6 +77,7 @@ class LoginReq(BaseModel):
 class Category(BaseModel):
     id: str = Field(default_factory=new_id)
     name: str
+    name_en: str = ""  # English translation (optional; falls back to `name` if empty)
     slug: str
     created_at: str = Field(default_factory=now_iso)
 

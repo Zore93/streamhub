@@ -34,9 +34,13 @@ function App() {
             <Route element={<Layout />}>
               <Route index element={<Home />} />
               <Route path="/popular" element={<VideoList variant="popular" />} />
+              <Route path="/popular/page/:page" element={<VideoList variant="popular" />} />
               <Route path="/discover" element={<VideoList variant="discover" />} />
+              <Route path="/discover/page/:page" element={<VideoList variant="discover" />} />
               <Route path="/shorts" element={<VideoList variant="shorts" />} />
+              <Route path="/shorts/page/:page" element={<VideoList variant="shorts" />} />
               <Route path="/all-episodes" element={<VideoList variant="all" />} />
+              <Route path="/all-episodes/page/:page" element={<VideoList variant="all" />} />
               <Route path="/shop" element={<Shop />} />
               <Route path="/login" element={<Login />} />
               <Route path="/register" element={<Register />} />
@@ -45,6 +49,7 @@ function App() {
               <Route path="/pro" element={<Pro />} />
               <Route path="/pro/success" element={<Pro />} />
               <Route path="/category/:id" element={<Category />} />
+              <Route path="/category/:id/page/:page" element={<Category />} />
               <Route path="/contact" element={<Contact />} />
               <Route path="/edit-video/:id" element={<EditVideo />} />
               <Route path="/admin" element={<Admin />} />

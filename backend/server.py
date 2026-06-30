@@ -801,12 +801,26 @@ async def create_category(payload: dict, admin: dict = Depends(require_admin)):
     name = (payload.get("name") or "").strip()
     if not name:
         raise HTTPException(400, "name required")
+    name_en = (payload.get("name_en") or "").strip()
     slug = slugify(name)
     if await db.categories.find_one({"slug": slug}):
         raise HTTPException(400, "Category exists")
-    c = Category(name=name, slug=slug)
+    c = Category(name=name, name_en=name_en, slug=slug)
     await db.categories.insert_one(c.model_dump())
     return c.model_dump()
+
+
+@api.patch("/categories/{cat_id}")
+async def update_category(cat_id: str, payload: dict, admin: dict = Depends(require_admin)):
+    upd = {}
+    if "name" in payload:
+        upd["name"] = (payload.get("name") or "").strip()
+    if "name_en" in payload:
+        upd["name_en"] = (payload.get("name_en") or "").strip()
+    if not upd:
+        return {"ok": True}
+    await db.categories.update_one({"id": cat_id}, {"$set": upd})
+    return {"ok": True}
 
 
 @api.delete("/categories/{cat_id}")
@@ -880,18 +894,39 @@ async def list_videos(
 
 @api.get("/videos/count")
 async def count_videos(
-    section: str = "latest",
+    section: str = "latest",  # noqa: ARG001 — kept for API compat; ordering doesn't change count
     category_id: Optional[str] = None,
+    category_ids: Optional[str] = None,
     kind: Optional[str] = None,
+    access_tier: Optional[str] = None,
+    q: Optional[str] = None,
 ):
-    q = {"status": "ready"}
+    """Counts videos matching the same filters list_videos accepts.
+
+    Used by the frontend numbered pagination to compute the total page count.
+    """
+    filt: dict = {"status": "ready"}
     if category_id:
-        q["category_id"] = category_id
+        filt["category_id"] = category_id
+    elif category_ids:
+        ids = [c.strip() for c in category_ids.split(",") if c.strip()][:2]
+        if ids:
+            filt["category_id"] = {"$in": ids}
     if kind == "short":
-        q["is_short"] = True
+        filt["is_short"] = True
     elif kind == "video":
-        q["is_short"] = {"$ne": True}
-    return {"count": await db.videos.count_documents(q)}
+        filt["is_short"] = {"$ne": True}
+    if access_tier in ("free", "pro"):
+        filt["access_tier"] = access_tier
+    if q:
+        import re as _re
+        rex = _re.escape(q.strip())
+        if rex:
+            filt["$or"] = [
+                {"title": {"$regex": rex, "$options": "i"}},
+                {"tags": {"$regex": rex, "$options": "i"}},
+            ]
+    return {"count": await db.videos.count_documents(filt)}
 
 
 @api.get("/videos/{video_id}")

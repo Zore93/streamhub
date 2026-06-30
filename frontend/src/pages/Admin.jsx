@@ -344,25 +344,60 @@ function UsersTab() {
 function CategoriesTab() {
   const [cats, setCats] = useState([]);
   const [name, setName] = useState("");
+  const [nameEn, setNameEn] = useState("");
+  const [editingId, setEditingId] = useState(null);
+  const [editName, setEditName] = useState("");
+  const [editNameEn, setEditNameEn] = useState("");
   const load = () => api.get("/categories").then((r) => setCats(r.data));
   useEffect(() => { load(); }, []);
   const create = async () => {
     if (!name.trim()) return;
-    await api.post("/categories", { name });
-    setName(""); load();
+    await api.post("/categories", { name, name_en: nameEn });
+    setName(""); setNameEn(""); load();
+  };
+  const startEdit = (c) => {
+    setEditingId(c.id);
+    setEditName(c.name);
+    setEditNameEn(c.name_en || "");
+  };
+  const saveEdit = async () => {
+    await api.patch(`/categories/${editingId}`, { name: editName, name_en: editNameEn });
+    setEditingId(null); setEditName(""); setEditNameEn("");
+    load();
   };
   const del = async (id) => { await api.delete(`/categories/${id}`); load(); };
   return (
     <div className="mt-6" data-testid="admin-categories">
-      <div className="flex gap-2 mb-4">
-        <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="New category" className="bg-zinc-900 border-zinc-800" data-testid="new-cat-name" />
-        <Button onClick={create} data-testid="add-cat-btn"><Plus size={14} /></Button>
+      <div className="grid sm:grid-cols-3 gap-2 mb-4">
+        <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Name (RO)" className="bg-zinc-900 border-zinc-800" data-testid="new-cat-name" />
+        <Input value={nameEn} onChange={(e) => setNameEn(e.target.value)} placeholder="Name (EN)" className="bg-zinc-900 border-zinc-800" data-testid="new-cat-name-en" />
+        <Button onClick={create} data-testid="add-cat-btn" className="pro-gradient text-white border-0"><Plus size={14} className="mr-1" /> Add</Button>
       </div>
       <div className="space-y-2">
         {cats.map((c) => (
-          <div key={c.id} className="bg-zinc-900 border border-zinc-800 rounded-md p-3 flex justify-between items-center">
-            <span>{c.name}</span>
-            <Button size="sm" variant="destructive" onClick={() => del(c.id)}><Trash2 size={14} /></Button>
+          <div key={c.id} className="bg-zinc-900 border border-zinc-800 rounded-md p-3" data-testid={`cat-row-${c.id}`}>
+            {editingId === c.id ? (
+              <div className="grid sm:grid-cols-3 gap-2 items-center">
+                <Input value={editName} onChange={(e) => setEditName(e.target.value)} placeholder="Name (RO)" className="bg-zinc-950 border-zinc-800" />
+                <Input value={editNameEn} onChange={(e) => setEditNameEn(e.target.value)} placeholder="Name (EN)" className="bg-zinc-950 border-zinc-800" />
+                <div className="flex gap-2">
+                  <Button size="sm" onClick={saveEdit} className="pro-gradient text-white border-0" data-testid={`cat-save-${c.id}`}>Save</Button>
+                  <Button size="sm" variant="outline" onClick={() => setEditingId(null)}>Cancel</Button>
+                </div>
+              </div>
+            ) : (
+              <div className="flex justify-between items-center">
+                <div>
+                  <span className="font-medium">{c.name}</span>
+                  {c.name_en && <span className="text-zinc-500 text-sm ml-2">/ {c.name_en}</span>}
+                  {!c.name_en && <span className="text-amber-500/70 text-xs ml-2">(no EN translation)</span>}
+                </div>
+                <div className="flex gap-2">
+                  <Button size="sm" variant="outline" onClick={() => startEdit(c)} data-testid={`cat-edit-${c.id}`}><Pencil size={14} /></Button>
+                  <Button size="sm" variant="destructive" onClick={() => del(c.id)}><Trash2 size={14} /></Button>
+                </div>
+              </div>
+            )}
           </div>
         ))}
       </div>
