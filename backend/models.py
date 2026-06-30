@@ -257,6 +257,9 @@ class AppSettings(BaseModel):
     github_branch: str = "main"
     # Localization
     default_language: str = "ro"  # ro | en
+    # Discord community
+    discord_invite_url: str = "https://discord.gg/5dGdSbzT4E"
+    discord_guild_id: str = ""  # numeric guild ID for the embeddable widget
     # Shorts detection
     shorts_max_duration_sec: int = 60  # videos shorter than this AND vertical = Short
     # Live chat

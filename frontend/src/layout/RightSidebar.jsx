@@ -6,6 +6,7 @@ import api, { mediaUrl } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { useT } from "@/contexts/LanguageContext";
 import FramedAvatar from "@/components/FramedAvatar";
+import DiscordWidget from "@/components/DiscordWidget";
 import LiveChat from "./LiveChat";
 
 export default function RightSidebar({ recommendations = null, mobileOpen = false, onMobileClose }) {
@@ -159,6 +160,14 @@ function RightSidebarBody({ user, logout, t, pkgs, chatEnabled, siteCfg, recomme
           enabled={siteCfg?.live_chat_enabled ?? true}
           guestAllowed={siteCfg?.live_chat_guest_allowed ?? true}
           maxLen={siteCfg?.live_chat_max_message_length ?? 500}
+        />
+      )}
+
+      {/* Discord widget - appears under chat on home/listing pages */}
+      {!recommendations && (siteCfg?.discord_invite_url || siteCfg?.discord_guild_id) && (
+        <DiscordWidget
+          guildId={siteCfg?.discord_guild_id || ""}
+          inviteUrl={siteCfg?.discord_invite_url || ""}
         />
       )}
 

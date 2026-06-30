@@ -2737,6 +2737,8 @@ async def public_site_config():
         "bulk_upload_concurrency": int(s.get("bulk_upload_concurrency", 3)),
         "chunk_upload_chunk_size_mb": int(s.get("chunk_upload_chunk_size_mb", 25)),
         "max_upload_size_mb": int(s.get("max_upload_size_mb", 1024)),
+        "discord_invite_url": s.get("discord_invite_url") or "https://discord.gg/5dGdSbzT4E",
+        "discord_guild_id": s.get("discord_guild_id") or "",
     }
 
 

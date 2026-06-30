@@ -892,6 +892,36 @@ function SettingsTab() {
         <Field label="Contact email"><Input type="email" value={s.contact_email || ""} onChange={(e) => upd("contact_email", e.target.value)} placeholder="contact@yourdomain.com" className="bg-zinc-950 border-zinc-800" data-testid="contact-email-setting" /></Field>
         <p className="text-xs text-zinc-500">Messages from /contact are sent to this address (requires SMTP to be enabled).</p>
       </Section>
+      <Section title="💬 Discord community">
+        <Field label="Invite URL">
+          <Input
+            value={s.discord_invite_url || ""}
+            onChange={(e) => upd("discord_invite_url", e.target.value)}
+            placeholder="https://discord.gg/5dGdSbzT4E"
+            className="bg-zinc-950 border-zinc-800"
+            data-testid="discord-invite-input"
+          />
+        </Field>
+        <Field label="Server (Guild) ID">
+          <Input
+            value={s.discord_guild_id || ""}
+            onChange={(e) => upd("discord_guild_id", e.target.value)}
+            placeholder="e.g. 1234567890123456789"
+            className="bg-zinc-950 border-zinc-800"
+            data-testid="discord-guild-input"
+          />
+        </Field>
+        <div className="text-xs text-zinc-500 space-y-1">
+          <p>
+            <strong>How to enable the embed widget</strong> (shows live members + #general):
+          </p>
+          <ol className="list-decimal list-inside pl-2 space-y-0.5">
+            <li>In Discord, open <em>Server Settings → Widget</em> and toggle <strong>Enable Server Widget</strong>.</li>
+            <li>Copy the <em>Server ID</em> from <em>Server Settings → Widget</em> (or right-click the server icon → "Copy Server ID" with developer mode on) and paste above.</li>
+            <li>Save. If guild ID is empty, users see a simple "Join our Discord" card linking to the invite URL.</li>
+          </ol>
+        </div>
+      </Section>
       <Section title="Site / SEO">
         <Field label="Site title"><Input value={s.site_title || ""} onChange={(e) => upd("site_title", e.target.value)} className="bg-zinc-950 border-zinc-800" data-testid="site-title-input" /></Field>
         <Field label="Description"><Input value={s.site_description || ""} onChange={(e) => upd("site_description", e.target.value)} className="bg-zinc-950 border-zinc-800" /></Field>
