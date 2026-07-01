@@ -3442,7 +3442,7 @@ async def admin_seo_request_indexing(payload: dict, admin: dict = Depends(requir
 
 
 # ============ SEO: robots.txt + sitemap.xml (mounted at app root) ============
-@app.get("/robots.txt", include_in_schema=False)
+@app.api_route("/robots.txt", methods=["GET", "HEAD"], include_in_schema=False)
 async def robots_txt():
     """Tell search engines which paths are crawlable + where the sitemap is.
 
@@ -3468,7 +3468,7 @@ async def robots_txt():
     return PlainTextResponse(body, headers={"Cache-Control": "public, max-age=3600"})
 
 
-@app.get("/sitemap.xml", include_in_schema=False)
+@app.api_route("/sitemap.xml", methods=["GET", "HEAD"], include_in_schema=False)
 async def sitemap_xml(request: Request):
     """XML sitemap listing the homepage, every category, and every public video.
 
