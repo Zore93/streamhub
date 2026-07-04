@@ -3007,7 +3007,12 @@ async def og_video_html(video_id: str, request: Request):
         title = f'{v.get("title") or "Video"} — {site_title}'
         desc = (v.get("description") or "").strip()[:200] or (s.get("site_description") or "")
         img = _absolute_og_image(v.get("thumbnail_url") or s.get("site_og_image") or "", base)
-        page_url = f"{base}/watch/{video_id}" if base else f"/watch/{video_id}"
+        # Canonical URL must ALWAYS point to the slug-based URL, regardless
+        # of whether Googlebot arrived via /watch/<uuid>, /watch/<legacy_id>
+        # or /watch/<slug>.  Otherwise Google marks the alt URLs as
+        # "Duplicate without user-selected canonical".
+        canonical_slug = v.get("slug") or v["id"]
+        page_url = f"{base}/watch/{canonical_slug}" if base else f"/watch/{canonical_slug}"
     esc = _html.escape
     image_tags = ""
     if img:

@@ -102,11 +102,17 @@ export default function SiteHead() {
       const title = `${data.title} — ${defaultsRef.current.title || "StreamHub"}`;
       document.title = title;
       const desc = (data.description || "").slice(0, 200);
+      // Compute the CANONICAL slug URL — critical for SEO so Google doesn't
+      // treat /watch/<uuid> and /watch/<slug> as duplicate content.
+      const siteBase = (defaultsRef.current.canonical_url || window.location.origin).replace(/\/$/, "");
+      const canonicalPath = `/watch/${data.slug || data.id}`;
+      const canonicalUrl = `${siteBase}${canonicalPath}`;
       setMeta("og:title", title, "property");
       setMeta("og:description", desc, "property");
       setMeta("og:type", "video.other", "property");
       if (data.thumbnail_url) setMeta("og:image", mediaUrl(data.thumbnail_url), "property");
-      setMeta("og:url", window.location.href, "property");
+      setMeta("og:url", canonicalUrl, "property");
+      setLink("canonical", canonicalUrl);
       setMeta("twitter:title", title);
       setMeta("twitter:description", desc);
       if (data.thumbnail_url) setMeta("twitter:image", mediaUrl(data.thumbnail_url));
