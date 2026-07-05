@@ -105,9 +105,8 @@ class Video(BaseModel):
     title: str
     slug: Optional[str] = None  # SEO-friendly URL slug (unique)
     description: str = ""
+    synopsis: str = ""  # long-form SEO-oriented plot summary shown in SSR
     tags: List[str] = []
-    category_id: Optional[str] = None
-    uploader_id: str
     uploader_username: str = ""
     thumbnail_url: Optional[str] = None
     thumbnail_options: List[str] = []  # all generated thumbs
@@ -140,6 +139,7 @@ class VideoUploadMeta(BaseModel):
 class VideoUpdateReq(BaseModel):
     title: Optional[str] = None
     description: Optional[str] = None
+    synopsis: Optional[str] = None
     tags: Optional[List[str]] = None
     category_id: Optional[str] = None
     access_tier: Optional[str] = None

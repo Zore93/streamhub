@@ -181,6 +181,21 @@ export default function EditVideo() {
       <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6 space-y-4">
         <div><Label>Title</Label><Input value={v.title} onChange={(e) => setV({ ...v, title: e.target.value })} onBlur={() => save({ title: v.title })} className="bg-zinc-950 border-zinc-800" data-testid="edit-title" /></div>
         <div><Label>Description</Label><Textarea value={v.description || ""} onChange={(e) => setV({ ...v, description: e.target.value })} onBlur={() => save({ description: v.description })} className="bg-zinc-950 border-zinc-800" data-testid="edit-description" /></div>
+        <div>
+          <Label>Sinopsis (SEO)</Label>
+          <Textarea
+            rows={6}
+            value={v.synopsis || ""}
+            onChange={(e) => setV({ ...v, synopsis: e.target.value })}
+            onBlur={() => save({ synopsis: v.synopsis })}
+            placeholder="Rezumat detaliat al episodului — cel puțin 150 cuvinte unice pentru SEO. Ex: personaje, teme, evenimente cheie. NU copia-lipi de pe alt site."
+            className="bg-zinc-950 border-zinc-800"
+            data-testid="edit-synopsis"
+          />
+          <p className="text-xs text-zinc-500 mt-1">
+            {(v.synopsis || "").split(/\s+/).filter(Boolean).length} cuvinte · min. 150 recomandat pentru Google
+          </p>
+        </div>
         <div><Label>Tags (comma separated)</Label>
           <Input value={(v.tags || []).join(", ")} onChange={(e) => setV({ ...v, tags: e.target.value.split(",").map((s) => s.trim()).filter(Boolean) })} onBlur={() => save({ tags: v.tags })} className="bg-zinc-950 border-zinc-800" /></div>
         <div>

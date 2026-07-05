@@ -82,6 +82,30 @@ export default function SiteHead() {
 
   // 2) Per-route title + OG sync.
   useEffect(() => {
+    // Detect paginated URLs (`/popular/page/2`, `/category/xxx/page/3`, etc.).
+    // These duplicate content because they show a subset of the same list
+    // available on page 1.  We tell Google: "don't index this page but do
+    // follow the links from it" — the standard SEO recipe for pagination.
+    const isPaginated = /\/page\/\d+/.test(pathname);
+    // Query strings (e.g. ?utm_source=twitter) are treated as separate URLs
+    // by Google.  Force the canonical to the pathname without query params.
+    const hasQuery = window.location.search && window.location.search.length > 1;
+
+    if (isPaginated) {
+      setMeta("robots", "noindex, follow");
+    } else {
+      // Restore default indexability on non-paginated routes.
+      setMeta("robots", "index, follow, max-image-preview:large");
+    }
+
+    // For non-video pages, set canonical to the clean pathname (no query).
+    if (!pathname.startsWith("/watch/") && (isPaginated || hasQuery)) {
+      const siteBase = (defaultsRef.current.canonical_url || window.location.origin).replace(/\/$/, "");
+      // Strip `/page/N` from the canonical so all paginated variants collapse to page 1.
+      const cleanPath = pathname.replace(/\/page\/\d+\/?$/, "") || "/";
+      setLink("canonical", `${siteBase}${cleanPath}`);
+    }
+
     const onWatch = pathname.startsWith("/watch/");
     if (!onWatch) {
       // Restore the site default title so users don't keep seeing the previous

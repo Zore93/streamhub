@@ -3047,6 +3047,37 @@ async def og_video_html(video_id: str, request: Request):
     if v and v.get("tags"):
         tags_html = "<p><strong>Tags:</strong> " + ", ".join(esc(t) for t in v["tags"]) + "</p>"
 
+    # Synopsis — long-form plot summary that gives Googlebot substantially
+    # more unique per-page text.  When populated by the admin this alone
+    # tends to move episodes from "Crawled - not indexed" to "Indexed".
+    synopsis_html = ""
+    if v and (v.get("synopsis") or "").strip():
+        synopsis_html = f'<section><h2>Sinopsis</h2><p>{esc(v["synopsis"])}</p></section>'
+
+    # Top 5 comments — user-generated content is a strong quality signal
+    # for Google.  Rendered as static HTML so Googlebot sees them without JS.
+    comments_html = ""
+    if v:
+        try:
+            top_comments = await db.comments.find(
+                {"video_id": v["id"]},
+                {"_id": 0, "username": 1, "content": 1, "created_at": 1},
+            ).sort("created_at", -1).limit(5).to_list(5)
+            if top_comments:
+                items = []
+                for c in top_comments:
+                    author = esc(c.get("username") or "user")
+                    body_text = esc((c.get("content") or "").strip()[:600])
+                    when = esc((c.get("created_at") or "")[:10])
+                    items.append(
+                        f'<li><strong>{author}</strong> <time>{when}</time><p>{body_text}</p></li>'
+                    )
+                comments_html = (
+                    "<section><h2>Comentarii</h2><ul>" + "".join(items) + "</ul></section>"
+                )
+        except Exception:
+            pass
+
     # Related videos — gives Googlebot internal links between episodes,
     # which compounds your site's internal PageRank.
     related_html: list[str] = []
@@ -3112,9 +3143,11 @@ async def og_video_html(video_id: str, request: Request):
 </header>
 <article>
   <p>{esc(desc or v.get("title") or "") if v else esc(desc)}</p>
+  {synopsis_html}
   {tags_html}
   <p><a href="{esc(page_url)}">Vizionează episodul →</a></p>
 </article>
+{comments_html}
 <aside>
   <h2>Episoade asemănătoare</h2>
   <ul>{''.join(related_html)}</ul>
