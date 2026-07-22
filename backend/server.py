@@ -3305,15 +3305,24 @@ async def og_category_html(cat_ref: str, request: Request):
         ).sort("created_at", -1).limit(40).to_list(40)
         for v in vids:
             link = f"{base}/watch/{v.get('slug') or v['id']}"
-            img_abs = mediaUrl_for_og(v.get("thumbnail_url") or "", s)
+            thumb = v.get("thumbnail_url")
+            img_tag = ""
+            if thumb:
+                img_abs = mediaUrl_for_og(thumb, s)
+                if img_abs:
+                    img_tag = (
+                        f'<a href="{esc(link)}"><img src="{esc(img_abs)}" alt="{esc(v["title"])}" '
+                        f'width="320" height="180" loading="lazy"></a>'
+                    )
             vids_html.append(
-                f'<li><a href="{esc(link)}"><img src="{esc(img_abs)}" alt="{esc(v["title"])}" '
-                f'width="320" height="180" loading="lazy"></a>'
+                f'<li>{img_tag}'
                 f'<h3><a href="{esc(link)}">{esc(v["title"])}</a></h3>'
                 f'<p>{esc((v.get("description") or "")[:180])}</p></li>'
             )
     except Exception:
         pass
+
+    og_img_tag = f'<meta property="og:image" content="{esc(img)}">\n<meta name="twitter:image" content="{esc(img)}">' if img else ''
 
     body = f"""<!doctype html>
 <html lang="ro"><head>
@@ -3326,11 +3335,10 @@ async def og_category_html(cat_ref: str, request: Request):
 <meta property="og:title" content="{esc(page_title)}">
 <meta property="og:description" content="{esc(desc)}">
 <meta property="og:url" content="{esc(canonical)}">
-<meta property="og:image" content="{esc(img)}">
+{og_img_tag}
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="{esc(page_title)}">
 <meta name="twitter:description" content="{esc(desc)}">
-<meta name="twitter:image" content="{esc(img)}">
 <meta name="robots" content="index, follow, max-image-preview:large">
 </head>
 <body>

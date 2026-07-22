@@ -81,6 +81,11 @@ Build a full-stack video-sharing platform inspired by hentairosub.ro with:
   - Admin → Settings → **"✨ AI Synopsis (SEO)"** section: enable toggle, daily limit (default 50), model selector (Haiku/Gemini/Sonnet/GPT). Cost ~$0.002/generation with Haiku (~0.01 lei).
   - Rate limiting: `ai_synopsis_used_today` + `ai_synopsis_reset_date` in settings; HTTP 429 when exceeded.
   - Tested live: generated 152-word Romanian synopsis with proper SEO tone.
+- ✅ **Category SSR + index.html branding fix (Feb 2026)** — Google was indexing `/category/:slug` with default SPA shell title (either "StreamHub" leak or "Emergent | Fullstack App" from default index.html). Fixes:
+  - `/app/frontend/public/index.html`: `<html lang="ro">`, `<title>Loading…</title>`, generic description (was "Emergent | Fullstack App" / "A product of emergent.sh").
+  - New `GET /api/og/category/{slug_or_id}` endpoint renders SSR HTML with proper `<title>Category — SiteTitle</title>`, canonical, up-to-40 recent videos in that category (skips `<img>` when thumbnail empty; skips `og:image` meta when site logo empty).
+  - `crawler_og_middleware` extended to dispatch `/category/:slug`, `/videos/category/:slug` (legacy), `/popular`, `/discover`, `/shorts`, `/all-episodes`, `/shop` to appropriate SSR renderers when Googlebot / social crawlers visit.
+  - Tests: `/app/backend/tests/test_iteration10_seo_crawler.py` (11/11 pass).
 
 ## Roadmap / Future improvements
 - P2 — Multi-language metadata (currently `description` is single string)
