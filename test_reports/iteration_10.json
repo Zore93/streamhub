@@ -1,0 +1,45 @@
+{
+  "summary": "Backend-only testing of SEO fixes for stream-vault.eu / hentairosub.ro: static index.html rewrite (lang=ro, Loading title, no Emergent branding) and new /api/og/category/{slug} SSR + crawler middleware dispatch for /category/:slug, /videos/category/:slug, /popular, /all-episodes. 11/11 pytest cases PASSED against http://127.0.0.1:8001.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "/api/og/category/{slug}",
+        "issue": "Canonical URL and og:url render as '/category/comedy' (path-only) because site_canonical_url is empty in current preview settings. On production (stream-vault.eu / hentairosub.ro) this base is populated so links will be absolute. Not a code bug — just an observation for the review."
+      },
+      {
+        "endpoint": "/api/og/category/{slug}",
+        "issue": "og:image is emitted with empty content when site_og_image is unset. Consider omitting the tag entirely or falling back to a default asset to avoid Google flagging a blank image reference."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration10_seo_crawler.py",
+    "/app/test_reports/pytest/iteration10_results.xml"
+  ],
+  "action_items": [
+    "OPTIONAL: In og_category_html, skip <meta property=\"og:image\"> when img string is empty to avoid a blank tag in Google's cache.",
+    "OPTIONAL: Same treatment for og_home_html/og_video_html if they share the same helper."
+  ],
+  "critical_code_review_comments": [
+    "server.py is now 4213 lines — well past the 700-line soft cap. Recommend splitting SEO/OG SSR endpoints (og_home_html, og_video_html, og_category_html) and the crawler_og_middleware into a dedicated module (e.g., backend/seo_ssr.py) for maintainability.",
+    "The `_LISTING_PATH_RE` includes 'shop' — verify this is intended (a shop page rendering the home SSR could dilute crawl budget). If /shop is a real page with different content, add a dedicated og_shop_html renderer.",
+    "og_category_html falls back to og_home_html() on unknown slug and returns HTTP 200. This is intentional per spec but SEO-wise it may cause soft-404 warnings in GSC. Consider returning canonical link pointing to '/' so Google clearly consolidates the duplicate content.",
+    "In `og_category_html`, `mediaUrl_for_og(v.get('thumbnail_url') or '', s)` is called even when thumbnail_url is empty, potentially emitting `<img src=\"\">` in the list items. Add a guard to skip <img> when the URL is empty."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration10_seo_crawler.py (new file)"
+  ],
+  "success_rate": {"backend": "100%", "frontend": "not tested (per request)"},
+  "test_credentials": "Not required for these tests — all endpoints are public/UA-based",
+  "seed_data_creation": "None — used existing seeded categories (Comedy, Education, Gaming, Music, Tech, Travel) and existing videos",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "SEO iteration 10 changes are LIVE and working correctly on backend port 8001 (uvicorn hot reload). Test file at /app/backend/tests/test_iteration10_seo_crawler.py covers static index.html + /api/og/category/{slug} + crawler UA middleware for /category, /videos/category, /popular, /all-episodes, and regression for /watch. Note: The preview URL (https://stream-convert-hub-1.preview.emergentagent.com) still serves the OLD compiled frontend index.html (with 'Emergent | Fullstack App' branding) — this is a build-artifact issue that will resolve only when the user runs `docker compose build frontend` on their VPS. Backend changes tested directly via http://127.0.0.1:8001 as instructed.",
+  "rca_of_the_issue": "Original bugs: (1) React app's public/index.html shipped with Emergent branding/lang=en, leaked into Google's cache. (2) /category/:id had no SSR fallback; Googlebot got the default SPA shell whose <title> was 'StreamHub' (default) instead of the category name. Fixes verified: (a) public/index.html now uses lang='ro', <title>Loading…</title>, and a neutral streaming-platform description. (b) New GET /api/og/category/{cat_ref} endpoint SSRs the category with proper <title>Name — SiteTitle</title>, canonical, description, og:*, twitter:*, and up-to-40 recent videos. (c) crawler_og_middleware now dispatches /category/:slug, /videos/category/:slug (legacy), /popular, /all-episodes to their respective SSR endpoints when UA matches social/search crawlers. Regular browser UAs pass through untouched."
+}

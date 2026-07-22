@@ -3266,6 +3266,89 @@ async def og_home_html():
     )
 
 
+@api.get("/og/category/{cat_ref}")
+async def og_category_html(cat_ref: str, request: Request):
+    """SSR OG page for a category — indexed as a listing hub by Googlebot.
+
+    Accepts either the numeric/UUID id or the slug.  Renders the category
+    name in `<title>` and lists up to 40 recent videos in that category so
+    Google has substantial content to consider for indexing.
+    """
+    from fastapi.responses import HTMLResponse
+    import html as _html
+    s = await get_settings()
+    site_title = s.get("site_title") or "StreamHub"
+    base = (s.get("site_canonical_url") or "").rstrip("/")
+    esc = _html.escape
+
+    # Look up category by id or slug
+    cat = await db.categories.find_one(
+        {"$or": [{"id": cat_ref}, {"slug": cat_ref}]},
+        {"_id": 0, "id": 1, "name": 1, "slug": 1},
+    )
+    if not cat:
+        # Category not found → fall back to homepage SSR
+        return await og_home_html()
+
+    cat_name = cat.get("name") or "Category"
+    canonical = f"{base}/category/{cat.get('slug') or cat['id']}"
+    page_title = f"{cat_name} — {site_title}"
+    desc = f"Toate episoadele din categoria {cat_name} pe {site_title}."
+    img = mediaUrl_for_og(s.get("site_og_image") or "", s)
+
+    # List up to 40 recent videos in this category
+    vids_html: list[str] = []
+    try:
+        vids = await db.videos.find(
+            {"status": "ready", "category_id": cat["id"]},
+            {"_id": 0, "id": 1, "title": 1, "slug": 1, "description": 1, "thumbnail_url": 1},
+        ).sort("created_at", -1).limit(40).to_list(40)
+        for v in vids:
+            link = f"{base}/watch/{v.get('slug') or v['id']}"
+            img_abs = mediaUrl_for_og(v.get("thumbnail_url") or "", s)
+            vids_html.append(
+                f'<li><a href="{esc(link)}"><img src="{esc(img_abs)}" alt="{esc(v["title"])}" '
+                f'width="320" height="180" loading="lazy"></a>'
+                f'<h3><a href="{esc(link)}">{esc(v["title"])}</a></h3>'
+                f'<p>{esc((v.get("description") or "")[:180])}</p></li>'
+            )
+    except Exception:
+        pass
+
+    body = f"""<!doctype html>
+<html lang="ro"><head>
+<meta charset="utf-8">
+<title>{esc(page_title)}</title>
+<meta name="description" content="{esc(desc)}">
+<link rel="canonical" href="{esc(canonical)}">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="{esc(site_title)}">
+<meta property="og:title" content="{esc(page_title)}">
+<meta property="og:description" content="{esc(desc)}">
+<meta property="og:url" content="{esc(canonical)}">
+<meta property="og:image" content="{esc(img)}">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="{esc(page_title)}">
+<meta name="twitter:description" content="{esc(desc)}">
+<meta name="twitter:image" content="{esc(img)}">
+<meta name="robots" content="index, follow, max-image-preview:large">
+</head>
+<body>
+<h1>{esc(cat_name)}</h1>
+<p>{esc(desc)}</p>
+<section><h2>Episoade</h2><ul>{''.join(vids_html)}</ul></section>
+<p><a href="{esc(canonical)}">Deschide categoria →</a></p>
+</body></html>"""
+    return HTMLResponse(
+        body,
+        status_code=200,
+        headers={
+            "Cache-Control": "public, max-age=600",
+            "Content-Type": "text/html; charset=utf-8",
+        },
+    )
+
+
 # ============ SEO: Google Search Console dashboard ============
 @api.post("/admin/seo/credentials")
 async def admin_seo_save_credentials(payload: dict, admin: dict = Depends(require_admin)):
@@ -4053,6 +4136,8 @@ _SOCIAL_CRAWLER_RE = re.compile(
     re.IGNORECASE,
 )
 _WATCH_PATH_RE = re.compile(r"^/watch/([^/?#]+)")
+_CATEGORY_PATH_RE = re.compile(r"^/(?:videos/)?category/([^/?#]+)")
+_LISTING_PATH_RE = re.compile(r"^/(popular|discover|shorts|all-episodes|episoade|shop)(?:/|$)")
 
 # Legacy URL recovery: any `.html` URL at the app root MAY have been an
 # article slug from the previous CMS.  We try to resolve it via
@@ -4108,6 +4193,11 @@ async def crawler_og_middleware(request: Request, call_next):
         m = _WATCH_PATH_RE.match(path)
         if m:
             return await og_video_html(m.group(1), request)  # type: ignore[arg-type]
+        cm = _CATEGORY_PATH_RE.match(path)
+        if cm:
+            return await og_category_html(cm.group(1), request)  # type: ignore[arg-type]
+        if _LISTING_PATH_RE.match(path):
+            return await og_home_html()  # type: ignore[call-arg]
         if path == "/" or path == "":
             return await og_home_html()  # type: ignore[call-arg]
     return await call_next(request)
