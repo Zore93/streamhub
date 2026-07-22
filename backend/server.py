@@ -3678,6 +3678,8 @@ async def admin_generate_synopsis_single(
         cat_name = (cat or {}).get("name", "")
     try:
         text = await _generate_synopsis_llm(v, model, cat_name)
+    except HTTPException:
+        raise
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"LLM call failed: {str(e)[:200]}")
     word_count = len([w for w in text.split() if w])
