@@ -9,7 +9,7 @@ import { toast } from "sonner";
 
 export default function Register() {
   const { register } = useAuth();
-  const { t } = useT();
+  const { t, siteCfg } = useT();
   const nav = useNavigate();
   const [email, setEmail] = useState("");
   const [username, setUsername] = useState("");
@@ -38,7 +38,7 @@ export default function Register() {
   return (
     <div className="max-w-md mx-auto mt-12" data-testid="register-page">
       <h1 className="text-3xl font-bold font-heading mb-2">{t("auth.register")}</h1>
-      <p className="text-zinc-500 mb-8">{t("auth.register.subtitle")} StreamHub</p>
+      <p className="text-zinc-500 mb-8">{t("auth.register.subtitle")} {siteCfg?.title || "StreamHub"}</p>
       <form onSubmit={submit} className="space-y-4">
         <div>
           <Label>{t("auth.email")}</Label>

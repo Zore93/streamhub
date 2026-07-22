@@ -9,7 +9,7 @@ import { toast } from "sonner";
 
 export default function Login() {
   const { login } = useAuth();
-  const { t } = useT();
+  const { t, siteCfg } = useT();
   const nav = useNavigate();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -32,7 +32,7 @@ export default function Login() {
   return (
     <div className="max-w-md mx-auto mt-12" data-testid="login-page">
       <h1 className="text-3xl font-bold font-heading mb-2">{t("auth.signIn")}</h1>
-      <p className="text-zinc-500 mb-8">{t("auth.signIn.subtitle")} StreamHub</p>
+      <p className="text-zinc-500 mb-8">{t("auth.signIn.subtitle")} {siteCfg?.title || "StreamHub"}</p>
       <form onSubmit={submit} className="space-y-4">
         <div>
           <Label>{t("auth.email")}</Label>
