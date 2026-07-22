@@ -1,0 +1,42 @@
+{
+  "summary": "Regression tests for the LLM-key migration (ENV -> DB / AppSettings.emergent_llm_key). All 6 backend tests PASS. The DB-based flow, admin GET/PATCH exposure, public-config non-leak, single-video generation, empty-key friendly-error, and bulk generation are all working correctly against 127.0.0.1:8001 (used directly to avoid the ingress error-page mask).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "POST /api/admin/videos/{id}/generate-synopsis",
+        "issue": "When the DB key is empty (and env var absent), the endpoint returns HTTP 502 with detail 'LLM call failed: 500: Emergent LLM Key not configured. Go to Admin → Settings → ✨ AI Synopsis and paste your key.' — the review request specified HTTP 500 with the raw friendly detail. This is because `admin_generate_synopsis_single` wraps the inner HTTPException(500) in `except Exception` and re-raises as 502 with a 'LLM call failed: 500:' prefix. User-visible text still contains the new friendly message and no longer contains the old '.env' wording, so functionally correct; only the status code + prefix differ from spec."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration11_llm_key.py",
+    "/app/test_reports/pytest/iteration11.xml"
+  ],
+  "action_items": [
+    "OPTIONAL/LOW: In server.py `admin_generate_synopsis_single`, re-raise HTTPException as-is (or catch specifically emergentintegrations errors) so the 500 status + clean detail reach the client. Same applies to any callers using `except Exception` around `_generate_synopsis_llm`. Current wrapping produces 502 with a 'LLM call failed: 500:' prefix."
+  ],
+  "critical_code_review_comments": [
+    "server.py:3681 — `except Exception as e: raise HTTPException(502, f'LLM call failed: {str(e)[:200]}')` swallows the intended HTTP 500 from `_generate_synopsis_llm`. Consider `except HTTPException: raise` before the generic Exception handler to preserve the intended status + clean detail.",
+    "server.py:3728 — bulk endpoint returns per-video errors as strings (`str(e)[:200]`); an HTTPException raised inside will render as `500: <msg>` inside the error field. Consider special-casing HTTPException for clearer client-side messaging (low priority).",
+    "server.py:3634 — key sourcing looks correct (`s.get('emergent_llm_key') or os.environ.get('EMERGENT_LLM_KEY')`). Public `/api/site/config` correctly omits the field (whitelist-based response, verified)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration11_llm_key.py"
+  ],
+  "success_rate": {
+    "backend": "100%",
+    "frontend": "not tested (backend-only request)"
+  },
+  "test_credentials": "admin@streamhub.io / Admin123! — verified working via /api/auth/login; token used for all admin endpoints.",
+  "seed_data_creation": "None. Used the first existing admin video (id 568596d0-c6e2-4c07-80e3-583b2960b0c3) as the target. DB key value restored to 'sk-emergent-4A501A18c0dFb3d248' after each test via fixture teardown.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "The suite must hit 127.0.0.1:8001 directly (not the public preview URL) because the ingress serves an HTML error page for FastAPI 5xx responses, masking the JSON `detail` field. The 'no-key' test path is skipped if EMERGENT_LLM_KEY is set in the OS env; on this container it is unset. The single-video synopsis call takes ~5-10 s; keep timeouts >=60s. Bulk endpoint writes the synopsis to the video, so if you re-run and skip_existing=true you'll get skipped=1 instead of success=1 — pass skip_existing=false to force generation.",
+  "rca of the issue": "Original bug (LLM call failed: 500: EMERGENT_LLM_KEY not configured in backend .env) was caused by hardcoded reliance on the env var. Fix verified: models.py:270 adds `emergent_llm_key: str = ''` to AppSettings, server.py:3633-3639 reads DB first then env, and server.py:3636-3639 emits the new friendly HTTPException. All three surfaces (admin get/patch, public site config, generation endpoints single + bulk) confirmed working. Residual: the outer `except Exception` in single-video endpoint downgrades the response to 502 with a 'LLM call failed:' prefix — cosmetic only, message text still user-friendly."
+}

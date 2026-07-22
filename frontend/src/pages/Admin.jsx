@@ -1006,6 +1006,20 @@ function SettingsTab() {
             data-testid="ai-synopsis-enabled"
           />
         </Field>
+        <Field label="Emergent LLM Key">
+          <Input
+            type="password"
+            value={s.emergent_llm_key || ""}
+            onChange={(e) => upd("emergent_llm_key", e.target.value)}
+            placeholder="sk-emergent-…"
+            className="bg-zinc-950 border-zinc-800 font-mono"
+            autoComplete="off"
+            data-testid="emergent-llm-key"
+          />
+        </Field>
+        <p className="text-xs text-zinc-500">
+          Obții cheia din <a href="https://app.emergent.sh/profile/universal-key" target="_blank" rel="noreferrer" className="text-violet-400 hover:underline">Emergent → Profile → Universal Key</a>. Cheia se stochează în MongoDB și este folosită doar server-side (nu apare în răspunsuri API).
+        </p>
         <Field label="Daily generation limit">
           <Input
             type="number"

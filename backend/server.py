@@ -3628,9 +3628,15 @@ def _synopsis_prompt(video: dict, category_name: str = "") -> str:
 async def _generate_synopsis_llm(video: dict, model: str, category_name: str = "") -> str:
     """Call the LLM to generate one synopsis.  Returns the raw text."""
     from emergentintegrations.llm.chat import LlmChat, UserMessage
-    api_key = os.environ.get("EMERGENT_LLM_KEY")
+    # Prefer the key stored in DB settings (managed via Admin UI); fall back
+    # to the EMERGENT_LLM_KEY environment variable for backwards compat.
+    s = await get_settings()
+    api_key = (s.get("emergent_llm_key") or "").strip() or os.environ.get("EMERGENT_LLM_KEY", "").strip()
     if not api_key:
-        raise HTTPException(500, "EMERGENT_LLM_KEY not configured in backend .env")
+        raise HTTPException(
+            500,
+            "Emergent LLM Key not configured. Go to Admin → Settings → ✨ AI Synopsis and paste your key.",
+        )
     provider = "anthropic" if model.startswith("claude") else ("gemini" if model.startswith("gemini") else "openai")
     chat = LlmChat(
         api_key=api_key,

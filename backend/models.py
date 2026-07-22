@@ -267,6 +267,7 @@ class AppSettings(BaseModel):
     ai_synopsis_model: str = "claude-haiku-4-5-20251001"  # cheapest good model
     ai_synopsis_used_today: int = 0
     ai_synopsis_reset_date: str = ""  # ISO date YYYY-MM-DD; auto-resets daily counter
+    emergent_llm_key: str = ""  # Emergent Universal LLM Key (set via Admin UI; overrides EMERGENT_LLM_KEY env var)
     # Shorts detection
     shorts_max_duration_sec: int = 60  # videos shorter than this AND vertical = Short
     # Live chat
