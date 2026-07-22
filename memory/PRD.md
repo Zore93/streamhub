@@ -74,6 +74,13 @@ Build a full-stack video-sharing platform inspired by hentairosub.ro with:
   - **(a) Synopsis field** on `Video` model + Admin EditVideo textarea + word counter. Rendered in SSR crawler HTML as `<section><h2>Sinopsis</h2>` so each episode has unique long-form content.
   - **(b) Top 5 comments in SSR** — user-generated content is a Google quality signal. Comments fetched + rendered server-side for Googlebot without JS.
   - **(c) noindex,follow on pagination** — `SiteHead.jsx` detects `/*/page/N` URLs and sets `<meta robots="noindex, follow">` + canonical stripped of `/page/N`. Query-string URLs (`?utm=...`) also canonicalize to the clean path.
+- ✅ **AI Synopsis generation with Emergent LLM Key (Feb 2026)** — one-click AI-generated synopsis via Claude Haiku 4.5 / Gemini 3 Flash / GPT-5.4 Mini. Endpoints:
+  - `POST /api/admin/videos/{id}/generate-synopsis` — single video, returns preview (not saved), admin accepts via modal in EditVideo (Sparkles button next to Synopsis textarea)
+  - `POST /api/admin/videos/generate-synopsis-bulk` — batch up to 100 videos, auto-saves, skips those with existing synopsis, cost estimate + confirmation in Admin → Videos bulk toolbar with checkboxes
+  - `GET /api/admin/videos/synopsis-quota` — daily quota status (auto-resets midnight UTC)
+  - Admin → Settings → **"✨ AI Synopsis (SEO)"** section: enable toggle, daily limit (default 50), model selector (Haiku/Gemini/Sonnet/GPT). Cost ~$0.002/generation with Haiku (~0.01 lei).
+  - Rate limiting: `ai_synopsis_used_today` + `ai_synopsis_reset_date` in settings; HTTP 429 when exceeded.
+  - Tested live: generated 152-word Romanian synopsis with proper SEO tone.
 
 ## Roadmap / Future improvements
 - P2 — Multi-language metadata (currently `description` is single string)

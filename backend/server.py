@@ -3479,6 +3479,188 @@ async def admin_seo_request_indexing(payload: dict, admin: dict = Depends(requir
     return {"ok": ok_count == len(results), "submitted": len(results), "success": ok_count, "results": results}
 
 
+# ============ AI Synopsis generation (Emergent LLM key) ============
+
+async def _consume_synopsis_quota(count: int) -> int:
+    """Atomically increment the daily counter and return remaining quota.
+
+    Auto-resets `ai_synopsis_used_today` when the ISO date rolls over.
+    Raises HTTP 429 if `count` would exceed `ai_synopsis_daily_limit`.
+    Returns the new `used_today` value on success.
+    """
+    from datetime import datetime as _dt, timezone as _tz
+    today = _dt.now(_tz.utc).strftime("%Y-%m-%d")
+    s = await get_settings()
+    limit = int(s.get("ai_synopsis_daily_limit", 50))
+    used = int(s.get("ai_synopsis_used_today", 0))
+    reset_date = s.get("ai_synopsis_reset_date") or ""
+    if reset_date != today:
+        used = 0
+        reset_date = today
+    if used + count > limit:
+        raise HTTPException(429, f"AI synopsis daily limit reached ({used}/{limit}). Increase in Admin → Settings → AI Synopsis or wait until tomorrow.")
+    new_used = used + count
+    await db.settings.update_one(
+        {"_id": "app"},
+        {"$set": {"ai_synopsis_used_today": new_used, "ai_synopsis_reset_date": today}},
+        upsert=True,
+    )
+    return new_used
+
+
+def _synopsis_prompt(video: dict, category_name: str = "") -> str:
+    """Build the LLM prompt for generating one video's synopsis in Romanian."""
+    title = (video.get("title") or "").strip() or "Episod anime"
+    desc = (video.get("description") or "").strip()
+    tags = ", ".join(video.get("tags") or [])
+    parts = [f"Titlu episod: {title}"]
+    if category_name:
+        parts.append(f"Categorie: {category_name}")
+    if tags:
+        parts.append(f"Tag-uri: {tags}")
+    if desc:
+        parts.append(f"Descriere existentă: {desc[:400]}")
+    parts.append(
+        "\nGenerează un sinopsis unic de 180-220 cuvinte în limba română despre acest episod, "
+        "menit pentru SEO Google. Cerințe:\n"
+        "- Text natural, atrăgător pentru cititori\n"
+        "- Menționează personajele și temele probabile bazate pe titlu/tag-uri\n"
+        "- NU repeta descrierea existentă cuvânt-cu-cuvânt\n"
+        "- NU folosi structuri repetitive ('În acest episod', 'Vei vedea')\n"
+        "- Include cuvinte-cheie SEO relevante natural în text\n"
+        "- Un singur paragraf, fără liste, fără titluri\n"
+        "- Răspunde DOAR cu sinopsis-ul, fără introduceri sau ghilimele"
+    )
+    return "\n".join(parts)
+
+
+async def _generate_synopsis_llm(video: dict, model: str, category_name: str = "") -> str:
+    """Call the LLM to generate one synopsis.  Returns the raw text."""
+    from emergentintegrations.llm.chat import LlmChat, UserMessage
+    api_key = os.environ.get("EMERGENT_LLM_KEY")
+    if not api_key:
+        raise HTTPException(500, "EMERGENT_LLM_KEY not configured in backend .env")
+    provider = "anthropic" if model.startswith("claude") else ("gemini" if model.startswith("gemini") else "openai")
+    chat = LlmChat(
+        api_key=api_key,
+        session_id=f"synopsis-{video['id']}",
+        system_message="You are a professional SEO copywriter fluent in Romanian, specialized in anime/streaming content.",
+    ).with_model(provider, model)
+    prompt = _synopsis_prompt(video, category_name)
+    result = await chat.send_message(UserMessage(text=prompt))
+    if isinstance(result, str):
+        return result.strip()
+    # emergentintegrations may return an object with .content
+    return str(result).strip()
+
+
+@api.post("/admin/videos/{video_id}/generate-synopsis")
+async def admin_generate_synopsis_single(
+    video_id: str,
+    payload: dict | None = None,
+    admin: dict = Depends(require_admin),
+):
+    """Generate a synopsis for a single video WITHOUT saving it.
+
+    Admin gets a preview and can accept/reject before saving via the normal
+    PATCH /api/videos/:id endpoint.
+    """
+    payload = payload or {}
+    v = await find_video_by_id_or_slug(video_id)
+    if not v:
+        raise HTTPException(404, "Video not found")
+    s = await get_settings()
+    if not s.get("ai_synopsis_enabled", True):
+        raise HTTPException(403, "AI synopsis is disabled by admin settings.")
+    await _consume_synopsis_quota(1)
+    model = (payload.get("model") or s.get("ai_synopsis_model") or "claude-haiku-4-5-20251001").strip()
+    # Fetch category label for richer prompts
+    cat_name = ""
+    if v.get("category_id"):
+        cat = await db.categories.find_one({"id": v["category_id"]}, {"_id": 0, "name": 1})
+        cat_name = (cat or {}).get("name", "")
+    try:
+        text = await _generate_synopsis_llm(v, model, cat_name)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"LLM call failed: {str(e)[:200]}")
+    word_count = len([w for w in text.split() if w])
+    return {"synopsis": text, "word_count": word_count, "model": model, "video_id": v["id"]}
+
+
+@api.post("/admin/videos/generate-synopsis-bulk")
+async def admin_generate_synopsis_bulk(
+    payload: dict,
+    admin: dict = Depends(require_admin),
+):
+    """Generate + save synopsis for many videos at once.
+
+    Body: {"video_ids": ["id1", "id2", ...], "model": "..." (optional),
+           "skip_existing": true (default) — don't overwrite videos that
+           already have a non-empty synopsis}
+    Returns per-video result with ok/error + generated text.
+    """
+    ids = payload.get("video_ids") or []
+    if not isinstance(ids, list) or not ids:
+        raise HTTPException(400, "`video_ids` must be a non-empty list.")
+    ids = [str(i) for i in ids][:100]  # safety cap per request
+    s = await get_settings()
+    if not s.get("ai_synopsis_enabled", True):
+        raise HTTPException(403, "AI synopsis is disabled.")
+    model = (payload.get("model") or s.get("ai_synopsis_model") or "claude-haiku-4-5-20251001").strip()
+    skip_existing = payload.get("skip_existing", True)
+
+    # Load all requested videos + categories in one round-trip
+    vids = await db.videos.find({"id": {"$in": ids}}, {"_id": 0}).to_list(len(ids))
+    cats = await db.categories.find({}, {"_id": 0, "id": 1, "name": 1}).to_list(200)
+    cat_map = {c["id"]: c.get("name", "") for c in cats}
+
+    # Filter out videos that already have a synopsis
+    to_generate = [v for v in vids if not (skip_existing and (v.get("synopsis") or "").strip())]
+    if not to_generate:
+        return {"ok": True, "submitted": 0, "success": 0, "skipped": len(vids), "results": []}
+
+    # Reserve quota upfront so we fail fast
+    await _consume_synopsis_quota(len(to_generate))
+
+    results: list[dict] = []
+    for v in to_generate:
+        try:
+            text = await _generate_synopsis_llm(v, model, cat_map.get(v.get("category_id") or "", ""))
+            await db.videos.update_one({"id": v["id"]}, {"$set": {"synopsis": text}})
+            results.append({"video_id": v["id"], "ok": True, "words": len(text.split())})
+        except Exception as e:  # noqa: BLE001
+            results.append({"video_id": v["id"], "ok": False, "error": str(e)[:200]})
+
+    ok_count = sum(1 for r in results if r["ok"])
+    return {
+        "ok": ok_count == len(results),
+        "submitted": len(to_generate),
+        "success": ok_count,
+        "skipped": len(vids) - len(to_generate),
+        "results": results,
+    }
+
+
+@api.get("/admin/videos/synopsis-quota")
+async def admin_synopsis_quota(admin: dict = Depends(require_admin)):
+    """Return current daily quota status for the AI Synopsis feature."""
+    from datetime import datetime as _dt, timezone as _tz
+    today = _dt.now(_tz.utc).strftime("%Y-%m-%d")
+    s = await get_settings()
+    used = int(s.get("ai_synopsis_used_today", 0))
+    reset_date = s.get("ai_synopsis_reset_date") or ""
+    if reset_date != today:
+        used = 0
+    limit = int(s.get("ai_synopsis_daily_limit", 50))
+    return {
+        "used_today": used,
+        "daily_limit": limit,
+        "remaining": max(0, limit - used),
+        "model": s.get("ai_synopsis_model") or "claude-haiku-4-5-20251001",
+        "enabled": bool(s.get("ai_synopsis_enabled", True)),
+    }
+
+
 # ============ SEO: robots.txt + sitemap.xml (mounted at app root) ============
 @app.api_route("/robots.txt", methods=["GET", "HEAD"], include_in_schema=False)
 async def robots_txt():

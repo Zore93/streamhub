@@ -261,6 +261,12 @@ class AppSettings(BaseModel):
     discord_widget_enabled: bool = True
     discord_invite_url: str = "https://discord.gg/5dGdSbzT4E"
     discord_guild_id: str = ""  # numeric guild ID for the embeddable widget
+    # AI Synopsis generation
+    ai_synopsis_enabled: bool = True
+    ai_synopsis_daily_limit: int = 50  # max AI synopsis generations per day
+    ai_synopsis_model: str = "claude-haiku-4-5-20251001"  # cheapest good model
+    ai_synopsis_used_today: int = 0
+    ai_synopsis_reset_date: str = ""  # ISO date YYYY-MM-DD; auto-resets daily counter
     # Shorts detection
     shorts_max_duration_sec: int = 60  # videos shorter than this AND vertical = Short
     # Live chat

@@ -14,7 +14,7 @@ import { useT } from "@/contexts/LanguageContext";
 import {
   Trash2, Plus, RefreshCw, Eye, Heart, MessageCircle, Users, Video as VideoIcon, Crown,
   Pencil, Ban, ShieldOff, Upload as UploadIcon, ImageOff,
-  TrendingUp, Search, AlertTriangle, CheckCircle2, ExternalLink, Send,
+  TrendingUp, Search, AlertTriangle, CheckCircle2, ExternalLink, Send, Sparkles,
 } from "lucide-react";
 
 const RES_OPTIONS = ["360p", "720p", "1080p", "2048p", "4096p"];
@@ -95,7 +95,14 @@ function VideosTab() {
   const [tier, setTier] = useState("");      // "" | free | pro
   const [statusF, setStatusF] = useState(""); // "" | ready | processing | failed
   const [shortF, setShortF] = useState("");   // "" | "short" | "video"
+  const [selected, setSelected] = useState(new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [quota, setQuota] = useState(null);
   const PAGE = 50;
+
+  useEffect(() => {
+    api.get("/admin/videos/synopsis-quota").then((r) => setQuota(r.data)).catch(() => {});
+  }, []);
 
   // Debounce
   useEffect(() => {
@@ -133,6 +140,56 @@ function VideosTab() {
     if (!window.confirm("Delete?")) return;
     await api.delete(`/videos/${id}`);
     load(skip, false);
+  };
+
+  const toggleSelect = (id) => {
+    setSelected((prev) => {
+      const nx = new Set(prev);
+      if (nx.has(id)) nx.delete(id); else nx.add(id);
+      return nx;
+    });
+  };
+  const toggleSelectAll = () => {
+    setSelected((prev) => {
+      if (prev.size === items.length) return new Set();
+      return new Set(items.map((i) => i.id));
+    });
+  };
+  const clearSelection = () => setSelected(new Set());
+
+  const bulkGenerateSynopsis = async () => {
+    if (selected.size === 0) return;
+    const cost = (selected.size * 0.002).toFixed(3);
+    if (!window.confirm(
+      `Generează sinopsis AI pentru ${selected.size} episoade?\n\n` +
+      `• Cost estimat: ~$${cost} (≈${(selected.size * 0.01).toFixed(2)} lei)\n` +
+      `• Episoadele cu sinopsis existent vor fi omise\n` +
+      `• Cotă zilnică rămasă: ${quota?.remaining ?? "?"}\n\n` +
+      `Continuă?`
+    )) return;
+    setBulkBusy(true);
+    try {
+      const { data } = await api.post("/admin/videos/generate-synopsis-bulk", {
+        video_ids: Array.from(selected),
+        skip_existing: true,
+      });
+      const { success = 0, submitted = 0, skipped = 0 } = data;
+      if (skipped > 0) {
+        toast.info(`${success}/${submitted} generate · ${skipped} omise (au deja sinopsis)`);
+      } else if (success === submitted) {
+        toast.success(`✓ ${success}/${submitted} sinopsis salvate`);
+      } else {
+        toast.warning(`${success}/${submitted} reușite — verifică erorile`);
+      }
+      clearSelection();
+      // Refresh quota
+      const q2 = await api.get("/admin/videos/synopsis-quota").catch(() => null);
+      if (q2?.data) setQuota(q2.data);
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Eroare la generare bulk");
+    } finally {
+      setBulkBusy(false);
+    }
   };
 
   const hasMore = items.length < total;
@@ -176,8 +233,56 @@ function VideosTab() {
         </div>
       </div>
 
+      {/* Bulk AI synopsis toolbar */}
+      {items.length > 0 && (
+        <div className="bg-gradient-to-br from-violet-500/10 via-zinc-900 to-fuchsia-500/10 border border-violet-500/30 rounded-lg p-3 flex flex-wrap items-center gap-3">
+          <label className="inline-flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={selected.size === items.length && items.length > 0}
+              onChange={toggleSelectAll}
+              className="w-4 h-4 accent-violet-500"
+              data-testid="select-all-videos"
+            />
+            <span className="text-sm text-zinc-200">Selectează tot ({items.length})</span>
+          </label>
+          {selected.size > 0 && (
+            <>
+              <span className="text-sm text-violet-300">
+                <strong>{selected.size}</strong> selectate
+              </span>
+              <Button
+                size="sm"
+                onClick={bulkGenerateSynopsis}
+                disabled={bulkBusy}
+                className="pro-gradient text-white border-0"
+                data-testid="bulk-generate-synopsis"
+              >
+                <Sparkles size={14} className="mr-1" />
+                {bulkBusy ? "Se generează…" : `Generează sinopsis AI (${selected.size})`}
+              </Button>
+              <Button size="sm" variant="outline" onClick={clearSelection}>
+                Anulează selecție
+              </Button>
+            </>
+          )}
+          {quota && (
+            <div className="ml-auto text-xs text-zinc-400">
+              Cotă zilnică: <strong className={quota.remaining < 10 ? "text-amber-400" : "text-emerald-400"}>{quota.remaining}</strong> / {quota.daily_limit} · {quota.model}
+            </div>
+          )}
+        </div>
+      )}
+
       {items.map((v) => (
         <div key={v.id} className="bg-zinc-900 border border-zinc-800 rounded-lg p-3 flex items-center justify-between gap-3 flex-wrap">
+          <input
+            type="checkbox"
+            checked={selected.has(v.id)}
+            onChange={() => toggleSelect(v.id)}
+            className="w-4 h-4 accent-violet-500 flex-shrink-0"
+            data-testid={`select-vid-${v.id}`}
+          />
           <div className="flex-1 min-w-0">
             <div className="font-semibold truncate">{v.title}</div>
             <div className="text-xs text-zinc-500 flex flex-wrap gap-x-2">
@@ -189,6 +294,7 @@ function VideosTab() {
               <span>·</span>
               <span className={v.access_tier === "pro" ? "text-amber-300" : ""}>{v.access_tier}</span>
               {v.is_short && (<><span>·</span><span className="text-fuchsia-300">SHORT</span></>)}
+              {v.synopsis && <><span>·</span><span className="text-violet-300 inline-flex items-center gap-0.5"><Sparkles size={10} /> sinopsis</span></>}
             </div>
           </div>
           <Link to={`/edit-video/${v.id}`}>
@@ -891,6 +997,40 @@ function SettingsTab() {
       <Section title="Contact form">
         <Field label="Contact email"><Input type="email" value={s.contact_email || ""} onChange={(e) => upd("contact_email", e.target.value)} placeholder="contact@yourdomain.com" className="bg-zinc-950 border-zinc-800" data-testid="contact-email-setting" /></Field>
         <p className="text-xs text-zinc-500">Messages from /contact are sent to this address (requires SMTP to be enabled).</p>
+      </Section>
+      <Section title="✨ AI Synopsis (SEO)">
+        <Field label="Enable AI synopsis generation">
+          <Switch
+            checked={s.ai_synopsis_enabled ?? true}
+            onCheckedChange={(v) => upd("ai_synopsis_enabled", v)}
+            data-testid="ai-synopsis-enabled"
+          />
+        </Field>
+        <Field label="Daily generation limit">
+          <Input
+            type="number"
+            min="1" max="1000"
+            value={s.ai_synopsis_daily_limit ?? 50}
+            onChange={(e) => upd("ai_synopsis_daily_limit", parseInt(e.target.value || 50))}
+            className="bg-zinc-950 border-zinc-800 w-32"
+            data-testid="ai-synopsis-limit"
+          />
+        </Field>
+        <Field label="Model">
+          <Select value={s.ai_synopsis_model || "claude-haiku-4-5-20251001"} onValueChange={(v) => upd("ai_synopsis_model", v)}>
+            <SelectTrigger className="bg-zinc-950 border-zinc-800 max-w-md" data-testid="ai-synopsis-model"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="claude-haiku-4-5-20251001">Claude Haiku 4.5 (recomandat · ~$0.002/generare)</SelectItem>
+              <SelectItem value="gemini-3-flash-preview">Gemini 3 Flash (cel mai ieftin · ~$0.0007/generare)</SelectItem>
+              <SelectItem value="claude-sonnet-4-6">Claude Sonnet 4.6 (calitate max · ~$0.02/generare)</SelectItem>
+              <SelectItem value="gpt-5.4-mini">GPT-5.4 Mini (~$0.003/generare)</SelectItem>
+            </SelectContent>
+          </Select>
+        </Field>
+        <p className="text-xs text-zinc-500">
+          Folosește Emergent Universal LLM Key. Balanță și top-up: Profile → Universal Key.
+          Sinopsis-urile generate se salvează automat pentru bulk; per-video ai preview + accept.
+        </p>
       </Section>
       <Section title="💬 Discord community">
         <Field label="Enable Discord widget">

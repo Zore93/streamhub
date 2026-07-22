@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Trash2, Plus, ArrowLeft, FileText, Star, StarOff } from "lucide-react";
+import { Trash2, Plus, ArrowLeft, FileText, Star, StarOff, Sparkles, Check, X } from "lucide-react";
 import { toast } from "sonner";
 
 // Common subtitle languages — keeps the picker small but covers most cases.
@@ -182,7 +182,10 @@ export default function EditVideo() {
         <div><Label>Title</Label><Input value={v.title} onChange={(e) => setV({ ...v, title: e.target.value })} onBlur={() => save({ title: v.title })} className="bg-zinc-950 border-zinc-800" data-testid="edit-title" /></div>
         <div><Label>Description</Label><Textarea value={v.description || ""} onChange={(e) => setV({ ...v, description: e.target.value })} onBlur={() => save({ description: v.description })} className="bg-zinc-950 border-zinc-800" data-testid="edit-description" /></div>
         <div>
-          <Label>Sinopsis (SEO)</Label>
+          <div className="flex items-center justify-between mb-1">
+            <Label>Sinopsis (SEO)</Label>
+            <AiSynopsisButton videoId={v.id} onGenerated={(txt) => { setV({ ...v, synopsis: txt }); save({ synopsis: txt }); }} />
+          </div>
           <Textarea
             rows={6}
             value={v.synopsis || ""}
@@ -341,5 +344,85 @@ export default function EditVideo() {
         </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * Compact button next to the Synopsis textarea.  Fires an LLM generation,
+ * shows the preview in a small modal and lets the admin accept or discard.
+ */
+function AiSynopsisButton({ videoId, onGenerated }) {
+  const [busy, setBusy] = useState(false);
+  const [preview, setPreview] = useState(null);
+  const [remaining, setRemaining] = useState(null);
+
+  const generate = async () => {
+    setBusy(true);
+    try {
+      const { data } = await api.post(`/admin/videos/${videoId}/generate-synopsis`, {});
+      setPreview(data);
+      // Refresh remaining quota
+      const q = await api.get("/admin/videos/synopsis-quota").catch(() => null);
+      if (q?.data) setRemaining(q.data.remaining);
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Eroare la generare");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const accept = () => {
+    if (preview) {
+      onGenerated(preview.synopsis);
+      toast.success(`Sinopsis salvat (${preview.word_count} cuvinte)`);
+    }
+    setPreview(null);
+  };
+
+  return (
+    <>
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        disabled={busy}
+        onClick={generate}
+        className="border-violet-500/40 text-violet-300 hover:bg-violet-500/10"
+        data-testid="ai-generate-synopsis-btn"
+      >
+        <Sparkles size={12} className="mr-1" />
+        {busy ? "Generez…" : "Generează cu AI"}
+      </Button>
+
+      {preview && (
+        <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4" onClick={() => setPreview(null)}>
+          <div className="bg-zinc-900 border border-zinc-700 rounded-lg max-w-2xl w-full p-5 space-y-4" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-bold flex items-center gap-2">
+                <Sparkles size={18} className="text-violet-400" /> Sinopsis generat
+              </h3>
+              <span className="text-xs text-zinc-500">{preview.word_count} cuvinte · {preview.model}</span>
+            </div>
+            <p className="text-sm text-zinc-200 whitespace-pre-wrap leading-relaxed bg-zinc-950 rounded p-3 border border-zinc-800 max-h-80 overflow-y-auto" data-testid="ai-synopsis-preview">
+              {preview.synopsis}
+            </p>
+            {remaining !== null && (
+              <p className="text-xs text-zinc-500">Cotă zilnică rămasă: <strong>{remaining}</strong> generări</p>
+            )}
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setPreview(null)} data-testid="ai-synopsis-discard">
+                <X size={14} className="mr-1" /> Anulează
+              </Button>
+              <Button variant="outline" onClick={generate} disabled={busy} data-testid="ai-synopsis-regenerate">
+                <Sparkles size={14} className="mr-1" /> Regenerează
+              </Button>
+              <Button onClick={accept} className="pro-gradient text-white border-0" data-testid="ai-synopsis-accept">
+                <Check size={14} className="mr-1" /> Acceptă & Salvează
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
