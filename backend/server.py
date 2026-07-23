@@ -320,18 +320,27 @@ async def find_video_by_id_or_slug(key: str) -> Optional[dict]:
          We look up by `legacy_slug` regex when the key ends in `.html`.
       6. Prefix lookup on `slug` — handles old shared links that used a
          truncated version of the slug from before this release.
+
+    Post-processing: `synopsis` field is normalized to `""` for legacy
+    docs that predate the AI Synopsis feature so callers never have to
+    check for its presence.
     """
+    def _normalize(doc):
+        if doc is not None and "synopsis" not in doc:
+            doc["synopsis"] = ""
+        return doc
+
     if not key:
         return None
     v = await db.videos.find_one({"id": key}, {"_id": 0})
     if v:
-        return v
+        return _normalize(v)
     v = await db.videos.find_one({"slug": key}, {"_id": 0})
     if v:
-        return v
+        return _normalize(v)
     v = await db.videos.find_one({"legacy_slug": key}, {"_id": 0})
     if v:
-        return v
+        return _normalize(v)
 
     # ---- UUID-suffix fallback (the most robust path) -------------------
     m = re.search(r"-([0-9a-fA-F]{6})$", key)
@@ -345,7 +354,7 @@ async def find_video_by_id_or_slug(key: str) -> Optional[dict]:
             {"_id": 0},
         )
         if v:
-            return v
+            return _normalize(v)
 
     # ---- Legacy `_<rand>.html` URLs ------------------------------------
     if key.endswith(".html"):
@@ -357,7 +366,7 @@ async def find_video_by_id_or_slug(key: str) -> Optional[dict]:
             {"_id": 0},
         )
         if v:
-            return v
+            return _normalize(v)
 
     # ---- Slug-prefix fallback ------------------------------------------
     if len(key) > 10:
@@ -365,7 +374,7 @@ async def find_video_by_id_or_slug(key: str) -> Optional[dict]:
             {"slug": {"$regex": f"^{re.escape(key)}"}}, {"_id": 0},
         )
         if v:
-            return v
+            return _normalize(v)
     return None
 
 
@@ -2476,14 +2485,23 @@ async def add_subtitle(
     else:
         with open(orig_path, "wb") as f:
             shutil.copyfileobj(file.file, f)
-        proc = await asyncio.create_subprocess_exec(
-            "ffmpeg", "-y", "-i", str(orig_path), str(vtt_path),
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.DEVNULL,
-        )
-        await proc.wait()
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "ffmpeg", "-y", "-i", str(orig_path), str(vtt_path),
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            await proc.wait()
+        except FileNotFoundError as e:
+            raise HTTPException(
+                500,
+                "Subtitle conversion needs ffmpeg but it is not installed on the server. "
+                "Install ffmpeg (`apt install ffmpeg` inside the backend container) or upload .vtt directly.",
+            ) from e
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(500, f"Subtitle conversion failed: {type(e).__name__}: {str(e)[:200]}") from e
         if not vtt_path.exists():
-            raise HTTPException(500, "Subtitle conversion failed")
+            raise HTTPException(500, "Subtitle conversion produced no output (ffmpeg likely rejected the file). Try re-encoding or uploading .vtt directly.")
         rel_vtt = f"subtitles/{vtt_name}"
         rel_orig = f"subtitles/{orig_name}"
     settings = await get_settings()
