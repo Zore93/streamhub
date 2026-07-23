@@ -104,8 +104,14 @@ export default function EditVideo() {
   }
 
   const save = async (patch) => {
-    const { data } = await api.patch(`/videos/${id}`, patch);
-    setV(data); toast.success("Saved");
+    try {
+      const { data } = await api.patch(`/videos/${id}`, patch);
+      setV(data);
+      toast.success("Saved");
+    } catch (e) {
+      const msg = e?.response?.data?.detail || e.message || "Save failed";
+      toast.error(`Save failed: ${msg}`);
+    }
   };
 
   const effectiveLang = () => {
@@ -139,8 +145,13 @@ export default function EditVideo() {
 
   const delSubtitle = async (sid) => {
     if (!window.confirm("Delete this subtitle?")) return;
-    await api.delete(`/videos/${id}/subtitles/${sid}`);
-    await load();
+    try {
+      await api.delete(`/videos/${id}/subtitles/${sid}`);
+      await load();
+      toast.success("Subtitle deleted");
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || e.message || "Delete failed");
+    }
   };
 
   const setDefaultSub = async (sid) => {
@@ -148,10 +159,14 @@ export default function EditVideo() {
     const subs = v.subtitles || [];
     const idx = subs.findIndex((s) => s.id === sid);
     if (idx <= 0) return;
-    const reordered = [subs[idx], ...subs.filter((_, i) => i !== idx)];
-    await api.patch(`/videos/${id}`, { subtitles: reordered });
-    await load();
-    toast.success("Default subtitle updated");
+    try {
+      const reordered = [subs[idx], ...subs.filter((_, i) => i !== idx)];
+      await api.patch(`/videos/${id}`, { subtitles: reordered });
+      await load();
+      toast.success("Default subtitle updated");
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || e.message || "Update failed");
+    }
   };
 
   const reextractEmbedded = async () => {
