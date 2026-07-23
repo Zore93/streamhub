@@ -1,0 +1,59 @@
+{
+  "verdict": "not_fixed",
+  "user_reported_bug": "Now I get this when I try to click on another thumbnail: 'Save failed: Request failed with status code 500' and when I try to upload a subtitle I get 'Upload failed'. All of this happened after we added the sinopsis option.",
+  "summary": "No relevant testing skill found. Focused backend/API verification via preview ingress with admin credentials and a seeded migrated-style video missing synopsis: thumbnail PATCH now succeeds, but subtitle .srt upload still returns 500, old docs still omit synopsis in GET, and invalid synopsis type returns FastAPI 422 rather than the requested 'Update failed:' diagnostic.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "POST /api/videos/{video_id}/subtitles",
+        "issue": "Valid .srt upload returned 500/Internal Server Error. Backend logs show FileNotFoundError: [Errno 2] No such file or directory: 'ffmpeg' at add_subtitle line 2479, so the user-visible subtitle upload failure still reproduces in preview.",
+        "priority": "CRITICAL"
+      },
+      {
+        "endpoint": "GET /api/videos/{video_id}",
+        "issue": "Migrated/old video documents without synopsis serialize without a synopsis key instead of defaulting to an empty string, so the new field is not normalized for legacy data.",
+        "priority": "HIGH"
+      },
+      {
+        "endpoint": "PATCH /api/videos/{video_id}",
+        "issue": "Invalid body {synopsis: object} returns 422 Pydantic validation detail before entering update_video; it does not include the requested 'Update failed:' prefix + exception type diagnostic.",
+        "priority": "HIGH"
+      }
+    ],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/test_reports/bug_verification_thumbnail_subtitle.py",
+    "/app/test_reports/bug_verification_13.json",
+    "/app/test_reports/iteration_13.json"
+  ],
+  "action_items": [
+    "Handle missing ffmpeg/conversion failures in POST /videos/{id}/subtitles with a clear JSON HTTPException detail, and ensure ffmpeg is installed in the runtime image if .srt/.ass conversion is required.",
+    "Normalize legacy video docs in GET/PATCH responses so synopsis is always present as an empty string when missing.",
+    "If 'Update failed:' diagnostics are required for invalid body types, add a validation exception handler or adjust request parsing; endpoint try/except cannot catch FastAPI/Pydantic validation errors that occur before the handler runs."
+  ],
+  "critical_code_review_comments": [
+    "update_video only wraps code after FastAPI has already validated VideoUpdateReq, so malformed synopsis types will never be converted to the new 500 'Update failed:' response by that try/except.",
+    "get_video returns the raw MongoDB dict from find_video_by_id_or_slug; Pydantic Video defaults are not applied to old records missing synopsis.",
+    "add_subtitle calls asyncio.create_subprocess_exec('ffmpeg', ...) outside a try/except; when ffmpeg is missing the API returns a non-JSON 500 and the frontend falls back to generic 'Upload failed'."
+  ],
+  "updated_files": [
+    "/app/test_reports/bug_verification_thumbnail_subtitle.py",
+    "/app/test_reports/bug_verification_13.json",
+    "/app/test_reports/iteration_13.json"
+  ],
+  "success_rate": {
+    "backend": "62.5%",
+    "frontend": "not tested (backend-only request)"
+  },
+  "seed_data_creation": "Created and cleaned up one MongoDB video document with id prefix qa-migrated-no-synopsis-* and no synopsis field; also cleaned generated qa subtitle files where possible.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run /app/test_reports/bug_verification_thumbnail_subtitle.py after fixes. Current pass/fail: admin login pass, migrated seed pass, GET synopsis default fail, PATCH thumbnail pass, invalid synopsis diagnostic fail (422), .srt subtitle upload fail (500 due missing ffmpeg), DELETE existing subtitle pass via seeded subtitle, DELETE unknown subtitle pass.",
+  "rca_of_the_issue": "The thumbnail save regression is partially fixed for normal thumbnail_url PATCH. Remaining failures: subtitle upload still produces the user's generic 'Upload failed' because ffmpeg is absent and add_subtitle does not catch FileNotFoundError; legacy docs missing synopsis are returned raw without default; invalid request diagnostics are not produced by update_video because Pydantic validation happens before the endpoint try/except. No APIs were MOCKED."
+}

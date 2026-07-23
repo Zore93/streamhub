@@ -1404,38 +1404,45 @@ async def admin_cleanup_pending_uploads(
 async def update_video(
     video_id: str, req: VideoUpdateReq, user: dict = Depends(require_user)
 ):
-    v = await find_video_by_id_or_slug(video_id)
-    if not v:
-        raise HTTPException(404, "Not found")
-    vid = v["id"]
-    if v["uploader_id"] != user["id"] and user.get("role") != "admin":
-        raise HTTPException(403, "Not your video")
-    upd = {k: val for k, val in req.model_dump(exclude_unset=True).items() if val is not None}
-    # Subtitles update is reorder-only: caller may rearrange existing entries
-    # but cannot inject new ones or alter URLs (those go through the dedicated
-    # POST endpoint that performs ffmpeg conversion + storage upload).
-    if "subtitles" in upd:
-        existing_by_id = {s["id"]: s for s in (v.get("subtitles") or [])}
-        rebuilt: list[dict] = []
-        for item in upd["subtitles"]:
-            if not isinstance(item, dict) or "id" not in item:
-                raise HTTPException(400, "Subtitle item missing id")
-            cur = existing_by_id.get(item["id"])
-            if not cur:
-                raise HTTPException(400, f"Unknown subtitle id {item['id']}")
-            rebuilt.append(cur)
-        # Must include every existing subtitle (no deletes via reorder)
-        if {s["id"] for s in rebuilt} != set(existing_by_id):
-            raise HTTPException(400, "Reorder must include all subtitles. Use DELETE to remove.")
-        upd["subtitles"] = rebuilt
-    # Title change triggers slug regeneration (keeps the same trailing UUID
-    # short so external links don't have to update unless title changes a lot).
-    if "title" in upd and upd["title"] and upd["title"] != v.get("title"):
-        upd["slug"] = await build_video_slug(upd["title"], vid)
-    if upd:
-        await db.videos.update_one({"id": vid}, {"$set": upd})
-    v = await db.videos.find_one({"id": vid}, {"_id": 0})
-    return v
+    try:
+        v = await find_video_by_id_or_slug(video_id)
+        if not v:
+            raise HTTPException(404, "Not found")
+        vid = v["id"]
+        if v["uploader_id"] != user["id"] and user.get("role") != "admin":
+            raise HTTPException(403, "Not your video")
+        upd = {k: val for k, val in req.model_dump(exclude_unset=True).items() if val is not None}
+        # Subtitles update is reorder-only: caller may rearrange existing entries
+        # but cannot inject new ones or alter URLs (those go through the dedicated
+        # POST endpoint that performs ffmpeg conversion + storage upload).
+        if "subtitles" in upd:
+            existing_by_id = {s["id"]: s for s in (v.get("subtitles") or [])}
+            rebuilt: list[dict] = []
+            for item in upd["subtitles"]:
+                if not isinstance(item, dict) or "id" not in item:
+                    raise HTTPException(400, "Subtitle item missing id")
+                cur = existing_by_id.get(item["id"])
+                if not cur:
+                    raise HTTPException(400, f"Unknown subtitle id {item['id']}")
+                rebuilt.append(cur)
+            # Must include every existing subtitle (no deletes via reorder)
+            if {s["id"] for s in rebuilt} != set(existing_by_id):
+                raise HTTPException(400, "Reorder must include all subtitles. Use DELETE to remove.")
+            upd["subtitles"] = rebuilt
+        # Title change triggers slug regeneration (keeps the same trailing UUID
+        # short so external links don't have to update unless title changes a lot).
+        if "title" in upd and upd["title"] and upd["title"] != v.get("title"):
+            upd["slug"] = await build_video_slug(upd["title"], vid)
+        if upd:
+            await db.videos.update_one({"id": vid}, {"$set": upd})
+        v = await db.videos.find_one({"id": vid}, {"_id": 0})
+        return v
+    except HTTPException:
+        raise
+    except Exception as e:  # noqa: BLE001
+        import traceback
+        logger.error("PATCH /videos/%s failed: %s\n%s", video_id, e, traceback.format_exc())
+        raise HTTPException(500, f"Update failed: {type(e).__name__}: {str(e)[:300]}")
 
 
 @api.delete("/videos/{video_id}")
