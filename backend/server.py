@@ -1444,7 +1444,9 @@ async def update_video(
             upd["slug"] = await build_video_slug(upd["title"], vid)
         if upd:
             await db.videos.update_one({"id": vid}, {"$set": upd})
-        v = await db.videos.find_one({"id": vid}, {"_id": 0})
+        # Use the normalizing helper so legacy docs without `synopsis` still
+        # get the field defaulted to "" in the PATCH response.
+        v = await find_video_by_id_or_slug(vid)
         return v
     except HTTPException:
         raise
