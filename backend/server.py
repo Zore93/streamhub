@@ -1418,7 +1418,12 @@ async def update_video(
         if not v:
             raise HTTPException(404, "Not found")
         vid = v["id"]
-        if v["uploader_id"] != user["id"] and user.get("role") != "admin":
+        uploader_id = v.get("uploader_id") or ""
+        if uploader_id and uploader_id != user["id"] and user.get("role") != "admin":
+            raise HTTPException(403, "Not your video")
+        # Legacy migrated docs may have no uploader_id at all — allow admins
+        # to edit them (non-admins can't reach this point).
+        if not uploader_id and user.get("role") != "admin":
             raise HTTPException(403, "Not your video")
         upd = {k: val for k, val in req.model_dump(exclude_unset=True).items() if val is not None}
         # Subtitles update is reorder-only: caller may rearrange existing entries

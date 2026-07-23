@@ -1,0 +1,47 @@
+{
+  "verdict": "not_fixed",
+  "user_reported_bug": "When I try to change thumbnail for an already-uploaded video I get: 'Save failed: Update failed: KeyError: uploader_id'. Also subtitle upload still fails with the same error as before.",
+  "summary": "No relevant testing skill found. Focused backend verification seeded a legacy MongoDB video without uploader_id plus a normal owned video, then tested PATCH ownership scenarios and subtitle upload. The PATCH thumbnail/update path is fixed for the requested admin/non-admin/owner cases, but subtitle upload to a legacy video still returns HTTP 500 with KeyError: uploader_id, so the full user-reported bug is not fixed.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "POST /api/videos/{video_id}/subtitles",
+        "issue": "Legacy video docs missing uploader_id still crash in add_subtitle at /app/backend/server.py:2458 because it uses v[\"uploader_id\"] unconditionally. Reproduced as admin with a .vtt upload: HTTP 500 Internal Server Error; backend log shows KeyError: 'uploader_id'.",
+        "priority": "HIGH"
+      }
+    ],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/test_reports/bug_verification_16.py",
+    "/app/test_reports/bug_verification_16.json",
+    "/app/test_reports/iteration_16.json"
+  ],
+  "action_items": [
+    "Apply the same legacy-safe ownership guard used in PATCH /api/videos/{id} to POST /api/videos/{id}/subtitles: use v.get('uploader_id') or '' and allow admin fallback while denying non-admin legacy edits.",
+    "Consider auditing related video endpoints that still use v[\"uploader_id\"] directly (for example DELETE video/subtitle) for the same migrated-document crash pattern."
+  ],
+  "critical_code_review_comments": [
+    "PATCH /api/videos/{id} now uses v.get('uploader_id') and passed all five requested PATCH cases, including normalized synopsis on legacy docs.",
+    "Subtitle upload was not updated: /app/backend/server.py line 2458 still reads v[\"uploader_id\"] unconditionally, causing the exact remaining user symptom on legacy docs."
+  ],
+  "updated_files": [
+    "/app/test_reports/bug_verification_16.py",
+    "/app/test_reports/bug_verification_16.json",
+    "/app/test_reports/iteration_16.json"
+  ],
+  "success_rate": {
+    "backend": "86%",
+    "frontend": "N/A - backend only per request"
+  },
+  "seed_data_creation": "Created two temporary users and two temporary video docs: one legacy video missing uploader_id and synopsis, one normal video with uploader_id. All seeded docs/users were deleted in script cleanup.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run /app/test_reports/bug_verification_16.py after fixing add_subtitle. Expected all checks to pass, especially POST .vtt subtitle to a legacy missing-uploader_id video as admin should no longer return 500/KeyError.",
+  "rca_of_the_issue": "The thumbnail/PATCH code path was fixed, but the subtitle upload endpoint retains the original unsafe ownership check. Repro: seed a video document without uploader_id, login as admin, POST multipart .vtt to /api/videos/{legacy_id}/subtitles; response is 500 and backend log points to KeyError at server.py:2458."
+}
