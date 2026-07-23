@@ -1,0 +1,39 @@
+{
+  "verdict": "fixed",
+  "user_reported_bug": "When I try to change thumbnail for an already-uploaded video I get: 'Save failed: Update failed: KeyError: uploader_id'. Also subtitle upload still fails with the same error as before.",
+  "summary": "No relevant testing skill found. Focused backend verification seeded legacy MongoDB video documents without uploader_id plus a normal owned video, then verified PATCH thumbnail updates, multipart .vtt subtitle upload, video deletion, subtitle deletion, and admin/non-admin ownership behavior. All tested legacy-safe ownership paths now return the expected 200/403 responses with no KeyError: uploader_id.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/test_reports/bug_verification_17.py",
+    "/app/test_reports/bug_verification_17.json",
+    "/app/test_reports/iteration_17.json"
+  ],
+  "action_items": [
+    "No fix action needed for the tested reported flow."
+  ],
+  "critical_code_review_comments": [
+    "Verified /app/backend/server.py uses legacy-safe uploader ownership checks in PATCH /api/videos/{id}, POST /api/videos/{id}/subtitles, DELETE /api/videos/{id}, and DELETE /api/videos/{id}/subtitles/{sid}. Runtime API tests confirmed legacy docs without uploader_id are admin-editable/deletable and non-admin denied without 500s."
+  ],
+  "updated_files": [
+    "/app/test_reports/bug_verification_17.py",
+    "/app/test_reports/bug_verification_17.json",
+    "/app/test_reports/iteration_17.json"
+  ],
+  "success_rate": {
+    "backend": "100%",
+    "frontend": "N/A - backend only per request"
+  },
+  "seed_data_creation": "Created temporary JWT test users, five legacy video docs missing uploader_id, one normal owner video doc, and one temporary .vtt subtitle file. The test script cleaned up seeded MongoDB docs/users and generated subtitle files after completion.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Run /app/test_reports/bug_verification_17.py for the focused regression suite. It covers the previous iteration 16 scenarios plus DELETE legacy video and DELETE legacy subtitle checks.",
+  "rca_of_the_issue": "Prior crashes came from direct v[\"uploader_id\"] access on migrated legacy video documents. The fixed code now treats missing uploader_id as legacy/admin-only for the affected endpoints; verified by API responses and database persistence/removal checks."
+}

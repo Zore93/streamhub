@@ -1467,7 +1467,7 @@ async def delete_video(video_id: str, user: dict = Depends(require_user)):
     if not v:
         raise HTTPException(404, "Not found")
     vid = v["id"]
-    if v["uploader_id"] != user["id"] and user.get("role") != "admin":
+    if (v.get("uploader_id") or "") != user["id"] and user.get("role") != "admin":
         raise HTTPException(403, "Not yours")
     settings = await get_settings()
     # cleanup files (local) - skip http urls (Wasabi)
@@ -2455,7 +2455,11 @@ async def add_subtitle(
     if not v:
         raise HTTPException(404, "Not found")
     vid = v["id"]
-    if v["uploader_id"] != user["id"] and user.get("role") != "admin":
+    uploader_id = v.get("uploader_id") or ""
+    if uploader_id and uploader_id != user["id"] and user.get("role") != "admin":
+        raise HTTPException(403, "Not your video")
+    # Legacy migrated docs may have no uploader_id — admins only.
+    if not uploader_id and user.get("role") != "admin":
         raise HTTPException(403, "Not your video")
     if len(v.get("subtitles", [])) >= 100:
         raise HTTPException(400, "Max 100 subtitles per video")
@@ -2635,7 +2639,7 @@ async def delete_subtitle(video_id: str, sub_id: str, user: dict = Depends(requi
     if not v:
         raise HTTPException(404, "Not found")
     vid = v["id"]
-    if v["uploader_id"] != user["id"] and user.get("role") != "admin":
+    if (v.get("uploader_id") or "") != user["id"] and user.get("role") != "admin":
         raise HTTPException(403, "Not yours")
     subs = v.get("subtitles", [])
     target = next((s for s in subs if s["id"] == sub_id), None)
