@@ -86,6 +86,12 @@ Build a full-stack video-sharing platform inspired by hentairosub.ro with:
   - New `GET /api/og/category/{slug_or_id}` endpoint renders SSR HTML with proper `<title>Category — SiteTitle</title>`, canonical, up-to-40 recent videos in that category (skips `<img>` when thumbnail empty; skips `og:image` meta when site logo empty).
   - `crawler_og_middleware` extended to dispatch `/category/:slug`, `/videos/category/:slug` (legacy), `/popular`, `/discover`, `/shorts`, `/all-episodes`, `/shop` to appropriate SSR renderers when Googlebot / social crawlers visit.
   - Tests: `/app/backend/tests/test_iteration10_seo_crawler.py` (11/11 pass).
+- ✅ **VIP subscription tier (Feb 2026)** — separate premium tier alongside PRO. Access hierarchy: VIP sees Free+PRO+VIP; PRO sees Free+PRO; Free sees Free. Legacy videos untouched (backend `$or` query treats packages missing `tier` field as `pro`).
+  - **Model**: `Package.tier` ("pro"|"vip"); `User.is_vip`, `vip_package_id`, `vip_expires_at`; `Video.access_tier` accepts "vip".
+  - **Backend**: `/api/packages?tier=pro|vip` filter, admin `POST /api/packages` accepts `tier`, `POST /api/admin/users/{id}/grant-vip` & `revoke-vip` mirror PRO endpoints, VIP expiry auto-check on login (mirrors PRO), Stripe checkout/webhook credits `is_vip` when package `tier=="vip"`, `get_video` enforces hierarchy (VIP super-set of PRO), `PATCH /videos/{id}` validates `access_tier ∈ {free,pro,vip}`.
+  - **Frontend**: `/vip` page with gold `vip-gradient-text` title lists tier=vip packages via Stripe; Admin → new "Packages VIP" tab (`tab-packages-vip`); EditVideo dropdown gains "VIP only" option; `VideoCard` renders gold `vip-badge-<id>` top-right; Watch shows "Conținut VIP" locked overlay + gold `watch-vip-badge`; LeftSidebar has `nav-vip` Crown link.
+  - **CSS**: new `.vip-gradient`, `.vip-gradient-text`, `.vip-border-gradient` (gold `#fde047 → #f59e0b → #b45309`).
+  - Tests: `/app/backend/tests/test_iteration18_vip.py` (20/20 pass).
 
 ## Roadmap / Future improvements
 - P2 — Multi-language metadata (currently `description` is single string)
