@@ -194,6 +194,32 @@ function VideosTab() {
     }
   };
 
+  const bulkDelete = async () => {
+    if (selected.size === 0) return;
+    if (!window.confirm(
+      `Sigur ștergi ${selected.size} videoclipuri?\n\n` +
+      `Această acțiune este ireversibilă.\n\n` +
+      `Continuă?`
+    )) return;
+    setBulkBusy(true);
+    const ids = Array.from(selected);
+    let ok = 0;
+    let fail = 0;
+    // Fire deletes with limited concurrency to avoid overwhelming the server.
+    const CHUNK = 5;
+    for (let i = 0; i < ids.length; i += CHUNK) {
+      const chunk = ids.slice(i, i + CHUNK);
+      const results = await Promise.allSettled(chunk.map((id) => api.delete(`/videos/${id}`)));
+      results.forEach((r) => (r.status === "fulfilled" ? ok++ : fail++));
+    }
+    setBulkBusy(false);
+    clearSelection();
+    if (fail === 0) toast.success(`✓ ${ok} videoclipuri șterse`);
+    else toast.warning(`${ok}/${ids.length} șterse · ${fail} au eșuat`);
+    // Refresh list
+    load(0, false);
+  };
+
   const hasMore = items.length < total;
   return (
     <div className="mt-6 space-y-3" data-testid="admin-videos">
@@ -262,6 +288,16 @@ function VideosTab() {
               >
                 <Sparkles size={14} className="mr-1" />
                 {bulkBusy ? "Se generează…" : `Generează sinopsis AI (${selected.size})`}
+              </Button>
+              <Button
+                size="sm"
+                variant="destructive"
+                onClick={bulkDelete}
+                disabled={bulkBusy}
+                data-testid="bulk-delete-videos"
+              >
+                <Trash2 size={14} className="mr-1" />
+                {bulkBusy ? "Se procesează…" : `Șterge Videoclipurile Selectate (${selected.size})`}
               </Button>
               <Button size="sm" variant="outline" onClick={clearSelection}>
                 Anulează selecție
