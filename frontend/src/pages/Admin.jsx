@@ -411,42 +411,91 @@ function UsersTab() {
         </div>
       </div>
       {users.map((u) => (
-        <div key={u.id} className="bg-zinc-900 border border-zinc-800 rounded-lg p-3 flex items-center justify-between gap-3 flex-wrap">
-          <div className="flex-1 min-w-0">
-            <div className="font-semibold truncate">@{u.username} <span className="text-xs text-zinc-500">{u.email}</span></div>
-            <div className="text-xs text-zinc-500">role: {u.role} · pro: {String(!!u.is_pro)} · vip: {String(!!u.is_vip)} · banned: {u.banned_until ? u.banned_until.slice(0, 16) : "no"} · chat-ban: {u.chat_banned_until ? u.chat_banned_until.slice(0, 16) : "no"}</div>
+        <div key={u.id} className="bg-zinc-900 border border-zinc-800 rounded-lg p-4">
+          {/* Header: identity + status chips */}
+          <div className="flex items-start justify-between gap-3 mb-3 flex-wrap">
+            <div className="min-w-0">
+              <div className="font-semibold truncate">
+                @{u.username} <span className="text-xs text-zinc-500">{u.email}</span>
+              </div>
+              <div className="flex flex-wrap gap-1.5 mt-1.5 text-[11px]">
+                <span className="px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300">role: {u.role}</span>
+                <span className={`px-1.5 py-0.5 rounded ${u.is_pro ? "bg-rose-500/20 text-rose-300 border border-rose-500/30" : "bg-zinc-800 text-zinc-500"}`}>
+                  {u.is_pro ? "PRO active" : "not PRO"}
+                </span>
+                <span className={`px-1.5 py-0.5 rounded ${u.is_vip ? "bg-amber-500/20 text-amber-300 border border-amber-500/40" : "bg-zinc-800 text-zinc-500"}`}>
+                  {u.is_vip ? "VIP active" : "not VIP"}
+                </span>
+                {u.banned_until && (
+                  <span className="px-1.5 py-0.5 rounded bg-red-900/40 text-red-300 border border-red-800">
+                    banned → {u.banned_until.slice(0, 16)}
+                  </span>
+                )}
+                {u.chat_banned_until && (
+                  <span className="px-1.5 py-0.5 rounded bg-orange-900/40 text-orange-300 border border-orange-800">
+                    chat-ban → {u.chat_banned_until.slice(0, 16)}
+                  </span>
+                )}
+              </div>
+            </div>
+            <Button size="sm" variant="outline" onClick={() => setRole(u, u.role === "admin" ? "user" : "admin")} className="shrink-0">
+              {u.role === "admin" ? "Demote" : "Promote"}
+            </Button>
           </div>
-          <Select value={banDur[u.id] || "1day"} onValueChange={(v) => setBanDur({ ...banDur, [u.id]: v })}>
-            <SelectTrigger className="w-32 bg-zinc-950 border-zinc-800"><SelectValue /></SelectTrigger>
-            <SelectContent>{BAN_OPTIONS.map((o) => <SelectItem key={o.v} value={o.v}>{o.l}</SelectItem>)}</SelectContent>
-          </Select>
-          {banDur[u.id] === "custom" && (
-            <Input type="number" placeholder="Days" value={banDays[u.id] || ""} onChange={(e) => setBanDays({ ...banDays, [u.id]: e.target.value })} className="w-20 bg-zinc-950 border-zinc-800" />
-          )}
-          <Button size="sm" variant="destructive" onClick={() => ban(u)} data-testid={`ban-${u.id}`}>Ban</Button>
-          <Button size="sm" variant="outline" onClick={() => unban(u)}>Unban</Button>
-          <Button size="sm" variant="outline" onClick={() => setRole(u, u.role === "admin" ? "user" : "admin")}>{u.role === "admin" ? "Demote" : "Promote"}</Button>
-          <div className="flex items-center gap-1 ml-2">
-            <Select value={proDur[u.id] || "1month"} onValueChange={(v) => setProDur({ ...proDur, [u.id]: v })}>
-              <SelectTrigger className="w-32 bg-zinc-950 border-zinc-800"><SelectValue /></SelectTrigger>
-              <SelectContent>{BAN_OPTIONS.map((o) => <SelectItem key={o.v} value={o.v}>{o.l}</SelectItem>)}</SelectContent>
-            </Select>
-            {proDur[u.id] === "custom" && (
-              <Input type="number" placeholder="Days" value={proDays[u.id] || ""} onChange={(e) => setProDays({ ...proDays, [u.id]: e.target.value })} className="w-20 bg-zinc-950 border-zinc-800" />
-            )}
-            <Button size="sm" className="pro-gradient text-white border-0" onClick={() => grantPro(u)} data-testid={`grant-pro-${u.id}`}>Grant PRO</Button>
-            {u.is_pro && <Button size="sm" variant="outline" onClick={() => revokePro(u)} data-testid={`revoke-pro-${u.id}`}>Revoke</Button>}
-          </div>
-          <div className="flex items-center gap-1 ml-2">
-            <Select value={vipDur[u.id] || "1month"} onValueChange={(v) => setVipDur({ ...vipDur, [u.id]: v })}>
-              <SelectTrigger className="w-32 bg-zinc-950 border-zinc-800" data-testid={`vip-dur-${u.id}`}><SelectValue /></SelectTrigger>
-              <SelectContent>{BAN_OPTIONS.map((o) => <SelectItem key={o.v} value={o.v}>{o.l}</SelectItem>)}</SelectContent>
-            </Select>
-            {vipDur[u.id] === "custom" && (
-              <Input type="number" placeholder="Days" value={vipDays[u.id] || ""} onChange={(e) => setVipDays({ ...vipDays, [u.id]: e.target.value })} className="w-20 bg-zinc-950 border-zinc-800" />
-            )}
-            <Button size="sm" className="vip-gradient text-black font-bold border-0" onClick={() => grantVip(u)} data-testid={`grant-vip-${u.id}`}>Grant VIP</Button>
-            {u.is_vip && <Button size="sm" variant="outline" onClick={() => revokeVip(u)} data-testid={`revoke-vip-${u.id}`}>Revoke VIP</Button>}
+
+          {/* Actions grid: Ban | PRO | VIP */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            {/* Ban block */}
+            <div className="bg-zinc-950/60 border border-zinc-800 rounded-md p-2.5">
+              <div className="text-[10px] uppercase tracking-wider text-zinc-500 mb-2">Ban</div>
+              <div className="flex flex-wrap items-center gap-1.5">
+                <Select value={banDur[u.id] || "1day"} onValueChange={(v) => setBanDur({ ...banDur, [u.id]: v })}>
+                  <SelectTrigger className="w-28 h-8 bg-zinc-950 border-zinc-800 text-xs"><SelectValue /></SelectTrigger>
+                  <SelectContent>{BAN_OPTIONS.map((o) => <SelectItem key={o.v} value={o.v}>{o.l}</SelectItem>)}</SelectContent>
+                </Select>
+                {banDur[u.id] === "custom" && (
+                  <Input type="number" placeholder="Days" value={banDays[u.id] || ""} onChange={(e) => setBanDays({ ...banDays, [u.id]: e.target.value })} className="w-16 h-8 bg-zinc-950 border-zinc-800 text-xs" />
+                )}
+                <Button size="sm" variant="destructive" className="h-8" onClick={() => ban(u)} data-testid={`ban-${u.id}`}>Ban</Button>
+                <Button size="sm" variant="outline" className="h-8" onClick={() => unban(u)}>Unban</Button>
+              </div>
+            </div>
+
+            {/* PRO block */}
+            <div className="bg-rose-950/20 border border-rose-900/40 rounded-md p-2.5">
+              <div className="text-[10px] uppercase tracking-wider text-rose-300 mb-2 flex items-center gap-1">
+                <Crown size={10} /> PRO
+              </div>
+              <div className="flex flex-wrap items-center gap-1.5">
+                <Select value={proDur[u.id] || "1month"} onValueChange={(v) => setProDur({ ...proDur, [u.id]: v })}>
+                  <SelectTrigger className="w-28 h-8 bg-zinc-950 border-zinc-800 text-xs"><SelectValue /></SelectTrigger>
+                  <SelectContent>{BAN_OPTIONS.map((o) => <SelectItem key={o.v} value={o.v}>{o.l}</SelectItem>)}</SelectContent>
+                </Select>
+                {proDur[u.id] === "custom" && (
+                  <Input type="number" placeholder="Days" value={proDays[u.id] || ""} onChange={(e) => setProDays({ ...proDays, [u.id]: e.target.value })} className="w-16 h-8 bg-zinc-950 border-zinc-800 text-xs" />
+                )}
+                <Button size="sm" className="h-8 pro-gradient text-white border-0" onClick={() => grantPro(u)} data-testid={`grant-pro-${u.id}`}>Grant</Button>
+                {u.is_pro && <Button size="sm" variant="outline" className="h-8" onClick={() => revokePro(u)} data-testid={`revoke-pro-${u.id}`}>Revoke</Button>}
+              </div>
+            </div>
+
+            {/* VIP block */}
+            <div className="bg-amber-950/20 border border-amber-900/40 rounded-md p-2.5">
+              <div className="text-[10px] uppercase tracking-wider text-amber-300 mb-2 flex items-center gap-1">
+                <Crown size={10} /> VIP
+              </div>
+              <div className="flex flex-wrap items-center gap-1.5">
+                <Select value={vipDur[u.id] || "1month"} onValueChange={(v) => setVipDur({ ...vipDur, [u.id]: v })}>
+                  <SelectTrigger className="w-28 h-8 bg-zinc-950 border-zinc-800 text-xs" data-testid={`vip-dur-${u.id}`}><SelectValue /></SelectTrigger>
+                  <SelectContent>{BAN_OPTIONS.map((o) => <SelectItem key={o.v} value={o.v}>{o.l}</SelectItem>)}</SelectContent>
+                </Select>
+                {vipDur[u.id] === "custom" && (
+                  <Input type="number" placeholder="Days" value={vipDays[u.id] || ""} onChange={(e) => setVipDays({ ...vipDays, [u.id]: e.target.value })} className="w-16 h-8 bg-zinc-950 border-zinc-800 text-xs" />
+                )}
+                <Button size="sm" className="h-8 vip-gradient text-black font-bold border-0" onClick={() => grantVip(u)} data-testid={`grant-vip-${u.id}`}>Grant</Button>
+                {u.is_vip && <Button size="sm" variant="outline" className="h-8" onClick={() => revokeVip(u)} data-testid={`revoke-vip-${u.id}`}>Revoke</Button>}
+              </div>
+            </div>
           </div>
         </div>
       ))}
