@@ -139,7 +139,7 @@ function RightSidebarBody({ user, logout, t, pkgs, chatEnabled, siteCfg, recomme
       )}
 
       {/* PRO CTA */}
-      {!user?.is_pro && (
+      {!user?.is_pro && !user?.is_vip && (
         <Link to="/pro" data-testid="pro-cta">
           <div className="pro-border-gradient rounded-xl p-5 mb-4 hover:scale-[1.02] transition-transform">
             <div className="flex items-center gap-2 mb-2">
@@ -148,6 +148,22 @@ function RightSidebarBody({ user, logout, t, pkgs, chatEnabled, siteCfg, recomme
             </div>
             <p className="text-sm text-zinc-400 mb-3">{t("right.proSubtitle")}</p>
             <Button className="w-full pro-gradient text-white hover:opacity-90 border-0" data-testid="pro-upgrade-btn">
+              {t("right.upgradeNow")}
+            </Button>
+          </div>
+        </Link>
+      )}
+
+      {/* VIP CTA — separate card, gold theme */}
+      {!user?.is_vip && (
+        <Link to="/vip" data-testid="vip-cta">
+          <div className="vip-border-gradient rounded-xl p-5 mb-4 hover:scale-[1.02] transition-transform">
+            <div className="flex items-center gap-2 mb-2">
+              <Crown className="vip-gradient-text" size={18} />
+              <span className="font-heading font-bold text-zinc-50">{t("right.vipTitle")}</span>
+            </div>
+            <p className="text-sm text-zinc-400 mb-3">{t("right.vipSubtitle")}</p>
+            <Button className="w-full vip-gradient text-black font-bold hover:opacity-90 border-0" data-testid="vip-upgrade-btn">
               {t("right.upgradeNow")}
             </Button>
           </div>

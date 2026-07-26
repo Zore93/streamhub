@@ -338,6 +338,8 @@ function UsersTab() {
   const [banDays, setBanDays] = useState({});
   const [proDur, setProDur] = useState({});
   const [proDays, setProDays] = useState({});
+  const [vipDur, setVipDur] = useState({});
+  const [vipDays, setVipDays] = useState({});
   const PAGE = 50;
 
   useEffect(() => {
@@ -384,6 +386,14 @@ function UsersTab() {
     reload();
   };
   const revokePro = async (u) => { await api.post(`/admin/users/${u.id}/revoke-pro`); reload(); };
+  const grantVip = async (u) => {
+    const duration = vipDur[u.id] || "1month";
+    const body = { duration, custom_days: parseInt(vipDays[u.id] || 1) };
+    await api.post(`/admin/users/${u.id}/grant-vip`, body);
+    toast.success("VIP granted");
+    reload();
+  };
+  const revokeVip = async (u) => { await api.post(`/admin/users/${u.id}/revoke-vip`); reload(); };
 
   const hasMore = users.length < total;
   return (
@@ -404,7 +414,7 @@ function UsersTab() {
         <div key={u.id} className="bg-zinc-900 border border-zinc-800 rounded-lg p-3 flex items-center justify-between gap-3 flex-wrap">
           <div className="flex-1 min-w-0">
             <div className="font-semibold truncate">@{u.username} <span className="text-xs text-zinc-500">{u.email}</span></div>
-            <div className="text-xs text-zinc-500">role: {u.role} · pro: {String(!!u.is_pro)} · banned: {u.banned_until ? u.banned_until.slice(0, 16) : "no"} · chat-ban: {u.chat_banned_until ? u.chat_banned_until.slice(0, 16) : "no"}</div>
+            <div className="text-xs text-zinc-500">role: {u.role} · pro: {String(!!u.is_pro)} · vip: {String(!!u.is_vip)} · banned: {u.banned_until ? u.banned_until.slice(0, 16) : "no"} · chat-ban: {u.chat_banned_until ? u.chat_banned_until.slice(0, 16) : "no"}</div>
           </div>
           <Select value={banDur[u.id] || "1day"} onValueChange={(v) => setBanDur({ ...banDur, [u.id]: v })}>
             <SelectTrigger className="w-32 bg-zinc-950 border-zinc-800"><SelectValue /></SelectTrigger>
@@ -426,6 +436,17 @@ function UsersTab() {
             )}
             <Button size="sm" className="pro-gradient text-white border-0" onClick={() => grantPro(u)} data-testid={`grant-pro-${u.id}`}>Grant PRO</Button>
             {u.is_pro && <Button size="sm" variant="outline" onClick={() => revokePro(u)} data-testid={`revoke-pro-${u.id}`}>Revoke</Button>}
+          </div>
+          <div className="flex items-center gap-1 ml-2">
+            <Select value={vipDur[u.id] || "1month"} onValueChange={(v) => setVipDur({ ...vipDur, [u.id]: v })}>
+              <SelectTrigger className="w-32 bg-zinc-950 border-zinc-800" data-testid={`vip-dur-${u.id}`}><SelectValue /></SelectTrigger>
+              <SelectContent>{BAN_OPTIONS.map((o) => <SelectItem key={o.v} value={o.v}>{o.l}</SelectItem>)}</SelectContent>
+            </Select>
+            {vipDur[u.id] === "custom" && (
+              <Input type="number" placeholder="Days" value={vipDays[u.id] || ""} onChange={(e) => setVipDays({ ...vipDays, [u.id]: e.target.value })} className="w-20 bg-zinc-950 border-zinc-800" />
+            )}
+            <Button size="sm" className="vip-gradient text-black font-bold border-0" onClick={() => grantVip(u)} data-testid={`grant-vip-${u.id}`}>Grant VIP</Button>
+            {u.is_vip && <Button size="sm" variant="outline" onClick={() => revokeVip(u)} data-testid={`revoke-vip-${u.id}`}>Revoke VIP</Button>}
           </div>
         </div>
       ))}
