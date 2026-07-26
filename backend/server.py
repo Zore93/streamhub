@@ -695,6 +695,14 @@ async def login(req: LoginReq, request: Request):
                 u["is_pro"] = False
         except ValueError:
             pass
+    # Check vip expiry
+    if u.get("is_vip") and u.get("vip_expires_at"):
+        try:
+            if datetime.fromisoformat(u["vip_expires_at"]) < datetime.now(timezone.utc):
+                await db.users.update_one({"id": u["id"]}, {"$set": {"is_vip": False}})
+                u["is_vip"] = False
+        except ValueError:
+            pass
     token = create_token(u["id"])
     _rate_limit_reset(rate_key)
     return {"token": token, "user": await public_user_with_frame(u, include_email=True)}
@@ -867,7 +875,7 @@ async def list_videos(
         filt["is_short"] = True
     elif kind == "video":
         filt["is_short"] = {"$ne": True}
-    if access_tier in ("free", "pro"):
+    if access_tier in ("free", "pro", "vip"):
         filt["access_tier"] = access_tier
     if q:
         # Build an escaped regex so user input doesn't break Mongo
@@ -925,7 +933,7 @@ async def count_videos(
         filt["is_short"] = True
     elif kind == "video":
         filt["is_short"] = {"$ne": True}
-    if access_tier in ("free", "pro"):
+    if access_tier in ("free", "pro", "vip"):
         filt["access_tier"] = access_tier
     if q:
         import re as _re
@@ -943,8 +951,19 @@ async def get_video(video_id: str, request: Request, user: Optional[dict] = Depe
     v = await find_video_by_id_or_slug(video_id)
     if not v:
         raise HTTPException(404, "Not found")
-    if v.get("access_tier") == "pro":
-        if not user or not user.get("is_pro"):
+    tier = v.get("access_tier") or "free"
+    # Access hierarchy:
+    #   free -> everyone
+    #   pro  -> PRO or VIP users
+    #   vip  -> only VIP users
+    if tier in ("pro", "vip"):
+        is_pro = bool(user and user.get("is_pro"))
+        is_vip = bool(user and user.get("is_vip"))
+        if tier == "vip":
+            allowed = is_vip
+        else:  # pro
+            allowed = is_pro or is_vip
+        if not allowed:
             v["locked"] = True
             v["renditions"] = []
             v["subtitles"] = []
@@ -1066,7 +1085,7 @@ async def upload_video(
                 raise HTTPException(413, f"File exceeds {max_mb} MB limit")
             f.write(chunk)
     tags_list = [t.strip() for t in tags.split(",") if t.strip()]
-    if access_tier not in ("free", "pro"):
+    if access_tier not in ("free", "pro", "vip"):
         access_tier = "free"
     v = Video(
         id=vid_id,
@@ -1323,7 +1342,7 @@ async def upload_video_finish(
             tags_list = []
         category_id = payload.get("category_id") or None
         access_tier = payload.get("access_tier") or "free"
-        if access_tier not in ("free", "pro"):
+        if access_tier not in ("free", "pro", "vip"):
             access_tier = "free"
         is_short = bool(payload.get("is_short", False))
 
@@ -1426,6 +1445,9 @@ async def update_video(
         if not uploader_id and user.get("role") != "admin":
             raise HTTPException(403, "Not your video")
         upd = {k: val for k, val in req.model_dump(exclude_unset=True).items() if val is not None}
+        # Validate access_tier if provided
+        if "access_tier" in upd and upd["access_tier"] not in ("free", "pro", "vip"):
+            raise HTTPException(400, "access_tier must be free, pro or vip")
         # Subtitles update is reorder-only: caller may rearrange existing entries
         # but cannot inject new ones or alter URLs (those go through the dedicated
         # POST endpoint that performs ffmpeg conversion + storage upload).
@@ -1620,23 +1642,47 @@ async def delete_comment(comment_id: str, user: dict = Depends(require_user)):
 
 
 # ============ PACKAGES ============
+def _normalize_package(pkg: dict) -> dict:
+    """Backfill `tier="pro"` for legacy packages that predate the VIP split."""
+    if pkg is not None and "tier" not in pkg:
+        pkg["tier"] = "pro"
+    return pkg
+
+
 @api.get("/packages")
-async def list_packages():
-    pks = await db.packages.find({"active": True}, {"_id": 0}).sort("sort_order", 1).to_list(20)
-    return pks
+async def list_packages(tier: Optional[str] = None):
+    filt: dict = {"active": True}
+    if tier in ("pro", "vip"):
+        # Match legacy docs (no `tier` field) as "pro" only.
+        if tier == "pro":
+            filt["$or"] = [{"tier": "pro"}, {"tier": {"$exists": False}}]
+        else:
+            filt["tier"] = "vip"
+    pks = await db.packages.find(filt, {"_id": 0}).sort("sort_order", 1).to_list(20)
+    return [_normalize_package(p) for p in pks]
 
 
 @api.get("/packages/all")
-async def list_all_packages(admin: dict = Depends(require_admin)):
-    pks = await db.packages.find({}, {"_id": 0}).sort("sort_order", 1).to_list(20)
-    return pks
+async def list_all_packages(tier: Optional[str] = None, admin: dict = Depends(require_admin)):
+    filt: dict = {}
+    if tier in ("pro", "vip"):
+        if tier == "pro":
+            filt["$or"] = [{"tier": "pro"}, {"tier": {"$exists": False}}]
+        else:
+            filt["tier"] = "vip"
+    pks = await db.packages.find(filt, {"_id": 0}).sort("sort_order", 1).to_list(20)
+    return [_normalize_package(p) for p in pks]
 
 
 @api.post("/packages")
 async def create_package(payload: dict, admin: dict = Depends(require_admin)):
     count = await db.packages.count_documents({})
-    if count >= 10:
-        raise HTTPException(400, "Max 10 packages allowed")
+    if count >= 20:
+        raise HTTPException(400, "Max 20 packages allowed")
+    tier = (payload.get("tier") or "pro").lower()
+    if tier not in ("pro", "vip"):
+        tier = "pro"
+    payload["tier"] = tier
     p = Package(**payload)
     await db.packages.insert_one(p.model_dump())
     return p.model_dump()
@@ -1644,9 +1690,11 @@ async def create_package(payload: dict, admin: dict = Depends(require_admin)):
 
 @api.patch("/packages/{pkg_id}")
 async def update_package(pkg_id: str, payload: dict, admin: dict = Depends(require_admin)):
+    if "tier" in payload and payload["tier"] not in ("pro", "vip"):
+        raise HTTPException(400, "tier must be pro or vip")
     await db.packages.update_one({"id": pkg_id}, {"$set": payload})
     p = await db.packages.find_one({"id": pkg_id}, {"_id": 0})
-    return p
+    return _normalize_package(p)
 
 
 @api.delete("/packages/{pkg_id}")
@@ -1819,6 +1867,42 @@ async def admin_revoke_pro(user_id: str, admin: dict = Depends(require_admin)):
     return {"ok": True}
 
 
+@api.post("/admin/users/{user_id}/grant-vip")
+async def admin_grant_vip(user_id: str, payload: dict, admin: dict = Depends(require_admin)):
+    """Grant VIP to a user for a chosen duration.
+
+    Body: {duration: "1day|1week|1month|permanent|custom", custom_days?: int, package_id?: str}
+    """
+    duration = (payload.get("duration") or "1month").lower()
+    now = datetime.now(timezone.utc)
+    if duration == "permanent":
+        expires_iso = "permanent"
+    elif duration == "1day":
+        expires_iso = (now + timedelta(days=1)).isoformat()
+    elif duration == "1week":
+        expires_iso = (now + timedelta(days=7)).isoformat()
+    elif duration == "1month":
+        expires_iso = (now + timedelta(days=30)).isoformat()
+    elif duration == "custom":
+        expires_iso = (now + timedelta(days=int(payload.get("custom_days") or 1))).isoformat()
+    else:
+        raise HTTPException(400, "Invalid duration")
+    upd = {"is_vip": True, "vip_expires_at": expires_iso}
+    if payload.get("package_id"):
+        upd["vip_package_id"] = payload["package_id"]
+    await db.users.update_one({"id": user_id}, {"$set": upd})
+    return {"ok": True, "vip_expires_at": expires_iso}
+
+
+@api.post("/admin/users/{user_id}/revoke-vip")
+async def admin_revoke_vip(user_id: str, admin: dict = Depends(require_admin)):
+    await db.users.update_one(
+        {"id": user_id},
+        {"$set": {"is_vip": False, "vip_expires_at": None, "vip_package_id": None}},
+    )
+    return {"ok": True}
+
+
 @api.post("/admin/users/{user_id}/role")
 async def admin_set_role(user_id: str, payload: dict, admin: dict = Depends(require_admin)):
     role = payload.get("role")
@@ -1878,7 +1962,7 @@ async def admin_list_videos(
         ]
     if status_filter in ("ready", "processing", "failed"):
         filt["status"] = status_filter
-    if access_tier in ("free", "pro"):
+    if access_tier in ("free", "pro", "vip"):
         filt["access_tier"] = access_tier
     if is_short is True:
         filt["is_short"] = True
@@ -2022,10 +2106,20 @@ async def payment_status(session_id: str, request: Request):
         pkg = await db.packages.find_one({"id": tx["package_id"]}, {"_id": 0})
         days = int(pkg.get("duration_days", 30)) if pkg else 30
         expires_at = (datetime.now(timezone.utc) + timedelta(days=days)).isoformat()
-        await db.users.update_one(
-            {"id": tx["user_id"]},
-            {"$set": {"is_pro": True, "pro_package_id": tx["package_id"], "pro_expires_at": expires_at}},
-        )
+        pkg_tier = (pkg.get("tier") if pkg else "pro") or "pro"
+        if pkg_tier == "vip":
+            user_upd = {
+                "is_vip": True,
+                "vip_package_id": tx["package_id"],
+                "vip_expires_at": expires_at,
+            }
+        else:
+            user_upd = {
+                "is_pro": True,
+                "pro_package_id": tx["package_id"],
+                "pro_expires_at": expires_at,
+            }
+        await db.users.update_one({"id": tx["user_id"]}, {"$set": user_upd})
     await db.payment_transactions.update_one(
         {"session_id": session_id},
         {"$set": {"payment_status": new_payment_status, "status": new_status, "updated_at": now_iso()}},
@@ -2054,10 +2148,20 @@ async def stripe_webhook(request: Request):
             pkg = await db.packages.find_one({"id": tx["package_id"]}, {"_id": 0})
             days = int(pkg.get("duration_days", 30)) if pkg else 30
             expires_at = (datetime.now(timezone.utc) + timedelta(days=days)).isoformat()
-            await db.users.update_one(
-                {"id": tx["user_id"]},
-                {"$set": {"is_pro": True, "pro_package_id": tx["package_id"], "pro_expires_at": expires_at}},
-            )
+            pkg_tier = (pkg.get("tier") if pkg else "pro") or "pro"
+            if pkg_tier == "vip":
+                user_upd = {
+                    "is_vip": True,
+                    "vip_package_id": tx["package_id"],
+                    "vip_expires_at": expires_at,
+                }
+            else:
+                user_upd = {
+                    "is_pro": True,
+                    "pro_package_id": tx["package_id"],
+                    "pro_expires_at": expires_at,
+                }
+            await db.users.update_one({"id": tx["user_id"]}, {"$set": user_upd})
             await db.payment_transactions.update_one(
                 {"session_id": resp.session_id},
                 {"$set": {"payment_status": "paid", "updated_at": now_iso()}},

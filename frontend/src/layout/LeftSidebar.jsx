@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import {
   Folder, Home as HomeIcon, Flame, Shuffle, Smartphone, ListVideo,
-  Upload as UploadIcon, Shield, Mail, X, Languages,
+  Upload as UploadIcon, Shield, Mail, X, Languages, Crown,
 } from "lucide-react";
 import api, { mediaUrl } from "@/lib/api";
 import { useAuth } from "@/contexts/AuthContext";
@@ -28,6 +28,7 @@ export default function LeftSidebar({ mobileOpen = false, onClose }) {
     { to: "/discover", label: t("nav.discover"), Icon: Shuffle, testid: "nav-discover" },
     { to: "/shorts", label: t("nav.shorts"), Icon: Smartphone, testid: "nav-shorts" },
     { to: "/all-episodes", label: t("nav.allEpisodes"), Icon: ListVideo, testid: "nav-all-episodes" },
+    { to: "/vip", label: "VIP", Icon: Crown, testid: "nav-vip" },
     { to: "/contact", label: t("nav.contact"), Icon: Mail, testid: "nav-contact" },
   ];
   if (user) navItems.push({ to: "/upload", label: t("nav.upload"), Icon: UploadIcon, testid: "nav-upload" });

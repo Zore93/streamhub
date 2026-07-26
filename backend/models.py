@@ -24,6 +24,10 @@ class User(BaseModel):
     is_pro: bool = False
     pro_package_id: Optional[str] = None
     pro_expires_at: Optional[str] = None
+    # VIP tier — separate from PRO. VIP users can also watch PRO content.
+    is_vip: bool = False
+    vip_package_id: Optional[str] = None
+    vip_expires_at: Optional[str] = None
     email_verified: bool = False
     verify_token: Optional[str] = None
     avatar_url: Optional[str] = None
@@ -49,6 +53,9 @@ class UserPublic(BaseModel):
     is_pro: bool
     pro_package_id: Optional[str] = None
     pro_expires_at: Optional[str] = None
+    is_vip: bool = False
+    vip_package_id: Optional[str] = None
+    vip_expires_at: Optional[str] = None
     email_verified: bool
     avatar_url: Optional[str] = None
     cover_url: Optional[str] = None
@@ -120,7 +127,7 @@ class Video(BaseModel):
     error: Optional[str] = None
     renditions: List[VideoRendition] = []
     subtitles: List[Subtitle] = []
-    access_tier: str = "free"  # free | pro
+    access_tier: str = "free"  # free | pro | vip
     is_short: bool = False  # True for vertical / short-form clips
     views: int = 0
     likes: List[str] = []  # user ids
@@ -175,6 +182,7 @@ class Package(BaseModel):
     duration_days: int = 30
     active: bool = True
     sort_order: int = 0
+    tier: str = "pro"  # pro | vip
     created_at: str = Field(default_factory=now_iso)
 
 

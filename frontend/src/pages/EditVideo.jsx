@@ -229,10 +229,11 @@ export default function EditVideo() {
         <div>
           <Label>Access</Label>
           <Select value={v.access_tier} onValueChange={(val) => { setV({ ...v, access_tier: val }); save({ access_tier: val }); }}>
-            <SelectTrigger className="bg-zinc-950 border-zinc-800"><SelectValue /></SelectTrigger>
+            <SelectTrigger className="bg-zinc-950 border-zinc-800" data-testid="edit-access-tier"><SelectValue /></SelectTrigger>
             <SelectContent>
-              <SelectItem value="free">Everyone</SelectItem>
-              <SelectItem value="pro">PRO only</SelectItem>
+              <SelectItem value="free" data-testid="access-free">Everyone (Free)</SelectItem>
+              <SelectItem value="pro" data-testid="access-pro">PRO only</SelectItem>
+              <SelectItem value="vip" data-testid="access-vip">VIP only</SelectItem>
             </SelectContent>
           </Select>
         </div>

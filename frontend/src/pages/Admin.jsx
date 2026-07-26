@@ -36,6 +36,7 @@ export default function Admin() {
           <TabsTrigger value="users" data-testid="tab-users">Users</TabsTrigger>
           <TabsTrigger value="categories" data-testid="tab-categories">Categories</TabsTrigger>
           <TabsTrigger value="packages" data-testid="tab-packages">Packages</TabsTrigger>
+          <TabsTrigger value="packages_vip" data-testid="tab-packages-vip">Packages VIP</TabsTrigger>
           <TabsTrigger value="frames" data-testid="tab-frames">Cadre Avatar</TabsTrigger>
           <TabsTrigger value="announcements" data-testid="tab-announcements">Announcements</TabsTrigger>
           <TabsTrigger value="chat" data-testid="tab-chat">Live Chat</TabsTrigger>
@@ -46,7 +47,8 @@ export default function Admin() {
         <TabsContent value="videos"><VideosTab /></TabsContent>
         <TabsContent value="users"><UsersTab /></TabsContent>
         <TabsContent value="categories"><CategoriesTab /></TabsContent>
-        <TabsContent value="packages"><PackagesTab /></TabsContent>
+        <TabsContent value="packages"><PackagesTab tier="pro" /></TabsContent>
+        <TabsContent value="packages_vip"><PackagesTab tier="vip" /></TabsContent>
         <TabsContent value="frames"><FramesTab /></TabsContent>
         <TabsContent value="announcements"><AnnouncementsTab /></TabsContent>
         <TabsContent value="chat"><ChatModerationTab /></TabsContent>
@@ -511,42 +513,70 @@ function CategoriesTab() {
   );
 }
 
-function PackagesTab() {
+function PackagesTab({ tier = "pro" }) {
+  const isVip = tier === "vip";
+  const label = isVip ? "VIP" : "PRO";
+  const defaultColor = isVip ? "#f59e0b" : "#f43f5e";
+  const gradientCls = isVip ? "vip-gradient text-black" : "pro-gradient text-white";
   const [pks, setPks] = useState([]);
-  const [form, setForm] = useState({ name: "", description: "", color: "#f43f5e", price: 9.99, currency: "usd", duration_days: 30, active: true, sort_order: 0 });
-  const load = () => api.get("/packages/all").then((r) => setPks(r.data));
-  useEffect(() => { load(); }, []);
+  const [form, setForm] = useState({ name: "", description: "", color: defaultColor, price: 9.99, currency: "usd", duration_days: 30, active: true, sort_order: 0 });
+  const load = () => api.get(`/packages/all?tier=${tier}`).then((r) => setPks(r.data));
+  useEffect(() => { load(); setForm((f) => ({ ...f, color: defaultColor })); /* eslint-disable-next-line */ }, [tier]);
   const create = async () => {
-    await api.post("/packages", { ...form, price: parseFloat(form.price), duration_days: parseInt(form.duration_days) });
-    load();
+    if (!form.name.trim()) return toast.error("Nume obligatoriu");
+    try {
+      await api.post("/packages", {
+        ...form,
+        tier,
+        price: parseFloat(form.price),
+        duration_days: parseInt(form.duration_days),
+      });
+      setForm({ ...form, name: "", description: "" });
+      toast.success(`Pachet ${label} creat`);
+      load();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Eroare");
+    }
   };
   const upd = async (id, patch) => { await api.patch(`/packages/${id}`, patch); load(); };
-  const del = async (id) => { await api.delete(`/packages/${id}`); load(); };
+  const del = async (id) => {
+    if (!window.confirm(`Șterge acest pachet ${label}?`)) return;
+    await api.delete(`/packages/${id}`);
+    load();
+  };
   return (
-    <div className="mt-6 space-y-6" data-testid="admin-packages">
+    <div className="mt-6 space-y-6" data-testid={`admin-packages-${tier}`}>
       <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4">
-        <div className="font-semibold mb-3">New Package ({pks.length}/10)</div>
+        <div className="font-semibold mb-3">Pachet {label} nou ({pks.length})</div>
         <div className="grid grid-cols-2 gap-3">
-          <Input placeholder="Name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className="bg-zinc-950 border-zinc-800" />
+          <Input placeholder="Nume" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className="bg-zinc-950 border-zinc-800" data-testid={`new-pkg-${tier}-name`} />
           <Input type="color" value={form.color} onChange={(e) => setForm({ ...form, color: e.target.value })} className="bg-zinc-950 border-zinc-800 h-10" />
-          <Input type="number" step="0.01" placeholder="Price" value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} className="bg-zinc-950 border-zinc-800" />
-          <Input type="number" placeholder="Duration (days)" value={form.duration_days} onChange={(e) => setForm({ ...form, duration_days: e.target.value })} className="bg-zinc-950 border-zinc-800" />
-          <Textarea placeholder="Description" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} className="bg-zinc-950 border-zinc-800 col-span-2" />
+          <Input type="number" step="0.01" placeholder="Preț" value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} className="bg-zinc-950 border-zinc-800" data-testid={`new-pkg-${tier}-price`} />
+          <Input type="number" placeholder="Durată (zile)" value={form.duration_days} onChange={(e) => setForm({ ...form, duration_days: e.target.value })} className="bg-zinc-950 border-zinc-800" data-testid={`new-pkg-${tier}-days`} />
+          <Textarea placeholder="Descriere" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} className="bg-zinc-950 border-zinc-800 col-span-2" />
         </div>
-        <Button onClick={create} className="mt-3 pro-gradient text-white border-0" disabled={pks.length >= 10} data-testid="new-pkg-btn">Add</Button>
+        <Button onClick={create} className={`mt-3 ${gradientCls} border-0`} data-testid={`new-pkg-${tier}-btn`}>Adaugă pachet {label}</Button>
       </div>
       {pks.map((p) => (
-        <div key={p.id} className="bg-zinc-900 border border-zinc-800 rounded-xl p-4 flex justify-between items-center">
+        <div key={p.id} className="bg-zinc-900 border border-zinc-800 rounded-xl p-4 flex justify-between items-center" data-testid={`pkg-row-${p.id}`}>
           <div>
-            <div className="font-semibold" style={{ color: p.color }}>{p.name} — ${p.price}</div>
-            <div className="text-xs text-zinc-500">{p.duration_days} days · active: {String(p.active)}</div>
+            <div className="font-semibold flex items-center gap-2" style={{ color: p.color }}>
+              {p.name} — ${p.price}
+              <span className={`text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded ${isVip ? "bg-amber-500/20 text-amber-300 border border-amber-500/40" : "bg-rose-500/20 text-rose-300 border border-rose-500/40"}`}>{label}</span>
+            </div>
+            <div className="text-xs text-zinc-500">{p.duration_days} zile · activ: {String(p.active)}</div>
           </div>
           <div className="flex gap-2 items-center">
-            <Switch checked={p.active} onCheckedChange={(v) => upd(p.id, { active: v })} />
-            <Button size="sm" variant="destructive" onClick={() => del(p.id)}><Trash2 size={14} /></Button>
+            <Switch checked={p.active} onCheckedChange={(v) => upd(p.id, { active: v })} data-testid={`pkg-active-${p.id}`} />
+            <Button size="sm" variant="destructive" onClick={() => del(p.id)} data-testid={`pkg-del-${p.id}`}><Trash2 size={14} /></Button>
           </div>
         </div>
       ))}
+      {pks.length === 0 && (
+        <p className="text-sm text-zinc-500" data-testid={`admin-packages-${tier}-empty`}>
+          Nu există pachete {label}. Creează primul mai sus.
+        </p>
+      )}
     </div>
   );
 }

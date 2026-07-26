@@ -147,7 +147,11 @@ export default function Watch() {
 
   if (!video) return <Layout><div className="text-zinc-500">{t("page.loading")}</div></Layout>;
 
-  const isLocked = video.locked || (video.access_tier === "pro" && !user?.is_pro);
+  const isVipVideo = video.access_tier === "vip";
+  const isProVideo = video.access_tier === "pro";
+  const isLocked = video.locked
+    || (isVipVideo && !user?.is_vip)
+    || (isProVideo && !(user?.is_pro || user?.is_vip));
   const hasPlayable = (video.renditions || []).length > 0;
   const isProcessing = !isLocked && (!hasPlayable || video.status === "processing");
 
@@ -157,10 +161,24 @@ export default function Watch() {
         <div className="aspect-video bg-black rounded-lg overflow-hidden relative">
           {isLocked ? (
             <div className="absolute inset-0 flex flex-col items-center justify-center bg-zinc-950 text-center px-6" data-testid="locked-view">
-              <Lock size={48} className="text-rose-500 mb-3" />
-              <h3 className="text-xl font-semibold mb-1">{t("player.proLocked")}</h3>
-              <p className="text-zinc-400 mb-4">{t("player.proLocked.body")}</p>
-              <Link to="/pro"><Button className="pro-gradient text-white border-0">{t("player.upgrade")}</Button></Link>
+              <Lock size={48} className={isVipVideo ? "vip-gradient-text mb-3" : "text-rose-500 mb-3"} />
+              <h3 className="text-xl font-semibold mb-1">
+                {isVipVideo ? "Conținut VIP" : t("player.proLocked")}
+              </h3>
+              <p className="text-zinc-400 mb-4">
+                {isVipVideo
+                  ? "Ai nevoie de un abonament VIP pentru a vedea acest episod."
+                  : t("player.proLocked.body")}
+              </p>
+              {isVipVideo ? (
+                <Link to="/vip" data-testid="upgrade-vip-btn">
+                  <Button className="vip-gradient text-black font-bold border-0">
+                    <Crown size={14} className="mr-1" /> Devino VIP
+                  </Button>
+                </Link>
+              ) : (
+                <Link to="/pro"><Button className="pro-gradient text-white border-0">{t("player.upgrade")}</Button></Link>
+              )}
             </div>
           ) : isProcessing ? (
             <div className="absolute inset-0 flex flex-col items-center justify-center bg-zinc-950 text-center px-6" data-testid="processing-view">
@@ -190,7 +208,15 @@ export default function Watch() {
 
         <div className="flex items-center justify-between mt-5 mb-2 flex-wrap gap-2">
           <h1 className="text-2xl sm:text-3xl font-bold font-heading">{video.title}</h1>
-          {video.access_tier === "pro" && <span className="pro-gradient text-white text-xs font-semibold px-3 py-1 rounded-md flex items-center gap-1"><Crown size={12} /> PRO</span>}
+          {video.access_tier === "vip" ? (
+            <span className="vip-gradient text-black text-xs font-bold px-3 py-1 rounded-md flex items-center gap-1" data-testid="watch-vip-badge">
+              <Crown size={12} /> VIP
+            </span>
+          ) : video.access_tier === "pro" && (
+            <span className="pro-gradient text-white text-xs font-semibold px-3 py-1 rounded-md flex items-center gap-1" data-testid="watch-pro-badge">
+              <Crown size={12} /> PRO
+            </span>
+          )}
         </div>
 
         <div className="flex flex-wrap items-center gap-3 sm:gap-4 mb-4">

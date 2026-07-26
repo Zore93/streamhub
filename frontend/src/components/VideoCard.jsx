@@ -78,9 +78,16 @@ export default function VideoCard({ v, vertical = false }) {
           </div>
         )}
 
-        {/* Top-right: PRO badge */}
-        {v.access_tier === "pro" && (
-          <div className="absolute top-2 right-2 pro-gradient text-white text-xs font-semibold px-2 py-1 rounded-md flex items-center gap-1">
+        {/* Top-right: PRO or VIP badge (VIP takes priority when both somehow set) */}
+        {v.access_tier === "vip" ? (
+          <div
+            className="absolute top-2 right-2 vip-gradient text-black text-xs font-bold px-2 py-1 rounded-md flex items-center gap-1 shadow-md"
+            data-testid={`vip-badge-${v.id}`}
+          >
+            <Crown size={10} /> VIP
+          </div>
+        ) : v.access_tier === "pro" && (
+          <div className="absolute top-2 right-2 pro-gradient text-white text-xs font-semibold px-2 py-1 rounded-md flex items-center gap-1" data-testid={`pro-badge-${v.id}`}>
             <Crown size={10} /> PRO
           </div>
         )}

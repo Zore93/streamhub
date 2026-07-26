@@ -12,6 +12,7 @@ import Upload from "@/pages/Upload";
 import Watch from "@/pages/Watch";
 import Profile from "@/pages/Profile";
 import Pro from "@/pages/Pro";
+import Vip from "@/pages/Vip";
 import Admin from "@/pages/Admin";
 import Category from "@/pages/Category";
 import Contact from "@/pages/Contact";
@@ -48,6 +49,8 @@ function App() {
               <Route path="/profile/:id" element={<Profile />} />
               <Route path="/pro" element={<Pro />} />
               <Route path="/pro/success" element={<Pro />} />
+              <Route path="/vip" element={<Vip />} />
+              <Route path="/vip/success" element={<Vip />} />
               <Route path="/category/:id" element={<Category />} />
               <Route path="/category/:id/page/:page" element={<Category />} />
               <Route path="/contact" element={<Contact />} />

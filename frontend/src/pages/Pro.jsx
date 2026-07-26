@@ -16,7 +16,7 @@ export default function Pro() {
   const [search] = useSearchParams();
 
   useEffect(() => {
-    api.get("/packages").then((r) => setPkgs(r.data)).catch(() => {});
+    api.get("/packages?tier=pro").then((r) => setPkgs(r.data)).catch(() => {});
   }, []);
 
   // Handle return-from-stripe
