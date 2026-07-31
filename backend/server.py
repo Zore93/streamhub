@@ -2779,28 +2779,89 @@ async def add_subtitle(
         # Uploaded file already IS WebVTT — write directly to vtt_path, no original.
         with open(vtt_path, "wb") as f:
             shutil.copyfileobj(file.file, f)
+        # Sanity check — browsers silently drop a <track> whose src doesn't
+        # start with "WEBVTT" (BOM allowed).  Guard against that pre-emptively.
+        if vtt_path.exists() and vtt_path.stat().st_size > 6:
+            head = vtt_path.read_bytes()[:16].lstrip(b"\xef\xbb\xbf").lstrip()
+            if not head.upper().startswith(b"WEBVTT"):
+                try:
+                    vtt_path.unlink()
+                except Exception:
+                    pass
+                raise HTTPException(
+                    400,
+                    "The uploaded .vtt is missing the required 'WEBVTT' header. "
+                    "Open the file, add 'WEBVTT' on the first line, then re-upload.",
+                )
+        else:
+            try:
+                vtt_path.unlink()
+            except Exception:
+                pass
+            raise HTTPException(400, "The uploaded .vtt file is empty.")
         rel_vtt = f"subtitles/{vtt_name}"
         rel_orig = None
     else:
         with open(orig_path, "wb") as f:
             shutil.copyfileobj(file.file, f)
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                "ffmpeg", "-y", "-i", str(orig_path), str(vtt_path),
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.DEVNULL,
-            )
-            await proc.wait()
-        except FileNotFoundError as e:
+
+        # ffmpeg picks the wrong encoding on ~1 in 5 Romanian/Polish SRT files:
+        # if the input isn't valid UTF-8 it silently produces an empty VTT →
+        # browser accepts the <track> but paints nothing.  We try UTF-8 first,
+        # then fall back through common Central-European encodings until we
+        # get a VTT that starts with the required "WEBVTT" signature.
+        conversion_ok = False
+        last_err = ""
+        candidates = [None, "UTF-8", "WINDOWS-1250", "WINDOWS-1252", "ISO-8859-2", "ISO-8859-1"]
+        for enc in candidates:
+            try:
+                if vtt_path.exists():
+                    vtt_path.unlink()
+            except Exception:
+                pass
+            cmd = ["ffmpeg", "-y"]
+            if enc:
+                cmd += ["-sub_charenc", enc]
+            cmd += ["-i", str(orig_path), str(vtt_path)]
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    *cmd,
+                    stdout=asyncio.subprocess.DEVNULL,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                _, stderr = await proc.communicate()
+                if proc.returncode != 0:
+                    last_err = (stderr or b"").decode("utf-8", errors="replace")[-300:]
+                    continue
+            except FileNotFoundError as e:
+                raise HTTPException(
+                    500,
+                    "Subtitle conversion needs ffmpeg but it is not installed on the server. "
+                    "Install ffmpeg (`apt install ffmpeg` inside the backend container) or upload .vtt directly.",
+                ) from e
+            except Exception as e:  # noqa: BLE001
+                last_err = f"{type(e).__name__}: {str(e)[:200]}"
+                continue
+            # Validate the produced VTT: must be non-empty AND start with the
+            # `WEBVTT` header (RFC 8216 §3.4 / WHATWG WebVTT §4.1) — otherwise
+            # Chrome/Firefox silently discard the track.
+            if vtt_path.exists() and vtt_path.stat().st_size > 6:
+                try:
+                    head = vtt_path.read_bytes()[:16].lstrip(b"\xef\xbb\xbf").lstrip()
+                    if head.upper().startswith(b"WEBVTT"):
+                        conversion_ok = True
+                        break
+                except Exception:
+                    pass
+        if not conversion_ok:
+            hint = f" (last ffmpeg error: {last_err})" if last_err else ""
             raise HTTPException(
                 500,
-                "Subtitle conversion needs ffmpeg but it is not installed on the server. "
-                "Install ffmpeg (`apt install ffmpeg` inside the backend container) or upload .vtt directly.",
-            ) from e
-        except Exception as e:  # noqa: BLE001
-            raise HTTPException(500, f"Subtitle conversion failed: {type(e).__name__}: {str(e)[:200]}") from e
-        if not vtt_path.exists():
-            raise HTTPException(500, "Subtitle conversion produced no output (ffmpeg likely rejected the file). Try re-encoding or uploading .vtt directly.")
+                "Subtitle conversion failed for every encoding we tried "
+                "(UTF-8 / Windows-1250 / Windows-1252 / ISO-8859-2). "
+                "Please open the file in a text editor, save it as UTF-8, or "
+                "convert it to .vtt before uploading." + hint,
+            )
         rel_vtt = f"subtitles/{vtt_name}"
         rel_orig = f"subtitles/{orig_name}"
     settings = await get_settings()
