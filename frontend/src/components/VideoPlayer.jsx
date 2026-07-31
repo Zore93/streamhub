@@ -10,7 +10,7 @@ import {
  * Custom video player with rearrangeable controls so that the order along the
  * bottom bar is:  play · time · scrubber │ volume · CC · resolution · download · fullscreen
  */
-export default function VideoPlayer({ video, currentRendition, resolution, setResolution, allowDownload, onEnded }) {
+export default function VideoPlayer({ video, currentRendition, resolution, setResolution, allowDownload, onEnded, children, autoPlay }) {
   const ref = useRef(null);
   const wrapRef = useRef(null);
   const hideTimerRef = useRef(null);
@@ -63,8 +63,20 @@ export default function VideoPlayer({ video, currentRendition, resolution, setRe
     const v = ref.current;
     if (!v) return;
     const wasPlaying = !v.paused;
-    v.currentTime = savedTime;
-    if (wasPlaying) v.play().catch(() => {});
+    // NB: reset `savedTime` to 0 first — otherwise when the parent swaps the
+    // video (e.g. series auto-advance) we'd seek to the stale last-known time
+    // of the *previous* episode, which is usually its duration → the new
+    // episode appears "already finished" and no autoplay.
+    setSavedTime(0);
+    v.currentTime = 0;
+    // Autoplay when either (a) we were already playing before the src swap or
+    // (b) the parent explicitly requested it (e.g. series auto-advance).
+    if (wasPlaying || autoPlay) {
+      v.play().catch(() => {
+        // Browsers may block autoplay without a prior user gesture — the play
+        // promise rejects silently and the user can hit the central play btn.
+      });
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentRendition?.url]);
 
@@ -308,6 +320,10 @@ export default function VideoPlayer({ video, currentRendition, resolution, setRe
           </div>
         </div>
       )}
+
+      {/* Extra overlays supplied by the parent (e.g. series autoplay countdown).
+          Rendered inside the wrap so they remain visible in fullscreen mode. */}
+      {children}
 
       {/* Bottom control bar — auto-hides after 2.5 s of inactivity while playing */}
       <div

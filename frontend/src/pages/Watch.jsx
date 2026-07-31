@@ -49,8 +49,26 @@ export default function Watch() {
 
   const goToNextEpisode = () => {
     if (!nextInSeries) return;
+    // Persist "autoplay next" intent so the destination page starts playback
+    // automatically once mounted (survives the React Router navigation).
+    try { sessionStorage.setItem("autoplayNext", "1"); } catch { /* ignore private-mode / quota errors */ }
     navigate(`/watch/${nextInSeries.slug || nextInSeries.id}`);
   };
+
+  // Consume the autoplay flag exactly once per navigation.
+  const [autoPlayOnLoad, setAutoPlayOnLoad] = useState(false);
+  useEffect(() => {
+    try {
+      if (sessionStorage.getItem("autoplayNext") === "1") {
+        sessionStorage.removeItem("autoplayNext");
+        setAutoPlayOnLoad(true);
+      } else {
+        setAutoPlayOnLoad(false);
+      }
+    } catch {
+      setAutoPlayOnLoad(false);
+    }
+  }, [id]);
 
   // 5-second countdown overlay when an episode ends and there's a next one.
   const [autoplayCountdown, setAutoplayCountdown] = useState(null); // null | 5..0
@@ -249,18 +267,19 @@ export default function Watch() {
               )}
             </div>
           ) : currentRendition ? (
-            <>
-              <VideoPlayer
-                video={video}
-                currentRendition={currentRendition}
-                resolution={resolution}
-                setResolution={setResolution}
-                allowDownload={allowDownload}
-                onEnded={startAutoplay}
-              />
+            <VideoPlayer
+              key={video.id}
+              video={video}
+              currentRendition={currentRendition}
+              resolution={resolution}
+              setResolution={setResolution}
+              allowDownload={allowDownload}
+              onEnded={startAutoplay}
+              autoPlay={autoPlayOnLoad}
+            >
               {nextInSeries && autoplayCountdown !== null && (
                 <div
-                  className="absolute inset-0 z-30 flex items-center justify-center bg-black/85 backdrop-blur-sm"
+                  className="absolute inset-0 z-40 flex items-center justify-center bg-black/85 backdrop-blur-sm"
                   data-testid="autoplay-overlay"
                 >
                   <div className="max-w-md w-full text-center px-6">
@@ -297,7 +316,7 @@ export default function Watch() {
                   </div>
                 </div>
               )}
-            </>
+            </VideoPlayer>
           ) : (
             <div className="absolute inset-0 flex items-center justify-center text-zinc-500">
               {video.status}...
