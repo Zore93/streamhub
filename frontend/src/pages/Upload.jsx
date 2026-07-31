@@ -287,6 +287,7 @@ export default function Upload() {
               <SelectContent>
                 <SelectItem value="free">{t("upload.access.free")}</SelectItem>
                 <SelectItem value="pro">{t("upload.access.pro")}</SelectItem>
+                <SelectItem value="vip" data-testid="upload-access-vip">VIP only</SelectItem>
               </SelectContent>
             </Select>
           </div>

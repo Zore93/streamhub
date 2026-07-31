@@ -114,6 +114,8 @@ class Video(BaseModel):
     description: str = ""
     synopsis: str = ""  # long-form SEO-oriented plot summary shown in SSR
     tags: List[str] = []
+    category_id: Optional[str] = None
+    uploader_id: Optional[str] = None
     uploader_username: str = ""
     thumbnail_url: Optional[str] = None
     thumbnail_options: List[str] = []  # all generated thumbs

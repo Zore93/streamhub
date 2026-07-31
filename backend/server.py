@@ -950,6 +950,39 @@ async def delete_shorts_series(series_id: str, admin: dict = Depends(require_adm
     return {"ok": True}
 
 
+@api.post("/shorts-series/{series_id}/cover")
+async def upload_shorts_series_cover(
+    series_id: str,
+    file: UploadFile = File(...),
+    admin: dict = Depends(require_admin),
+):
+    """Upload a portrait cover thumbnail for a series. Stored in Wasabi when configured."""
+    series = await db.shorts_series.find_one({"id": series_id}, {"_id": 0})
+    if not series:
+        raise HTTPException(404, "Series not found")
+    ext = (Path(file.filename or "img").suffix or ".jpg").lower()
+    if ext not in (".jpg", ".jpeg", ".png", ".webp", ".gif"):
+        raise HTTPException(400, "Only jpg/png/webp/gif images are allowed")
+    fname = f"{series_id}_cover{ext}"
+    out_path = UPLOAD_DIR / "series_covers" / fname
+    out_path.parent.mkdir(exist_ok=True, parents=True)
+    with open(out_path, "wb") as f:
+        shutil.copyfileobj(file.file, f)
+    rel = f"series_covers/{fname}"
+    settings = await get_settings()
+    if wasabi_configured(settings):
+        content_type = f"image/{ext.lstrip('.').replace('jpg', 'jpeg')}"
+        url = await wasabi_upload(str(out_path), rel, settings, content_type)
+        if url:
+            rel = url
+            try:
+                out_path.unlink()
+            except Exception:
+                pass
+    await db.shorts_series.update_one({"id": series_id}, {"$set": {"cover_thumbnail": rel}})
+    return {"cover_thumbnail": rel}
+
+
 @api.post("/shorts-series/{series_id}/reorder")
 async def reorder_shorts_series(series_id: str, payload: dict, admin: dict = Depends(require_admin)):
     """Body: {video_ids: [...]}. Positions are 1-indexed in the order supplied."""
@@ -2037,6 +2070,30 @@ async def admin_set_role(user_id: str, payload: dict, admin: dict = Depends(requ
 
 
 # ============ ADMIN: STATS ============
+@api.get("/stats")
+async def public_stats():
+    """Public homepage stats — Total Videos / Views / Likes / Comments.
+    Only counts ready videos (i.e. hides processing/failed)."""
+    total_videos = await db.videos.count_documents({"status": "ready"})
+    total_comments = await db.comments.count_documents({})
+    views_agg = await db.videos.aggregate(
+        [{"$match": {"status": "ready"}}, {"$group": {"_id": None, "v": {"$sum": "$views"}}}]
+    ).to_list(1)
+    likes_agg = await db.videos.aggregate(
+        [
+            {"$match": {"status": "ready"}},
+            {"$project": {"c": {"$size": {"$ifNull": ["$likes", []]}}}},
+            {"$group": {"_id": None, "v": {"$sum": "$c"}}},
+        ]
+    ).to_list(1)
+    return {
+        "total_videos": total_videos,
+        "total_views": int(views_agg[0]["v"]) if views_agg else 0,
+        "total_likes": int(likes_agg[0]["v"]) if likes_agg else 0,
+        "total_comments": total_comments,
+    }
+
+
 @api.get("/admin/stats", response_model=StatsResponse)
 async def admin_stats(admin: dict = Depends(require_admin)):
     total_videos = await db.videos.count_documents({})

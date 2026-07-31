@@ -9,11 +9,12 @@ import { useT } from "@/contexts/LanguageContext";
  * Props:
  *   - currentPage: 1-indexed current page number
  *   - totalPages:  total number of pages
- *   - buildHref:   (page: number) => string  — generates the URL for a page
+ *   - buildHref:   (page: number) => string  — generates the URL for a page (Link mode)
+ *   - onPageChange: (page: number) => void   — click handler (button mode; used when buildHref is omitted)
  *
  * Renders nothing when totalPages ≤ 1.
  */
-export default function Pagination({ currentPage, totalPages, buildHref }) {
+export default function Pagination({ currentPage, totalPages, buildHref, onPageChange }) {
   const { t } = useT();
   if (!totalPages || totalPages <= 1) return null;
 
@@ -24,40 +25,71 @@ export default function Pagination({ currentPage, totalPages, buildHref }) {
   const active = "bg-rose-600 border-rose-500 text-white font-semibold";
   const disabled = "bg-zinc-950 border-zinc-900 text-zinc-700 cursor-not-allowed pointer-events-none";
 
+  // Reusable renderer — falls back to <button> when no buildHref is supplied.
+  const renderCell = (page, opts = {}) => {
+    const { key, testid, ariaLabel, ariaCurrent, className, children, isDisabled } = opts;
+    if (buildHref) {
+      return (
+        <Link
+          key={key}
+          to={buildHref(page)}
+          className={`${linkCls} ${className}`}
+          data-testid={testid}
+          aria-label={ariaLabel}
+          aria-current={ariaCurrent}
+        >
+          {children}
+        </Link>
+      );
+    }
+    return (
+      <button
+        key={key}
+        type="button"
+        disabled={isDisabled}
+        onClick={() => !isDisabled && onPageChange?.(page)}
+        className={`${linkCls} ${className}`}
+        data-testid={testid}
+        aria-label={ariaLabel}
+        aria-current={ariaCurrent}
+      >
+        {children}
+      </button>
+    );
+  };
+
   return (
     <nav className="flex justify-center mt-10" aria-label="Pagination" data-testid="pagination">
       <div className="flex flex-wrap items-center gap-2">
-        <Link
-          to={buildHref(Math.max(1, currentPage - 1))}
-          className={`${linkCls} ${currentPage === 1 ? disabled : inactive}`}
-          data-testid="pagination-prev"
-          aria-label={t("page.previous")}
-        >
-          <ChevronLeft size={16} />
-        </Link>
+        {renderCell(Math.max(1, currentPage - 1), {
+          key: "prev",
+          testid: "pagination-prev",
+          ariaLabel: t("page.previous"),
+          className: currentPage === 1 ? disabled : inactive,
+          isDisabled: currentPage === 1,
+          children: <ChevronLeft size={16} />,
+        })}
         {pages.map((p, i) =>
           p === "..." ? (
             <span key={`gap-${i}`} className="px-2 text-zinc-500 select-none">…</span>
           ) : (
-            <Link
-              key={p}
-              to={buildHref(p)}
-              className={`${linkCls} ${p === currentPage ? active : inactive}`}
-              data-testid={p === currentPage ? "pagination-current" : `pagination-page-${p}`}
-              aria-current={p === currentPage ? "page" : undefined}
-            >
-              {p}
-            </Link>
+            renderCell(p, {
+              key: p,
+              testid: p === currentPage ? "pagination-current" : `pagination-page-${p}`,
+              ariaCurrent: p === currentPage ? "page" : undefined,
+              className: p === currentPage ? active : inactive,
+              children: p,
+            })
           )
         )}
-        <Link
-          to={buildHref(Math.min(totalPages, currentPage + 1))}
-          className={`${linkCls} ${currentPage === totalPages ? disabled : inactive}`}
-          data-testid="pagination-next"
-          aria-label={t("page.next")}
-        >
-          <ChevronRight size={16} />
-        </Link>
+        {renderCell(Math.min(totalPages, currentPage + 1), {
+          key: "next",
+          testid: "pagination-next",
+          ariaLabel: t("page.next"),
+          className: currentPage === totalPages ? disabled : inactive,
+          isDisabled: currentPage === totalPages,
+          children: <ChevronRight size={16} />,
+        })}
       </div>
     </nav>
   );

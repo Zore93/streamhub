@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
-import { Crown, LogIn, UserPlus, LogOut, User as UserIcon, X, ShoppingBag, Coins } from "lucide-react";
+import { Crown, LogIn, UserPlus, LogOut, User as UserIcon, X, ShoppingBag, Coins, Film, Eye, Heart, MessageCircle } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import api, { mediaUrl } from "@/lib/api";
 import { Button } from "@/components/ui/button";
@@ -187,6 +187,9 @@ function RightSidebarBody({ user, logout, t, pkgs, chatEnabled, siteCfg, recomme
         />
       )}
 
+      {/* Live site stats — under Discord, only on home/listing pages */}
+      {!recommendations && <SiteStatsWidget />}
+
       {/* Recommendations (only on watch page) */}
       {recommendations && recommendations.length > 0 && (
         <div data-testid="recommendations">
@@ -238,4 +241,66 @@ function formatRecDuration(s) {
   const m = Math.floor(s / 60);
   const sec = Math.floor(s % 60);
   return `${m}:${String(sec).padStart(2, "0")}`;
+}
+
+/** Compact "1.2K" / "3.4M" formatter for the stats widget. */
+function abbreviate(n) {
+  const num = Number(n) || 0;
+  if (num < 1000) return String(num);
+  if (num < 1_000_000) return `${(num / 1000).toFixed(num < 10_000 ? 1 : 0).replace(/\.0$/, "")}K`;
+  if (num < 1_000_000_000) return `${(num / 1_000_000).toFixed(num < 10_000_000 ? 1 : 0).replace(/\.0$/, "")}M`;
+  return `${(num / 1_000_000_000).toFixed(1).replace(/\.0$/, "")}B`;
+}
+
+/**
+ * Live site stats block — polls /api/stats every 30s.
+ * Rendered under the Discord widget on the home / listing pages only.
+ */
+function SiteStatsWidget() {
+  const { t } = useT();
+  const [stats, setStats] = useState(null);
+
+  useEffect(() => {
+    let alive = true;
+    const load = () => {
+      api.get("/stats")
+        .then((r) => { if (alive) setStats(r.data); })
+        .catch(() => {});
+    };
+    load();
+    const id = setInterval(load, 30_000);
+    return () => { alive = false; clearInterval(id); };
+  }, []);
+
+  if (!stats) return null;
+
+  const rows = [
+    { icon: Film,           label: t("stats.videos"),   value: stats.total_videos,   color: "text-rose-400" },
+    { icon: Eye,            label: t("stats.views"),    value: stats.total_views,    color: "text-sky-400" },
+    { icon: Heart,          label: t("stats.likes"),    value: stats.total_likes,    color: "text-pink-400" },
+    { icon: MessageCircle,  label: t("stats.comments"), value: stats.total_comments, color: "text-emerald-400" },
+  ];
+
+  return (
+    <div className="bg-zinc-900/60 border border-zinc-800 rounded-xl p-4 mb-4" data-testid="site-stats">
+      <div className="text-xs font-bold uppercase tracking-[0.2em] text-zinc-500 mb-3">
+        {t("stats.title")}
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        {rows.map(({ icon: Icon, label, value, color }) => (
+          <div key={label} className="flex items-start gap-2">
+            <Icon size={16} className={`${color} mt-0.5 shrink-0`} />
+            <div className="min-w-0">
+              <div className="text-lg font-bold text-zinc-100 leading-tight" title={String(value)}>
+                {abbreviate(value)}
+              </div>
+              <div className="text-[10px] uppercase tracking-wider text-zinc-500 truncate">
+                {label}
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 }

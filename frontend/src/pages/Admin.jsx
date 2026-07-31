@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import api, { mediaUrl } from "@/lib/api";
+import Pagination from "@/components/Pagination";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -354,13 +355,22 @@ function VideosTab() {
             variant="outline"
             disabled={loading}
             onClick={() => load(items.length, true)}
-            className="border-zinc-700 hover:bg-zinc-800"
+            className="border-zinc-700 hover:bg-zinc-800 hidden"
             data-testid="admin-videos-load-more"
           >
             {loading ? "Loading…" : `Load more (${total - items.length} remaining)`}
           </Button>
         </div>
       )}
+      <Pagination
+        currentPage={Math.floor(skip / PAGE) + 1}
+        totalPages={Math.max(1, Math.ceil(total / PAGE))}
+        onPageChange={(page) => {
+          const nextSkip = Math.max(0, (page - 1) * PAGE);
+          load(nextSkip, false);
+          window.scrollTo({ top: 0, behavior: "smooth" });
+        }}
+      />
     </div>
   );
 }
@@ -685,11 +695,40 @@ function ShortsSeriesTab() {
       {list.map((s) => (
         <div key={s.id} className="bg-zinc-900 border border-zinc-800 rounded-xl p-4" data-testid={`series-row-${s.id}`}>
           <div className="flex gap-4">
-            {s.cover_thumbnail ? (
-              <img src={s.cover_thumbnail} alt={s.name} className="w-16 aspect-[2/3] object-cover rounded border border-zinc-800 shrink-0" />
-            ) : (
-              <div className="w-16 aspect-[2/3] rounded border border-dashed border-zinc-700 flex items-center justify-center text-zinc-600 text-xs shrink-0">no cover</div>
-            )}
+            <div className="w-16 shrink-0">
+              {s.cover_thumbnail ? (
+                <img src={s.cover_thumbnail} alt={s.name} className="w-16 aspect-[2/3] object-cover rounded border border-zinc-800" />
+              ) : (
+                <div className="w-16 aspect-[2/3] rounded border border-dashed border-zinc-700 flex items-center justify-center text-zinc-600 text-xs">no cover</div>
+              )}
+              <label className="mt-1.5 flex items-center justify-center gap-1 text-[10px] cursor-pointer text-zinc-400 hover:text-zinc-100 bg-zinc-950 border border-zinc-800 rounded py-1" data-testid={`series-cover-upload-${s.id}`}>
+                <UploadIcon size={10} /> Cover
+                <input
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={async (e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    if (file.size > 8 * 1024 * 1024) return toast.error("Max 8 MB");
+                    try {
+                      const fd = new FormData();
+                      fd.append("file", file);
+                      const { data } = await api.post(`/shorts-series/${s.id}/cover`, fd, {
+                        headers: { "Content-Type": "multipart/form-data" },
+                      });
+                      toast.success("Cover urcat pe Wasabi");
+                      // Update in-place so the preview refreshes without a full reload
+                      setList((prev) => prev.map((x) => x.id === s.id ? { ...x, cover_thumbnail: data.cover_thumbnail } : x));
+                    } catch (err) {
+                      toast.error(err.response?.data?.detail || "Eroare încărcare");
+                    } finally {
+                      e.target.value = "";
+                    }
+                  }}
+                />
+              </label>
+            </div>
             <div className="flex-1 min-w-0">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">

@@ -89,7 +89,25 @@ export default function VideoPlayer({ video, currentRendition, resolution, setRe
 
   const togglePlay = () => {
     const v = ref.current; if (!v) return;
-    if (v.paused) v.play(); else v.pause();
+    if (v.paused) {
+      const p = v.play();
+      // Firefox / Opera reject the play() promise when autoplay is blocked or
+      // the media element has a CORS error. Swallow it so the UI stays alive,
+      // and retry without crossOrigin when the browser refuses to load the media.
+      if (p && typeof p.then === "function") {
+        p.catch((err) => {
+          const name = err?.name || "";
+          if (name === "NotSupportedError" && v.crossOrigin) {
+            // Wasabi / S3 with no CORS: drop the CORS attribute and reload.
+            v.removeAttribute("crossorigin");
+            v.load();
+            v.play().catch(() => {});
+          }
+        });
+      }
+    } else {
+      v.pause();
+    }
   };
 
   // ─── Double-click to seek ±10s ────────────────────────────────────────
@@ -216,9 +234,14 @@ export default function VideoPlayer({ video, currentRendition, resolution, setRe
       <video
         ref={ref}
         src={mediaUrl(currentRendition.url)}
-        crossOrigin="anonymous"
+        /* Only opt into CORS when we have subtitle tracks that require it.
+         * Firefox / Opera fail to play videos from S3-like buckets that don't
+         * respond with `Access-Control-Allow-Origin` when crossOrigin is set —
+         * so we skip it entirely when there are no <track> children. */
+        crossOrigin={(video.subtitles || []).length > 0 ? "anonymous" : undefined}
         className="w-full h-full"
         preload="metadata"
+        playsInline
         onTimeUpdate={() => setSavedTime(ref.current?.currentTime || 0)}
         onClick={handlePlayerClick}
         onDoubleClick={handlePlayerDblClick}

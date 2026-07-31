@@ -179,6 +179,11 @@ const EN = {
   "common.coins": "coins",
   "common.loading": "Loading...",
   "shorts.viewAll": "All shorts",
+  "stats.title": "Site stats",
+  "stats.videos": "Videos",
+  "stats.views": "Views",
+  "stats.likes": "Likes",
+  "stats.comments": "Comments",
 
   // Shop
   "shop.title": "Frame Shop",
@@ -372,6 +377,11 @@ const RO = {
   "common.coins": "monede",
   "common.loading": "Se încarcă...",
   "shorts.viewAll": "Toate shorts-urile",
+  "stats.title": "Statistici site",
+  "stats.videos": "Videoclipuri",
+  "stats.views": "Vizualizări",
+  "stats.likes": "Aprecieri",
+  "stats.comments": "Comentarii",
 
   // Shop
   "shop.title": "Magazin de Cadre",
