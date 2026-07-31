@@ -223,13 +223,20 @@ export default function VideoPlayer({ video, currentRendition, resolution, setRe
     || (Array.isArray(video.thumbnail_options) && video.thumbnail_options[0])
     || null;
   const posterUrl = posterRel ? mediaUrl(posterRel) : "";
+  // For vertical shorts we deliberately leave the letterboxed sides pure black.
+  // Painting the thumbnail behind the <video> causes a visible repaint flicker
+  // whenever a subtitle line appears/disappears (browsers redraw the layer).
+  const isShort = !!video.is_short;
+  const wrapStyle = posterUrl && !isShort
+    ? { backgroundImage: `url(${posterUrl})`, backgroundSize: "cover", backgroundPosition: "center", backgroundRepeat: "no-repeat" }
+    : undefined;
 
   return (
     <div
       ref={wrapRef}
       className={`relative w-full h-full bg-black group player-wrap ${controlsVisible ? "controls-visible" : "controls-hidden"}`}
       data-testid="video-player"
-      style={posterUrl ? { backgroundImage: `url(${posterUrl})`, backgroundSize: "cover", backgroundPosition: "center", backgroundRepeat: "no-repeat" } : undefined}
+      style={wrapStyle}
     >
       <video
         ref={ref}
@@ -246,7 +253,8 @@ export default function VideoPlayer({ video, currentRendition, resolution, setRe
         onEnded={() => { if (typeof onEnded === "function") onEnded(); }}
         onClick={handlePlayerClick}
         onDoubleClick={handlePlayerDblClick}
-        poster={posterUrl || undefined}
+        /* Same rule: don't paint the poster on the <video> for shorts. */
+        poster={!isShort && posterUrl ? posterUrl : undefined}
       >
         {(video.subtitles || []).map((s, i) => (
           <track
@@ -263,8 +271,9 @@ export default function VideoPlayer({ video, currentRendition, resolution, setRe
 
       {/* Overlay poster — guarantees the thumbnail shows even when the
           browser hides the <video poster> attribute after loading metadata.
-          Disappears the moment playback starts. */}
-      {posterUrl && !hasPlayed && (
+          Disappears the moment playback starts. Skipped for shorts so the
+          letterboxed sides stay black (avoids subtitle-related repaint flicker). */}
+      {posterUrl && !hasPlayed && !isShort && (
         <img
           src={posterUrl}
           alt=""
