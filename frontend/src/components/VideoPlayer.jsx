@@ -63,11 +63,13 @@ export default function VideoPlayer({ video, currentRendition, resolution, setRe
     const v = ref.current;
     if (!v) return;
     const wasPlaying = !v.paused;
-    // NB: reset `savedTime` to 0 first — otherwise when the parent swaps the
-    // video (e.g. series auto-advance) we'd seek to the stale last-known time
-    // of the *previous* episode, which is usually its duration → the new
-    // episode appears "already finished" and no autoplay.
+    // Reset state that is tied to the *previous* video source, otherwise:
+    //  - `savedTime` would seek us to the last-known time of the old episode
+    //    (usually its duration → new episode appears already finished).
+    //  - `hasPlayed` would keep the central play button hidden on a video that
+    //    hasn't actually been started yet.
     setSavedTime(0);
+    setHasPlayed(false);
     v.currentTime = 0;
     // Autoplay when either (a) we were already playing before the src swap or
     // (b) the parent explicitly requested it (e.g. series auto-advance).

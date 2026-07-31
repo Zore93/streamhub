@@ -268,7 +268,6 @@ export default function Watch() {
             </div>
           ) : currentRendition ? (
             <VideoPlayer
-              key={video.id}
               video={video}
               currentRendition={currentRendition}
               resolution={resolution}
