@@ -52,6 +52,41 @@ export default function Watch() {
     navigate(`/watch/${nextInSeries.slug || nextInSeries.id}`);
   };
 
+  // 5-second countdown overlay when an episode ends and there's a next one.
+  const [autoplayCountdown, setAutoplayCountdown] = useState(null); // null | 5..0
+  const countdownTimerRef = useRef(null);
+  const clearAutoplay = () => {
+    if (countdownTimerRef.current) {
+      clearInterval(countdownTimerRef.current);
+      countdownTimerRef.current = null;
+    }
+    setAutoplayCountdown(null);
+  };
+  const startAutoplay = () => {
+    if (!nextInSeries) return;
+    // Guard against a duplicate timer if the video re-emits `ended` (Safari).
+    if (countdownTimerRef.current) return;
+    setAutoplayCountdown(5);
+    countdownTimerRef.current = setInterval(() => {
+      setAutoplayCountdown((c) => {
+        if (c == null) return null;
+        if (c <= 1) {
+          clearInterval(countdownTimerRef.current);
+          countdownTimerRef.current = null;
+          // Navigate on the next tick so React finishes this state update first.
+          setTimeout(goToNextEpisode, 0);
+          return 0;
+        }
+        return c - 1;
+      });
+    }, 1000);
+  };
+  // Reset the countdown whenever we land on a new episode.
+  useEffect(() => {
+    clearAutoplay();
+  }, [id]);
+  useEffect(() => () => clearAutoplay(), []);
+
   useEffect(() => {
     let alive = true;
     Promise.all([
@@ -214,14 +249,55 @@ export default function Watch() {
               )}
             </div>
           ) : currentRendition ? (
-            <VideoPlayer
-              video={video}
-              currentRendition={currentRendition}
-              resolution={resolution}
-              setResolution={setResolution}
-              allowDownload={allowDownload}
-              onEnded={goToNextEpisode}
-            />
+            <>
+              <VideoPlayer
+                video={video}
+                currentRendition={currentRendition}
+                resolution={resolution}
+                setResolution={setResolution}
+                allowDownload={allowDownload}
+                onEnded={startAutoplay}
+              />
+              {nextInSeries && autoplayCountdown !== null && (
+                <div
+                  className="absolute inset-0 z-30 flex items-center justify-center bg-black/85 backdrop-blur-sm"
+                  data-testid="autoplay-overlay"
+                >
+                  <div className="max-w-md w-full text-center px-6">
+                    <div className="text-xs uppercase tracking-[0.24em] text-zinc-500 mb-2">
+                      Următorul episod în {autoplayCountdown}…
+                    </div>
+                    {nextInSeries.thumbnail_url && (
+                      <img
+                        src={mediaUrl(nextInSeries.thumbnail_url)}
+                        alt=""
+                        className="mx-auto mb-3 rounded-md max-h-40 object-cover shadow-lg"
+                      />
+                    )}
+                    <h3 className="text-lg font-semibold text-zinc-50 mb-4 line-clamp-2">
+                      {nextInSeries.title}
+                    </h3>
+                    <div className="flex justify-center gap-2">
+                      <Button
+                        variant="outline"
+                        onClick={clearAutoplay}
+                        className="border-zinc-700 hover:bg-zinc-800"
+                        data-testid="autoplay-cancel"
+                      >
+                        Anulează
+                      </Button>
+                      <Button
+                        onClick={() => { clearAutoplay(); goToNextEpisode(); }}
+                        className="pro-gradient text-white border-0"
+                        data-testid="autoplay-play-now"
+                      >
+                        Redă acum
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </>
           ) : (
             <div className="absolute inset-0 flex items-center justify-center text-zinc-500">
               {video.status}...

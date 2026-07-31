@@ -130,7 +130,7 @@ export default function Home() {
         seeMoreLabel={seeMore}
       />
       <Section
-        title={t("home.lastShorts").replace("XXX", String(shorts.length))}
+        title={t("home.lastShorts")}
         Icon={Smartphone}
         videos={shorts}
         seeMoreTo="/shorts/all"
@@ -140,7 +140,7 @@ export default function Home() {
       />
       {shortsSeries.length > 0 && (
         <Section
-          title={t("home.lastShortsSeries").replace("XXX", String(shortsSeries.length))}
+          title={t("home.lastShortsSeries")}
           Icon={Film}
           seeMoreTo="/shorts"
           testId="section-shorts-series"
