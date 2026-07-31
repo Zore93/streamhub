@@ -632,27 +632,39 @@ function CategoriesTab() {
 }
 function ShortsSeriesTab() {
   const [list, setList] = useState([]);
-  const [form, setForm] = useState({ name: "", slug: "", description: "", cover_thumbnail: "", tags: "", active: true, sort_order: 0 });
+  const [form, setForm] = useState({ name: "", slug: "", description: "", tags: "", active: true });
+  const [coverFile, setCoverFile] = useState(null);
+  const [busy, setBusy] = useState(false);
   const load = () => api.get("/shorts-series/all").then((r) => setList(r.data));
   useEffect(() => { load(); }, []);
 
   const create = async () => {
     if (!form.name.trim()) return toast.error("Nume obligatoriu");
+    setBusy(true);
     try {
-      await api.post("/shorts-series", {
+      const { data: series } = await api.post("/shorts-series", {
         name: form.name.trim(),
         slug: form.slug.trim() || undefined,
         description: form.description,
-        cover_thumbnail: form.cover_thumbnail.trim(),
         tags: form.tags.split(",").map((t) => t.trim()).filter(Boolean),
         active: form.active,
-        sort_order: parseInt(form.sort_order) || 0,
       });
-      setForm({ name: "", slug: "", description: "", cover_thumbnail: "", tags: "", active: true, sort_order: 0 });
+      // Upload cover in a second step so we can attach the file directly to Wasabi
+      if (coverFile) {
+        const fd = new FormData();
+        fd.append("file", coverFile);
+        await api.post(`/shorts-series/${series.id}/cover`, fd, {
+          headers: { "Content-Type": "multipart/form-data" },
+        });
+      }
+      setForm({ name: "", slug: "", description: "", tags: "", active: true });
+      setCoverFile(null);
       toast.success("Serie creată");
       load();
     } catch (e) {
       toast.error(e.response?.data?.detail || "Eroare");
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -679,16 +691,67 @@ function ShortsSeriesTab() {
         <div className="grid grid-cols-2 gap-3">
           <Input placeholder="Nume (ex: Compilații funny)" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className="bg-zinc-950 border-zinc-800" data-testid="new-series-name" />
           <Input placeholder="Slug (opțional — auto)" value={form.slug} onChange={(e) => setForm({ ...form, slug: e.target.value })} className="bg-zinc-950 border-zinc-800" data-testid="new-series-slug" />
-          <Input placeholder="URL cover thumbnail (portret 2:3 recomandat)" value={form.cover_thumbnail} onChange={(e) => setForm({ ...form, cover_thumbnail: e.target.value })} className="bg-zinc-950 border-zinc-800 col-span-2" data-testid="new-series-cover" />
-          <Input placeholder="Tag-uri (separate prin virgulă)" value={form.tags} onChange={(e) => setForm({ ...form, tags: e.target.value })} className="bg-zinc-950 border-zinc-800" data-testid="new-series-tags" />
-          <Input type="number" placeholder="Sort order (0)" value={form.sort_order} onChange={(e) => setForm({ ...form, sort_order: e.target.value })} className="bg-zinc-950 border-zinc-800" />
+          <Input placeholder="Tag-uri (separate prin virgulă)" value={form.tags} onChange={(e) => setForm({ ...form, tags: e.target.value })} className="bg-zinc-950 border-zinc-800 col-span-2" data-testid="new-series-tags" />
           <Textarea placeholder="Descriere" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} className="bg-zinc-950 border-zinc-800 col-span-2" />
+          <div className="col-span-2">
+            <label className="text-xs text-zinc-400 mb-1.5 block">Cover thumbnail (portret 2:3 recomandat, ≤ 8 MB)</label>
+            <label
+              htmlFor="new-series-cover-file"
+              className="flex items-center gap-3 bg-zinc-950 border border-dashed border-zinc-700 hover:border-zinc-500 rounded-md p-3 cursor-pointer transition-colors"
+              data-testid="new-series-cover-label"
+            >
+              {coverFile ? (
+                <>
+                  <img
+                    src={URL.createObjectURL(coverFile)}
+                    alt="preview"
+                    className="w-14 aspect-[2/3] object-cover rounded border border-zinc-700"
+                  />
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm text-zinc-200 truncate">{coverFile.name}</div>
+                    <div className="text-xs text-zinc-500">{(coverFile.size / 1024).toFixed(0)} KB · click pentru a schimba</div>
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); setCoverFile(null); }}
+                    className="text-zinc-400 hover:text-zinc-100"
+                  >
+                    <Trash2 size={14} />
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <div className="w-14 aspect-[2/3] rounded border border-dashed border-zinc-700 flex items-center justify-center text-zinc-600">
+                    <UploadIcon size={18} />
+                  </div>
+                  <div className="text-sm text-zinc-400">
+                    Alege o imagine (JPG / PNG / WebP)
+                  </div>
+                </>
+              )}
+            </label>
+            <input
+              id="new-series-cover-file"
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (!f) return;
+                if (f.size > 8 * 1024 * 1024) { toast.error("Max 8 MB"); return; }
+                setCoverFile(f);
+                e.target.value = "";
+              }}
+              data-testid="new-series-cover-file"
+            />
+          </div>
         </div>
         <div className="flex items-center gap-3 mt-3">
           <Switch checked={form.active} onCheckedChange={(v) => setForm({ ...form, active: v })} />
           <span className="text-xs text-zinc-400">Activă (vizibilă pe /shorts)</span>
-          <Button onClick={create} className="ml-auto pro-gradient text-white border-0" data-testid="new-series-btn">
-            Adaugă serie
+          <Button onClick={create} disabled={busy} className="ml-auto pro-gradient text-white border-0" data-testid="new-series-btn">
+            {busy ? "Se creează…" : "Adaugă serie"}
           </Button>
         </div>
       </div>
@@ -733,7 +796,7 @@ function ShortsSeriesTab() {
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                   <div className="font-semibold text-zinc-100 truncate">{s.name}</div>
-                  <div className="text-xs text-zinc-500">slug: <code className="text-zinc-400">/{s.slug}</code> · {s.episode_count} episoade · order {s.sort_order}</div>
+                  <div className="text-xs text-zinc-500">slug: <code className="text-zinc-400">/{s.slug}</code> · {s.episode_count} episoade</div>
                   {s.tags?.length > 0 && (
                     <div className="text-[11px] text-zinc-500 mt-1 line-clamp-1">{s.tags.join(" · ")}</div>
                   )}
