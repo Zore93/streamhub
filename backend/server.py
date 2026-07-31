@@ -2886,8 +2886,140 @@ async def add_subtitle(
         id=sub_id, language=language, label=label,
         url=rel_vtt, original_url=rel_orig, format=ext[1:],
     ).model_dump()
+    # Diagnostic: peek at the earliest cue timestamp so we can warn users when
+    # a subtitle file is timed for a different edit of the video (e.g. someone
+    # re-uses a full-episode SRT on a short clip cut from that episode).
+    try:
+        first_cue = _first_cue_seconds(vtt_path if vtt_path.exists() else None)
+    except Exception:
+        first_cue = None
+    sub["first_cue_seconds"] = first_cue
+    warning = None
+    video_duration = float(v.get("duration") or 0)
+    if first_cue is not None and video_duration > 0 and first_cue > video_duration:
+        warning = (
+            f"Subtitle appears to be timed for a different edit — first cue is at "
+            f"{first_cue:.0f}s but the video is only {video_duration:.0f}s long. "
+            f"Use the 'Adjust timing' button to shift it by "
+            f"{-int(first_cue):+d} seconds."
+        )
     await db.videos.update_one({"id": vid}, {"$push": {"subtitles": sub}})
+    if warning:
+        sub["warning"] = warning
     return sub
+
+
+def _first_cue_seconds(vtt_path: Optional[Path]) -> Optional[float]:
+    """Parse the first `HH:MM:SS.mmm --> …` line and return the start in seconds."""
+    if vtt_path is None or not vtt_path.exists():
+        return None
+    import re as _re
+    ts_re = _re.compile(r"(\d{1,3}):(\d{2}):(\d{2})[.,](\d{1,3})\s*-->")
+    try:
+        with open(vtt_path, "r", encoding="utf-8", errors="replace") as f:
+            for line in f:
+                m = ts_re.search(line)
+                if m:
+                    h, mi, s, ms = m.groups()
+                    return int(h) * 3600 + int(mi) * 60 + int(s) + int(ms.ljust(3, "0")) / 1000.0
+    except Exception:
+        return None
+    return None
+
+
+@api.post("/videos/{video_id}/subtitles/{sub_id}/adjust-timing")
+async def adjust_subtitle_timing(
+    video_id: str,
+    sub_id: str,
+    payload: dict,
+    user: dict = Depends(require_user),
+):
+    """Shift every cue in a subtitle by `shift_seconds` (can be negative).
+
+    Common use case: an SRT was cut from a full-episode file so its first cue
+    starts at 01:00:10.  Shifting by -3610s brings it to 00:00:00.
+    """
+    v = await find_video_by_id_or_slug(video_id)
+    if not v:
+        raise HTTPException(404, "Not found")
+    if v.get("uploader_id") != user["id"] and user.get("role") != "admin":
+        raise HTTPException(403, "Not your video")
+    subs = v.get("subtitles", []) or []
+    target = next((s for s in subs if s.get("id") == sub_id), None)
+    if not target:
+        raise HTTPException(404, "Subtitle not found")
+    try:
+        shift = float(payload.get("shift_seconds", 0))
+    except (TypeError, ValueError):
+        raise HTTPException(400, "shift_seconds must be a number")
+    if shift == 0:
+        return {"ok": True, "unchanged": True}
+
+    # Locate the local VTT (fall back to downloading from Wasabi if needed).
+    vid = v["id"]
+    local_vtt = UPLOAD_DIR / "subtitles" / f"{vid}_{sub_id}.vtt"
+    settings = await get_settings()
+    if not local_vtt.exists():
+        try:
+            import aiohttp
+            url = await maybe_sign_url(None, target["url"], settings, 300)
+            async with aiohttp.ClientSession() as s:
+                async with s.get(url) as r:
+                    if r.status != 200:
+                        raise HTTPException(502, f"Cannot fetch VTT (status {r.status})")
+                    data = await r.read()
+            local_vtt.parent.mkdir(parents=True, exist_ok=True)
+            local_vtt.write_bytes(data)
+        except HTTPException:
+            raise
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(500, f"Failed to load VTT for adjustment: {type(e).__name__}") from e
+
+    # Shift every "HH:MM:SS.mmm --> HH:MM:SS.mmm" line.
+    import re as _re
+    ts_re = _re.compile(r"(\d{1,3}):(\d{2}):(\d{2})[.,](\d{1,3})")
+
+    def to_seconds(h, m, s, ms):
+        return int(h) * 3600 + int(m) * 60 + int(s) + int(ms.ljust(3, "0")) / 1000.0
+
+    def to_ts(total: float):
+        total = max(0.0, total)
+        h = int(total // 3600)
+        m = int((total % 3600) // 60)
+        s = int(total % 60)
+        ms = int(round((total - int(total)) * 1000))
+        # WebVTT uses "." separator, keep it.
+        return f"{h:02d}:{m:02d}:{s:02d}.{ms:03d}"
+
+    def shift_line(line: str) -> str:
+        def _sub(match):
+            h, m, s, ms = match.groups()
+            new = to_seconds(h, m, s, ms) + shift
+            return to_ts(new)
+        return ts_re.sub(_sub, line)
+
+    text = local_vtt.read_text(encoding="utf-8", errors="replace")
+    new_lines = []
+    for line in text.splitlines(keepends=True):
+        # Only shift lines that contain the cue-arrow, to avoid corrupting the
+        # WEBVTT header, style blocks, or subtitle body text.
+        if "-->" in line:
+            new_lines.append(shift_line(line))
+        else:
+            new_lines.append(line)
+    local_vtt.write_text("".join(new_lines), encoding="utf-8")
+
+    # If Wasabi is configured, re-upload the shifted file so signed URLs pick up
+    # the new content on next fetch.
+    if wasabi_configured(settings):
+        rel_vtt = f"subtitles/{vid}_{sub_id}.vtt"
+        new_url = await wasabi_upload(str(local_vtt), rel_vtt, settings, "text/vtt")
+        if new_url:
+            await db.videos.update_one(
+                {"id": vid, "subtitles.id": sub_id},
+                {"$set": {"subtitles.$.url": new_url}},
+            )
+    return {"ok": True, "shift_seconds": shift}
 
 
 @api.post("/videos/{video_id}/extract-embedded-subs")

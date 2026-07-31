@@ -156,6 +156,26 @@ export default function EditVideo() {
     }
   };
 
+  const adjustSubtitleTiming = async (sid) => {
+    const raw = window.prompt(
+      "Ajustare timing — introdu numărul de secunde cu care să se deplaseze fiecare linie.\n\n" +
+      "Exemple:\n" +
+      "  -3610  → mută cu 1h 0m 10s ÎNAINTE (pentru SRT-uri sincronizate pe episod complet)\n" +
+      "  +2     → împinge subtitrarea cu 2s ÎNAPOI (dacă e prea devreme)\n" +
+      "  -0.5   → aduce subtitrarea cu 500 ms mai devreme"
+    );
+    if (raw == null) return;
+    const shift = Number(raw);
+    if (!Number.isFinite(shift) || shift === 0) return;
+    try {
+      await api.post(`/videos/${id}/subtitles/${sid}/adjust-timing`, { shift_seconds: shift });
+      await load();
+      toast.success(`Timing ajustat cu ${shift > 0 ? "+" : ""}${shift}s`);
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || e.message || "Adjust failed");
+    }
+  };
+
   const setDefaultSub = async (sid) => {
     // Re-order so the chosen sub is first — the player auto-shows the first track.
     const subs = v.subtitles || [];
@@ -404,6 +424,16 @@ export default function EditVideo() {
                     <StarOff size={12} className="mr-1" /> Make default
                   </Button>
                 )}
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => adjustSubtitleTiming(s.id)}
+                  className="border-zinc-700 hover:bg-zinc-800"
+                  data-testid={`sub-adjust-${s.id}`}
+                  title={s.first_cue_seconds != null ? `Prima linie apare la ${s.first_cue_seconds.toFixed(1)}s` : "Ajustează timing-ul"}
+                >
+                  ⏱ Ajustează timing
+                </Button>
                 <Button size="sm" variant="destructive" onClick={() => delSubtitle(s.id)} data-testid={`sub-del-${s.id}`}><Trash2 size={14} /></Button>
               </div>
             </div>
