@@ -129,6 +129,8 @@ class Video(BaseModel):
     subtitles: List[Subtitle] = []
     access_tier: str = "free"  # free | pro | vip
     is_short: bool = False  # True for vertical / short-form clips
+    shorts_series_id: Optional[str] = None
+    shorts_series_position: Optional[int] = None  # manual episode ordering within a series
     views: int = 0
     likes: List[str] = []  # user ids
     created_at: str = Field(default_factory=now_iso)
@@ -152,7 +154,22 @@ class VideoUpdateReq(BaseModel):
     access_tier: Optional[str] = None
     thumbnail_url: Optional[str] = None
     is_short: Optional[bool] = None
+    shorts_series_id: Optional[str] = None
+    shorts_series_position: Optional[int] = None
     subtitles: Optional[List[dict]] = None  # allow reordering (set default) only — items must already exist
+
+
+# ============ SHORTS SERIES ============
+class ShortsSeries(BaseModel):
+    id: str = Field(default_factory=new_id)
+    name: str
+    slug: str
+    description: str = ""
+    cover_thumbnail: str = ""
+    tags: List[str] = []
+    active: bool = True
+    sort_order: int = 0
+    created_at: str = Field(default_factory=now_iso)
 
 
 # ============ COMMENT ============

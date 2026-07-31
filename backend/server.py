@@ -72,6 +72,7 @@ from models import (
     Package,
     PaymentTransaction,
     RegisterReq,
+    ShortsSeries,
     StatsResponse,
     User,
     UserPublic,
@@ -846,6 +847,123 @@ async def delete_category(cat_id: str, admin: dict = Depends(require_admin)):
     return {"ok": True}
 
 
+# ============ SHORTS SERIES ============
+async def _series_with_stats(s: dict) -> dict:
+    """Attach episode_count so the frontend can render Netflix-style poster cards."""
+    if not s:
+        return s
+    s.pop("_id", None)
+    s["episode_count"] = await db.videos.count_documents({
+        "shorts_series_id": s["id"],
+        "status": "ready",
+    })
+    return s
+
+
+@api.get("/shorts-series")
+async def list_shorts_series():
+    """Public — active series only, sorted by sort_order then name."""
+    docs = await db.shorts_series.find({"active": True}, {"_id": 0}) \
+        .sort([("sort_order", 1), ("name", 1)]).to_list(200)
+    for d in docs:
+        d["episode_count"] = await db.videos.count_documents({
+            "shorts_series_id": d["id"], "status": "ready",
+        })
+    return docs
+
+
+@api.get("/shorts-series/all")
+async def list_all_shorts_series(admin: dict = Depends(require_admin)):
+    """Admin — everything, active or not."""
+    docs = await db.shorts_series.find({}, {"_id": 0}) \
+        .sort([("sort_order", 1), ("name", 1)]).to_list(500)
+    for d in docs:
+        d["episode_count"] = await db.videos.count_documents({"shorts_series_id": d["id"]})
+    return docs
+
+
+@api.get("/shorts-series/{key}")
+async def get_shorts_series(key: str):
+    s = await db.shorts_series.find_one({"$or": [{"id": key}, {"slug": key}]}, {"_id": 0})
+    if not s:
+        raise HTTPException(404, "Series not found")
+    # Return series + episodes ordered by shorts_series_position (nulls last), then created_at asc
+    episodes = await db.videos.find(
+        {"shorts_series_id": s["id"], "status": "ready"},
+        {"_id": 0},
+    ).to_list(500)
+    episodes.sort(key=lambda v: (
+        v.get("shorts_series_position") if v.get("shorts_series_position") is not None else 10 ** 9,
+        v.get("created_at") or "",
+    ))
+    s["episodes"] = episodes
+    s["episode_count"] = len(episodes)
+    return s
+
+
+@api.post("/shorts-series")
+async def create_shorts_series(payload: dict, admin: dict = Depends(require_admin)):
+    name = (payload.get("name") or "").strip()
+    if not name:
+        raise HTTPException(400, "name required")
+    slug = (payload.get("slug") or slugify(name)).strip() or slugify(name)
+    if await db.shorts_series.find_one({"slug": slug}):
+        raise HTTPException(400, "A series with this slug already exists")
+    s = ShortsSeries(
+        name=name,
+        slug=slug,
+        description=(payload.get("description") or "").strip(),
+        cover_thumbnail=(payload.get("cover_thumbnail") or "").strip(),
+        tags=[t.strip() for t in (payload.get("tags") or []) if str(t).strip()],
+        active=bool(payload.get("active", True)),
+        sort_order=int(payload.get("sort_order") or 0),
+    )
+    await db.shorts_series.insert_one(s.model_dump())
+    return s.model_dump()
+
+
+@api.patch("/shorts-series/{series_id}")
+async def update_shorts_series(series_id: str, payload: dict, admin: dict = Depends(require_admin)):
+    allowed = {"name", "slug", "description", "cover_thumbnail", "tags", "active", "sort_order"}
+    upd = {k: v for k, v in payload.items() if k in allowed}
+    if not upd:
+        return {"ok": True}
+    # If slug changed, ensure uniqueness
+    if "slug" in upd:
+        upd["slug"] = (upd["slug"] or "").strip()
+        clash = await db.shorts_series.find_one({"slug": upd["slug"], "id": {"$ne": series_id}})
+        if clash:
+            raise HTTPException(400, "Another series already uses this slug")
+    await db.shorts_series.update_one({"id": series_id}, {"$set": upd})
+    s = await db.shorts_series.find_one({"id": series_id}, {"_id": 0})
+    return await _series_with_stats(s)
+
+
+@api.delete("/shorts-series/{series_id}")
+async def delete_shorts_series(series_id: str, admin: dict = Depends(require_admin)):
+    # Unassign videos then remove the series document
+    await db.videos.update_many(
+        {"shorts_series_id": series_id},
+        {"$set": {"shorts_series_id": None, "shorts_series_position": None}},
+    )
+    await db.shorts_series.delete_one({"id": series_id})
+    return {"ok": True}
+
+
+@api.post("/shorts-series/{series_id}/reorder")
+async def reorder_shorts_series(series_id: str, payload: dict, admin: dict = Depends(require_admin)):
+    """Body: {video_ids: [...]}. Positions are 1-indexed in the order supplied."""
+    ids = payload.get("video_ids") or []
+    if not isinstance(ids, list):
+        raise HTTPException(400, "video_ids must be a list")
+    for pos, vid in enumerate(ids, start=1):
+        await db.videos.update_one(
+            {"id": vid, "shorts_series_id": series_id},
+            {"$set": {"shorts_series_position": pos}},
+        )
+    return {"ok": True, "count": len(ids)}
+
+
 # ============ VIDEOS ============
 @api.get("/videos")
 async def list_videos(
@@ -854,6 +972,7 @@ async def list_videos(
     category_ids: Optional[str] = None,  # comma-separated; up to 2 — extra are ignored
     kind: Optional[str] = None,  # "video" (long) | "short" | None (all)
     access_tier: Optional[str] = None,  # "free" | "pro" | None (both)
+    shorts_series_id: Optional[str] = None,
     q: Optional[str] = None,  # case-insensitive title/tags search
     limit: int = 20,
     skip: int = 0,
@@ -877,6 +996,8 @@ async def list_videos(
         filt["is_short"] = {"$ne": True}
     if access_tier in ("free", "pro", "vip"):
         filt["access_tier"] = access_tier
+    if shorts_series_id:
+        filt["shorts_series_id"] = shorts_series_id
     if q:
         # Build an escaped regex so user input doesn't break Mongo
         import re as _re
@@ -916,6 +1037,7 @@ async def count_videos(
     category_ids: Optional[str] = None,
     kind: Optional[str] = None,
     access_tier: Optional[str] = None,
+    shorts_series_id: Optional[str] = None,
     q: Optional[str] = None,
 ):
     """Counts videos matching the same filters list_videos accepts.
@@ -935,6 +1057,8 @@ async def count_videos(
         filt["is_short"] = {"$ne": True}
     if access_tier in ("free", "pro", "vip"):
         filt["access_tier"] = access_tier
+    if shorts_series_id:
+        filt["shorts_series_id"] = shorts_series_id
     if q:
         import re as _re
         rex = _re.escape(q.strip())

@@ -19,6 +19,8 @@ import Contact from "@/pages/Contact";
 import EditVideo from "@/pages/EditVideo";
 import VideoList from "@/pages/VideoList";
 import Shop from "@/pages/Shop";
+import Shorts from "@/pages/Shorts";
+import ShortsSeriesDetail from "@/pages/ShortsSeriesDetail";
 import SiteHead from "@/components/SiteHead";
 
 function App() {
@@ -38,7 +40,10 @@ function App() {
               <Route path="/popular/page/:page" element={<VideoList variant="popular" />} />
               <Route path="/discover" element={<VideoList variant="discover" />} />
               <Route path="/discover/page/:page" element={<VideoList variant="discover" />} />
-              <Route path="/shorts" element={<VideoList variant="shorts" />} />
+              <Route path="/shorts" element={<Shorts />} />
+              <Route path="/shorts/all" element={<VideoList variant="shorts" />} />
+              <Route path="/shorts/all/page/:page" element={<VideoList variant="shorts" />} />
+              <Route path="/shorts/series/:slug" element={<ShortsSeriesDetail />} />
               <Route path="/shorts/page/:page" element={<VideoList variant="shorts" />} />
               <Route path="/all-episodes" element={<VideoList variant="all" />} />
               <Route path="/all-episodes/page/:page" element={<VideoList variant="all" />} />

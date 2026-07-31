@@ -37,6 +37,7 @@ export default function EditVideo() {
   const nav = useNavigate();
   const [v, setV] = useState(null);
   const [cats, setCats] = useState([]);
+  const [shortsSeries, setShortsSeries] = useState([]);
   const [allLangs, setAllLangs] = useState([]);
   const [subFile, setSubFile] = useState(null);
   const [subLang, setSubLang] = useState("ro");
@@ -52,6 +53,7 @@ export default function EditVideo() {
   useEffect(() => {
     load();
     api.get("/categories").then((r) => setCats(r.data));
+    api.get("/shorts-series").then((r) => setShortsSeries(r.data)).catch(() => setShortsSeries([]));
     api.get("/languages").then((r) => setAllLangs(r.data)).catch(() => setAllLangs(COMMON_LANGS));
   }, [id]);
 
@@ -245,6 +247,56 @@ export default function EditVideo() {
             data-testid="edit-is-short"
           />
         </div>
+        {isShortVideo && (
+          <div className="bg-zinc-950 border border-zinc-800 rounded-md p-3 space-y-3" data-testid="edit-series-block">
+            <div>
+              <Label>Serie Shorts</Label>
+              <Select
+                value={v.shorts_series_id || "none"}
+                onValueChange={(val) => {
+                  const next = val === "none" ? null : val;
+                  setV({ ...v, shorts_series_id: next });
+                  save({ shorts_series_id: next });
+                }}
+              >
+                <SelectTrigger className="bg-zinc-950 border-zinc-800" data-testid="edit-shorts-series">
+                  <SelectValue placeholder="— Fără serie —" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">— Fără serie —</SelectItem>
+                  {shortsSeries.map((s) => (
+                    <SelectItem key={s.id} value={s.id} data-testid={`edit-series-opt-${s.slug || s.id}`}>
+                      {s.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {shortsSeries.length === 0 && (
+                <p className="text-xs text-zinc-500 mt-1">
+                  Nu există serii încă. Creează prima din Panou Admin → Serii Shorts.
+                </p>
+              )}
+            </div>
+            {v.shorts_series_id && (
+              <div>
+                <Label>Poziția episodului</Label>
+                <Input
+                  type="number"
+                  min="1"
+                  value={v.shorts_series_position || ""}
+                  onChange={(e) => setV({ ...v, shorts_series_position: e.target.value ? parseInt(e.target.value) : null })}
+                  onBlur={(e) => save({ shorts_series_position: e.target.value ? parseInt(e.target.value) : null })}
+                  className="bg-zinc-950 border-zinc-800"
+                  placeholder="ex: 1, 2, 3…"
+                  data-testid="edit-shorts-position"
+                />
+                <p className="text-xs text-zinc-500 mt-1">
+                  Ordinea în care apare episodul pe pagina seriei (număr mai mic = mai devreme).
+                </p>
+              </div>
+            )}
+          </div>
+        )}
         {v.thumbnail_options?.length > 0 && (
           <div>
             <Label>Thumbnail</Label>

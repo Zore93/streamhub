@@ -178,6 +178,7 @@ const EN = {
   "common.close": "Close",
   "common.coins": "coins",
   "common.loading": "Loading...",
+  "shorts.viewAll": "All shorts",
 
   // Shop
   "shop.title": "Frame Shop",
@@ -370,6 +371,7 @@ const RO = {
   "common.close": "Închide",
   "common.coins": "monede",
   "common.loading": "Se încarcă...",
+  "shorts.viewAll": "Toate shorts-urile",
 
   // Shop
   "shop.title": "Magazin de Cadre",

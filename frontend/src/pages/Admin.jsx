@@ -35,6 +35,7 @@ export default function Admin() {
           <TabsTrigger value="videos" data-testid="tab-videos">Videos</TabsTrigger>
           <TabsTrigger value="users" data-testid="tab-users">Users</TabsTrigger>
           <TabsTrigger value="categories" data-testid="tab-categories">Categories</TabsTrigger>
+          <TabsTrigger value="shorts_series" data-testid="tab-shorts-series">Serii Shorts</TabsTrigger>
           <TabsTrigger value="packages" data-testid="tab-packages">Packages</TabsTrigger>
           <TabsTrigger value="packages_vip" data-testid="tab-packages-vip">Packages VIP</TabsTrigger>
           <TabsTrigger value="frames" data-testid="tab-frames">Cadre Avatar</TabsTrigger>
@@ -47,6 +48,7 @@ export default function Admin() {
         <TabsContent value="videos"><VideosTab /></TabsContent>
         <TabsContent value="users"><UsersTab /></TabsContent>
         <TabsContent value="categories"><CategoriesTab /></TabsContent>
+        <TabsContent value="shorts_series"><ShortsSeriesTab /></TabsContent>
         <TabsContent value="packages"><PackagesTab tier="pro" /></TabsContent>
         <TabsContent value="packages_vip"><PackagesTab tier="vip" /></TabsContent>
         <TabsContent value="frames"><FramesTab /></TabsContent>
@@ -618,6 +620,110 @@ function CategoriesTab() {
     </div>
   );
 }
+function ShortsSeriesTab() {
+  const [list, setList] = useState([]);
+  const [form, setForm] = useState({ name: "", slug: "", description: "", cover_thumbnail: "", tags: "", active: true, sort_order: 0 });
+  const load = () => api.get("/shorts-series/all").then((r) => setList(r.data));
+  useEffect(() => { load(); }, []);
+
+  const create = async () => {
+    if (!form.name.trim()) return toast.error("Nume obligatoriu");
+    try {
+      await api.post("/shorts-series", {
+        name: form.name.trim(),
+        slug: form.slug.trim() || undefined,
+        description: form.description,
+        cover_thumbnail: form.cover_thumbnail.trim(),
+        tags: form.tags.split(",").map((t) => t.trim()).filter(Boolean),
+        active: form.active,
+        sort_order: parseInt(form.sort_order) || 0,
+      });
+      setForm({ name: "", slug: "", description: "", cover_thumbnail: "", tags: "", active: true, sort_order: 0 });
+      toast.success("Serie creată");
+      load();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Eroare");
+    }
+  };
+
+  const patch = async (id, upd) => {
+    try {
+      await api.patch(`/shorts-series/${id}`, upd);
+      load();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Eroare");
+    }
+  };
+
+  const del = async (s) => {
+    if (!window.confirm(`Ștergi seria "${s.name}"?\n${s.episode_count > 0 ? `Cele ${s.episode_count} episoade vor rămâne, dar nu vor mai fi legate de această serie.` : ""}`)) return;
+    await api.delete(`/shorts-series/${s.id}`);
+    toast.success("Serie ștearsă");
+    load();
+  };
+
+  return (
+    <div className="mt-6 space-y-6" data-testid="admin-shorts-series">
+      <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4">
+        <div className="font-semibold mb-3">Serie Shorts nouă ({list.length})</div>
+        <div className="grid grid-cols-2 gap-3">
+          <Input placeholder="Nume (ex: Compilații funny)" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className="bg-zinc-950 border-zinc-800" data-testid="new-series-name" />
+          <Input placeholder="Slug (opțional — auto)" value={form.slug} onChange={(e) => setForm({ ...form, slug: e.target.value })} className="bg-zinc-950 border-zinc-800" data-testid="new-series-slug" />
+          <Input placeholder="URL cover thumbnail (portret 2:3 recomandat)" value={form.cover_thumbnail} onChange={(e) => setForm({ ...form, cover_thumbnail: e.target.value })} className="bg-zinc-950 border-zinc-800 col-span-2" data-testid="new-series-cover" />
+          <Input placeholder="Tag-uri (separate prin virgulă)" value={form.tags} onChange={(e) => setForm({ ...form, tags: e.target.value })} className="bg-zinc-950 border-zinc-800" data-testid="new-series-tags" />
+          <Input type="number" placeholder="Sort order (0)" value={form.sort_order} onChange={(e) => setForm({ ...form, sort_order: e.target.value })} className="bg-zinc-950 border-zinc-800" />
+          <Textarea placeholder="Descriere" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} className="bg-zinc-950 border-zinc-800 col-span-2" />
+        </div>
+        <div className="flex items-center gap-3 mt-3">
+          <Switch checked={form.active} onCheckedChange={(v) => setForm({ ...form, active: v })} />
+          <span className="text-xs text-zinc-400">Activă (vizibilă pe /shorts)</span>
+          <Button onClick={create} className="ml-auto pro-gradient text-white border-0" data-testid="new-series-btn">
+            Adaugă serie
+          </Button>
+        </div>
+      </div>
+      {list.map((s) => (
+        <div key={s.id} className="bg-zinc-900 border border-zinc-800 rounded-xl p-4" data-testid={`series-row-${s.id}`}>
+          <div className="flex gap-4">
+            {s.cover_thumbnail ? (
+              <img src={s.cover_thumbnail} alt={s.name} className="w-16 aspect-[2/3] object-cover rounded border border-zinc-800 shrink-0" />
+            ) : (
+              <div className="w-16 aspect-[2/3] rounded border border-dashed border-zinc-700 flex items-center justify-center text-zinc-600 text-xs shrink-0">no cover</div>
+            )}
+            <div className="flex-1 min-w-0">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="font-semibold text-zinc-100 truncate">{s.name}</div>
+                  <div className="text-xs text-zinc-500">slug: <code className="text-zinc-400">/{s.slug}</code> · {s.episode_count} episoade · order {s.sort_order}</div>
+                  {s.tags?.length > 0 && (
+                    <div className="text-[11px] text-zinc-500 mt-1 line-clamp-1">{s.tags.join(" · ")}</div>
+                  )}
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <Switch checked={s.active} onCheckedChange={(v) => patch(s.id, { active: v })} data-testid={`series-active-${s.id}`} />
+                  <Button size="sm" variant="destructive" onClick={() => del(s)} data-testid={`series-del-${s.id}`}><Trash2 size={14} /></Button>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mt-3">
+                <Input defaultValue={s.name} onBlur={(e) => e.target.value !== s.name && patch(s.id, { name: e.target.value })} className="bg-zinc-950 border-zinc-800 h-8 text-xs" placeholder="Nume" />
+                <Input defaultValue={s.slug} onBlur={(e) => e.target.value !== s.slug && patch(s.id, { slug: e.target.value })} className="bg-zinc-950 border-zinc-800 h-8 text-xs" placeholder="Slug" />
+                <Input defaultValue={s.cover_thumbnail || ""} onBlur={(e) => e.target.value !== (s.cover_thumbnail || "") && patch(s.id, { cover_thumbnail: e.target.value })} className="bg-zinc-950 border-zinc-800 h-8 text-xs md:col-span-2" placeholder="Cover URL" />
+                <Textarea defaultValue={s.description || ""} onBlur={(e) => e.target.value !== (s.description || "") && patch(s.id, { description: e.target.value })} className="bg-zinc-950 border-zinc-800 text-xs col-span-2 md:col-span-4" placeholder="Descriere" rows={2} />
+              </div>
+            </div>
+          </div>
+        </div>
+      ))}
+      {list.length === 0 && (
+        <p className="text-sm text-zinc-500 text-center py-6" data-testid="shorts-series-empty">
+          Nu există serii Shorts. Creează prima mai sus.
+        </p>
+      )}
+    </div>
+  );
+}
+
+
 
 function PackagesTab({ tier = "pro" }) {
   const isVip = tier === "vip";
