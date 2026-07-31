@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { Flame, Clock, Smartphone, ChevronRight } from "lucide-react";
+import { Flame, Clock, Smartphone, ChevronRight, Film } from "lucide-react";
 import api from "@/lib/api";
 import VideoCard from "@/components/VideoCard";
 import { Button } from "@/components/ui/button";
@@ -8,8 +8,8 @@ import { useT } from "@/contexts/LanguageContext";
 
 const HOME_LIMIT = 12;
 
-function Section({ title, Icon, videos, seeMoreTo, testId, vertical = false, seeMoreLabel }) {
-  if (!videos || videos.length === 0) return null;
+function Section({ title, Icon, videos, seeMoreTo, testId, vertical = false, seeMoreLabel, children }) {
+  if (children == null && (!videos || videos.length === 0)) return null;
   // Mobile: 2 columns of cards parallel (per user request) — matches the
   // typical tube-site layout.  Sizes scale up on tablet/desktop.
   const grid = vertical
@@ -30,10 +30,42 @@ function Section({ title, Icon, videos, seeMoreTo, testId, vertical = false, see
           </Link>
         )}
       </div>
-      <div className={grid}>
-        {videos.map((v) => <VideoCard key={v.id} v={v} vertical={vertical} />)}
-      </div>
+      {children != null ? children : (
+        <div className={grid}>
+          {videos.map((v) => <VideoCard key={v.id} v={v} vertical={vertical} />)}
+        </div>
+      )}
     </section>
+  );
+}
+
+/** Netflix-style horizontal poster row for a Shorts series. */
+function SeriesPosterRow({ series }) {
+  return (
+    <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-8 gap-2 sm:gap-3">
+      {series.map((s) => (
+        <Link
+          key={s.id}
+          to={`/shorts/series/${s.slug || s.id}`}
+          className="group block"
+          data-testid={`home-series-${s.slug || s.id}`}
+        >
+          <div className="relative aspect-[2/3] rounded-lg overflow-hidden bg-zinc-900 border border-zinc-800 group-hover:border-zinc-600 transition-colors">
+            {s.cover_thumbnail ? (
+              <img src={s.cover_thumbnail} alt={s.name} loading="lazy" className="w-full h-full object-cover transition-transform group-hover:scale-105" />
+            ) : (
+              <div className="w-full h-full flex items-center justify-center text-zinc-700"><Film size={28} /></div>
+            )}
+            {s.episode_count > 0 && (
+              <div className="absolute top-1.5 right-1.5 bg-black/70 backdrop-blur-sm text-zinc-100 text-[10px] font-semibold px-1.5 py-0.5 rounded">
+                {s.episode_count} ep
+              </div>
+            )}
+          </div>
+          <div className="mt-1.5 text-xs font-semibold text-zinc-100 line-clamp-1">{s.name}</div>
+        </Link>
+      ))}
+    </div>
   );
 }
 
@@ -42,6 +74,7 @@ export default function Home() {
   const [latest, setLatest] = useState([]);
   const [popular, setPopular] = useState([]);
   const [shorts, setShorts] = useState([]);
+  const [shortsSeries, setShortsSeries] = useState([]);
 
   useEffect(() => {
     const url = (section, extra = "") =>
@@ -52,12 +85,17 @@ export default function Home() {
       .get(`/videos?section=latest&limit=${HOME_LIMIT}&kind=short`)
       .then((r) => setShorts(r.data))
       .catch(() => {});
+    api
+      .get("/shorts-series")
+      .then((r) => setShortsSeries(r.data.slice(0, HOME_LIMIT)))
+      .catch(() => {});
   }, []);
 
   const isEmpty =
     latest.length === 0 &&
     popular.length === 0 &&
-    shorts.length === 0;
+    shorts.length === 0 &&
+    shortsSeries.length === 0;
 
   const seeMore = t("home.seeMore");
   const heroText = (siteCfg?.home_hero_text || "").trim() || t("site.tagline");
@@ -92,14 +130,25 @@ export default function Home() {
         seeMoreLabel={seeMore}
       />
       <Section
-        title={t("home.lastShorts")}
+        title={t("home.lastShorts").replace("XXX", String(shorts.length))}
         Icon={Smartphone}
         videos={shorts}
-        seeMoreTo="/shorts"
+        seeMoreTo="/shorts/all"
         testId="section-shorts"
         vertical
         seeMoreLabel={seeMore}
       />
+      {shortsSeries.length > 0 && (
+        <Section
+          title={t("home.lastShortsSeries").replace("XXX", String(shortsSeries.length))}
+          Icon={Film}
+          seeMoreTo="/shorts"
+          testId="section-shorts-series"
+          seeMoreLabel={seeMore}
+        >
+          <SeriesPosterRow series={shortsSeries} />
+        </Section>
+      )}
     </div>
   );
 }

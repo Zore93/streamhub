@@ -25,11 +25,32 @@ export default function Watch() {
   const [resolution, setResolution] = useState(null);
   const [allowDownload, setAllowDownload] = useState(false);
   const [categories, setCategories] = useState([]);
+  const [nextInSeries, setNextInSeries] = useState(null);
 
   useEffect(() => {
     api.get("/categories").then((r) => setCategories(r.data)).catch(() => {});
   }, []);
   const category = categories.find((c) => c.id === video?.category_id);
+
+  // When this video belongs to a Shorts series, look up the next episode so
+  // we can auto-advance playback + show a "Next episode" link in the UI.
+  useEffect(() => {
+    if (!video?.shorts_series_id) { setNextInSeries(null); return; }
+    let alive = true;
+    api.get(`/shorts-series/${video.shorts_series_id}`).then((r) => {
+      if (!alive) return;
+      const eps = r.data.episodes || [];
+      const idx = eps.findIndex((e) => e.id === video.id);
+      const next = idx >= 0 && idx + 1 < eps.length ? eps[idx + 1] : null;
+      setNextInSeries(next);
+    }).catch(() => {});
+    return () => { alive = false; };
+  }, [video?.shorts_series_id, video?.id]);
+
+  const goToNextEpisode = () => {
+    if (!nextInSeries) return;
+    navigate(`/watch/${nextInSeries.slug || nextInSeries.id}`);
+  };
 
   useEffect(() => {
     let alive = true;
@@ -149,9 +170,10 @@ export default function Watch() {
 
   const isVipVideo = video.access_tier === "vip";
   const isProVideo = video.access_tier === "pro";
-  const isLocked = video.locked
-    || (isVipVideo && !user?.is_vip)
-    || (isProVideo && !(user?.is_pro || user?.is_vip));
+  // The server is the source of truth for locked state (it already applied the
+  // tier hierarchy + admin bypass). Fall back to a client-side check only when
+  // the server left the flag unset AND the client-side user object is fresh.
+  const isLocked = video.locked === true;
   const hasPlayable = (video.renditions || []).length > 0;
   const isProcessing = !isLocked && (!hasPlayable || video.status === "processing");
 
@@ -198,6 +220,7 @@ export default function Watch() {
               resolution={resolution}
               setResolution={setResolution}
               allowDownload={allowDownload}
+              onEnded={goToNextEpisode}
             />
           ) : (
             <div className="absolute inset-0 flex items-center justify-center text-zinc-500">
@@ -208,15 +231,28 @@ export default function Watch() {
 
         <div className="flex items-center justify-between mt-5 mb-2 flex-wrap gap-2">
           <h1 className="text-2xl sm:text-3xl font-bold font-heading">{video.title}</h1>
-          {video.access_tier === "vip" ? (
-            <span className="vip-gradient text-black text-xs font-bold px-3 py-1 rounded-md flex items-center gap-1" data-testid="watch-vip-badge">
-              <Crown size={12} /> VIP
-            </span>
-          ) : video.access_tier === "pro" && (
-            <span className="pro-gradient text-white text-xs font-semibold px-3 py-1 rounded-md flex items-center gap-1" data-testid="watch-pro-badge">
-              <Crown size={12} /> PRO
-            </span>
-          )}
+          <div className="flex items-center gap-2 flex-wrap">
+            {nextInSeries && (
+              <button
+                type="button"
+                onClick={goToNextEpisode}
+                className="text-xs px-3 py-1.5 rounded-md bg-zinc-800 hover:bg-zinc-700 text-zinc-100 flex items-center gap-1.5 transition-colors"
+                data-testid="next-episode-btn"
+                title={nextInSeries.title}
+              >
+                Next → <span className="text-zinc-400 max-w-[220px] truncate">{nextInSeries.title}</span>
+              </button>
+            )}
+            {video.access_tier === "vip" ? (
+              <span className="vip-gradient text-black text-xs font-bold px-3 py-1 rounded-md flex items-center gap-1" data-testid="watch-vip-badge">
+                <Crown size={12} /> VIP
+              </span>
+            ) : video.access_tier === "pro" && (
+              <span className="pro-gradient text-white text-xs font-semibold px-3 py-1 rounded-md flex items-center gap-1" data-testid="watch-pro-badge">
+                <Crown size={12} /> PRO
+              </span>
+            )}
+          </div>
         </div>
 
         <div className="flex flex-wrap items-center gap-3 sm:gap-4 mb-4">

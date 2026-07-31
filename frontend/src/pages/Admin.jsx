@@ -376,6 +376,7 @@ function VideosTab() {
 }
 
 function UsersTab() {
+  const { user: currentAdmin, refresh: refreshAuth } = useAuth();
   const [users, setUsers] = useState([]);
   const [total, setTotal] = useState(0);
   const [skip, setSkip] = useState(0);
@@ -431,17 +432,27 @@ function UsersTab() {
     const body = { duration, custom_days: parseInt(proDays[u.id] || 1) };
     await api.post(`/admin/users/${u.id}/grant-pro`, body);
     toast.success("PRO granted");
+    if (u.id === currentAdmin?.id) await refreshAuth();
     reload();
   };
-  const revokePro = async (u) => { await api.post(`/admin/users/${u.id}/revoke-pro`); reload(); };
+  const revokePro = async (u) => {
+    await api.post(`/admin/users/${u.id}/revoke-pro`);
+    if (u.id === currentAdmin?.id) await refreshAuth();
+    reload();
+  };
   const grantVip = async (u) => {
     const duration = vipDur[u.id] || "1month";
     const body = { duration, custom_days: parseInt(vipDays[u.id] || 1) };
     await api.post(`/admin/users/${u.id}/grant-vip`, body);
     toast.success("VIP granted");
+    if (u.id === currentAdmin?.id) await refreshAuth();
     reload();
   };
-  const revokeVip = async (u) => { await api.post(`/admin/users/${u.id}/revoke-vip`); reload(); };
+  const revokeVip = async (u) => {
+    await api.post(`/admin/users/${u.id}/revoke-vip`);
+    if (u.id === currentAdmin?.id) await refreshAuth();
+    reload();
+  };
 
   const hasMore = users.length < total;
   return (

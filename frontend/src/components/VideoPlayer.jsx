@@ -10,7 +10,7 @@ import {
  * Custom video player with rearrangeable controls so that the order along the
  * bottom bar is:  play · time · scrubber │ volume · CC · resolution · download · fullscreen
  */
-export default function VideoPlayer({ video, currentRendition, resolution, setResolution, allowDownload }) {
+export default function VideoPlayer({ video, currentRendition, resolution, setResolution, allowDownload, onEnded }) {
   const ref = useRef(null);
   const wrapRef = useRef(null);
   const hideTimerRef = useRef(null);
@@ -243,6 +243,7 @@ export default function VideoPlayer({ video, currentRendition, resolution, setRe
         preload="metadata"
         playsInline
         onTimeUpdate={() => setSavedTime(ref.current?.currentTime || 0)}
+        onEnded={() => { if (typeof onEnded === "function") onEnded(); }}
         onClick={handlePlayerClick}
         onDoubleClick={handlePlayerDblClick}
         poster={posterUrl || undefined}

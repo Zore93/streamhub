@@ -1113,18 +1113,21 @@ async def get_video(video_id: str, request: Request, user: Optional[dict] = Depe
     #   free -> everyone
     #   pro  -> PRO or VIP users
     #   vip  -> only VIP users
-    if tier in ("pro", "vip"):
+    #   admin bypass -> admins can always see the raw content (needed for the
+    #                   edit page, subtitle management, thumbnail picking, etc.)
+    is_admin = bool(user and user.get("role") == "admin")
+    if tier in ("pro", "vip") and not is_admin:
         is_pro = bool(user and user.get("is_pro"))
         is_vip = bool(user and user.get("is_vip"))
-        if tier == "vip":
-            allowed = is_vip
-        else:  # pro
-            allowed = is_pro or is_vip
+        allowed = is_vip if tier == "vip" else (is_pro or is_vip)
         if not allowed:
             v["locked"] = True
             v["renditions"] = []
             v["subtitles"] = []
             return v
+    # Sign renditions + subtitles for the response (needed for tiered content
+    # AND for admins previewing paywalled videos in the edit page).
+    if tier in ("pro", "vip"):
         settings = await get_settings()
         ttl = int(settings.get("signed_url_ttl_seconds", 300))
         signed_rends = []
