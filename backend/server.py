@@ -1938,6 +1938,13 @@ async def admin_list_users(
     envelope so the admin UI can render correct counts + "Load more".
     """
     filt: dict = {}
+    # Sweep expired PRO/VIP first so the admin table always reflects reality
+    # instead of the "true" flag that would otherwise linger until the affected
+    # user next logs in.
+    try:
+        await _expire_stale_subscriptions()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[admin_list_users] expire sweep failed: %s", e)
     if q and q.strip():
         import re as _re
         rex = _re.escape(q.strip())
@@ -2715,6 +2722,61 @@ async def startup():
 
     app.state.chunks_janitor = asyncio.create_task(_chunks_janitor())
 
+    # ────────────────────────────────────────────────────────────────
+    # Subscription expiry sweeper
+    # ────────────────────────────────────────────────────────────────
+    # `is_pro` / `is_vip` are lazily expired on the user's own login/API calls
+    # (see `current_user`), but users who don't log in for weeks keep showing
+    # "active" in the admin panel long past their `pro_expires_at`.  This sweeper
+    # runs at boot + hourly and flips the flag DB-side, matching what an
+    # admin looking at the collection expects.
+    try:
+        expired = await _expire_stale_subscriptions()
+        if expired:
+            logger.info("[startup] expired %d stale PRO/VIP subscription(s)", expired)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("[startup] subscription expiry error: %s", e)
+
+    async def _subs_janitor():
+        while True:
+            try:
+                await asyncio.sleep(3600)  # 1h
+                await _expire_stale_subscriptions()
+            except asyncio.CancelledError:
+                return
+            except Exception as e:  # noqa: BLE001
+                logger.warning("[subs-janitor] error: %s", e)
+
+    app.state.subs_janitor = asyncio.create_task(_subs_janitor())
+
+
+async def _expire_stale_subscriptions() -> int:
+    """Flip `is_pro` / `is_vip` to False for users whose expiry is in the past.
+
+    "permanent" (a literal string set by the admin grant flow) is preserved as
+    a sentinel that never expires.  ISO-8601 strings are compared lexicographically
+    against `now.isoformat()` which is correct because both are UTC + fixed-width.
+    """
+    now_iso = datetime.now(timezone.utc).isoformat()
+    total = 0
+    r1 = await db.users.update_many(
+        {
+            "is_pro": True,
+            "pro_expires_at": {"$exists": True, "$nin": [None, "permanent"], "$lt": now_iso},
+        },
+        {"$set": {"is_pro": False}},
+    )
+    total += r1.modified_count or 0
+    r2 = await db.users.update_many(
+        {
+            "is_vip": True,
+            "vip_expires_at": {"$exists": True, "$nin": [None, "permanent"], "$lt": now_iso},
+        },
+        {"$set": {"is_vip": False}},
+    )
+    total += r2.modified_count or 0
+    return total
+
 
 @app.on_event("shutdown")
 async def shutdown():
@@ -2722,6 +2784,9 @@ async def shutdown():
     task = getattr(app.state, "chunks_janitor", None)
     if task and not task.done():
         task.cancel()
+    subs_task = getattr(app.state, "subs_janitor", None)
+    if subs_task and not subs_task.done():
+        subs_task.cancel()
     client.close()
 
 

@@ -1,0 +1,35 @@
+{
+  "verdict": "fixed",
+  "user_reported_bug": "Am dat de un bug: De cele mai multe ori cand un pachet pro sau vip ar trebui sa expire, tot continua acel user sa aibe activ pahetul. Ca in imaginea atasata, sunt 2 pachete pro care ar fi trebuit sa expire pe data de 31/07/2026 , dar inca au statusul ca \"true\" in columul \"is_pro\" chiar daca a expirat.",
+  "summary": "No relevant testing skill found. Focused backend verification passed: seeded expired/future/permanent/null/missing PRO and VIP users in MongoDB, verified startup sweep after backend restart, verified GET /api/admin/users sweeps stale flags before returning data, and verified grant-pro/grant-vip future and permanent regressions.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/test_reports/test_subscription_expiry.py",
+    "/app/test_reports/bug_verification_19.json",
+    "/app/test_reports/iteration_19.json"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [],
+  "updated_files": [
+    "/app/test_reports/test_subscription_expiry.py",
+    "/app/test_reports/bug_verification_19.json",
+    "/app/test_reports/iteration_19.json"
+  ],
+  "success_rate": {
+    "backend": "100%",
+    "frontend": "not tested - backend only bug"
+  },
+  "seed_data_creation": "Created disposable MongoDB users with email prefix bug-expiry-qa-8c334a00 during test; cleanup ran at script exit and removed the seeded users.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Test script restarted supervisor-managed backend, observed /var/log/supervisor/backend.err.log startup message '[startup] expired 2 stale PRO/VIP subscription(s)', then authenticated as admin@streamhub.io and verified /api/admin/users response and MongoDB persistence for expired/future/permanent/null/missing PRO/VIP cases plus grant-pro/grant-vip regressions.",
+  "rca_of_the_issue": "Previous behavior left expired is_pro/is_vip flags in MongoDB until a lazy user action occurred. The new sweeper is called at startup and before admin user listing; runtime evidence showed it flips stale flags and preserves future, permanent, null, and missing expiries. No mocked APIs were used."
+}
