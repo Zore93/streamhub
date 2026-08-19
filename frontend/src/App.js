@@ -40,11 +40,15 @@ function App() {
               <Route path="/popular/page/:page" element={<VideoList variant="popular" />} />
               <Route path="/discover" element={<VideoList variant="discover" />} />
               <Route path="/discover/page/:page" element={<VideoList variant="discover" />} />
-              <Route path="/shorts" element={<Shorts />} />
-              <Route path="/shorts/all" element={<VideoList variant="shorts" />} />
-              <Route path="/shorts/all/page/:page" element={<VideoList variant="shorts" />} />
-              <Route path="/shorts/series/:slug" element={<ShortsSeriesDetail />} />
-              <Route path="/shorts/page/:page" element={<VideoList variant="shorts" />} />
+              <Route path="/shorts" element={<Shorts category="xxx" />} />
+              <Route path="/shorts/all" element={<VideoList variant="shorts" shortsCategory="xxx" />} />
+              <Route path="/shorts/all/page/:page" element={<VideoList variant="shorts" shortsCategory="xxx" />} />
+              <Route path="/shorts/series/:slug" element={<ShortsSeriesDetail category="xxx" />} />
+              <Route path="/shorts/page/:page" element={<VideoList variant="shorts" shortsCategory="xxx" />} />
+              <Route path="/drama-shorts" element={<Shorts category="drama" />} />
+              <Route path="/drama-shorts/all" element={<VideoList variant="shorts" shortsCategory="drama" />} />
+              <Route path="/drama-shorts/all/page/:page" element={<VideoList variant="shorts" shortsCategory="drama" />} />
+              <Route path="/drama-shorts/series/:slug" element={<ShortsSeriesDetail category="drama" />} />
               <Route path="/all-episodes" element={<VideoList variant="all" />} />
               <Route path="/all-episodes/page/:page" element={<VideoList variant="all" />} />
               <Route path="/shop" element={<Shop />} />

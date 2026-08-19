@@ -131,6 +131,7 @@ class Video(BaseModel):
     subtitles: List[Subtitle] = []
     access_tier: str = "free"  # free | pro | vip
     is_short: bool = False  # True for vertical / short-form clips
+    shorts_category: str = "xxx"  # xxx | drama — only used when is_short=True
     shorts_series_id: Optional[str] = None
     shorts_series_position: Optional[int] = None  # manual episode ordering within a series
     views: int = 0
@@ -156,6 +157,7 @@ class VideoUpdateReq(BaseModel):
     access_tier: Optional[str] = None
     thumbnail_url: Optional[str] = None
     is_short: Optional[bool] = None
+    shorts_category: Optional[str] = None
     shorts_series_id: Optional[str] = None
     shorts_series_position: Optional[int] = None
     subtitles: Optional[List[dict]] = None  # allow reordering (set default) only — items must already exist
@@ -171,6 +173,7 @@ class ShortsSeries(BaseModel):
     tags: List[str] = []
     active: bool = True
     sort_order: int = 0
+    category: str = "xxx"  # xxx | drama
     created_at: str = Field(default_factory=now_iso)
 
 

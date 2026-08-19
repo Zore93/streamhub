@@ -861,24 +861,42 @@ async def _series_with_stats(s: dict) -> dict:
 
 
 @api.get("/shorts-series")
-async def list_shorts_series():
-    """Public — active series only, sorted by sort_order then name."""
-    docs = await db.shorts_series.find({"active": True}, {"_id": 0}) \
+async def list_shorts_series(category: Optional[str] = None):
+    """Public — active series only, sorted by sort_order then name.
+
+    `category=xxx|drama` restricts to a single vertical (defaults to any). Legacy
+    series without a `category` field are treated as `xxx`.
+    """
+    filt: dict = {"active": True}
+    if category in ("xxx", "drama"):
+        if category == "xxx":
+            filt["$or"] = [{"category": "xxx"}, {"category": {"$exists": False}}]
+        else:
+            filt["category"] = "drama"
+    docs = await db.shorts_series.find(filt, {"_id": 0}) \
         .sort([("sort_order", 1), ("name", 1)]).to_list(200)
     for d in docs:
         d["episode_count"] = await db.videos.count_documents({
             "shorts_series_id": d["id"], "status": "ready",
         })
+        d.setdefault("category", "xxx")
     return docs
 
 
 @api.get("/shorts-series/all")
-async def list_all_shorts_series(admin: dict = Depends(require_admin)):
+async def list_all_shorts_series(category: Optional[str] = None, admin: dict = Depends(require_admin)):
     """Admin — everything, active or not."""
-    docs = await db.shorts_series.find({}, {"_id": 0}) \
+    filt: dict = {}
+    if category in ("xxx", "drama"):
+        if category == "xxx":
+            filt["$or"] = [{"category": "xxx"}, {"category": {"$exists": False}}]
+        else:
+            filt["category"] = "drama"
+    docs = await db.shorts_series.find(filt, {"_id": 0}) \
         .sort([("sort_order", 1), ("name", 1)]).to_list(500)
     for d in docs:
         d["episode_count"] = await db.videos.count_documents({"shorts_series_id": d["id"]})
+        d.setdefault("category", "xxx")
     return docs
 
 
@@ -909,6 +927,9 @@ async def create_shorts_series(payload: dict, admin: dict = Depends(require_admi
     slug = (payload.get("slug") or slugify(name)).strip() or slugify(name)
     if await db.shorts_series.find_one({"slug": slug}):
         raise HTTPException(400, "A series with this slug already exists")
+    cat = (payload.get("category") or "xxx").lower()
+    if cat not in ("xxx", "drama"):
+        cat = "xxx"
     s = ShortsSeries(
         name=name,
         slug=slug,
@@ -917,6 +938,7 @@ async def create_shorts_series(payload: dict, admin: dict = Depends(require_admi
         tags=[t.strip() for t in (payload.get("tags") or []) if str(t).strip()],
         active=bool(payload.get("active", True)),
         sort_order=int(payload.get("sort_order") or 0),
+        category=cat,
     )
     await db.shorts_series.insert_one(s.model_dump())
     return s.model_dump()
@@ -924,8 +946,10 @@ async def create_shorts_series(payload: dict, admin: dict = Depends(require_admi
 
 @api.patch("/shorts-series/{series_id}")
 async def update_shorts_series(series_id: str, payload: dict, admin: dict = Depends(require_admin)):
-    allowed = {"name", "slug", "description", "cover_thumbnail", "tags", "active", "sort_order"}
+    allowed = {"name", "slug", "description", "cover_thumbnail", "tags", "active", "sort_order", "category"}
     upd = {k: v for k, v in payload.items() if k in allowed}
+    if "category" in upd and upd["category"] not in ("xxx", "drama"):
+        raise HTTPException(400, "category must be xxx or drama")
     if not upd:
         return {"ok": True}
     # If slug changed, ensure uniqueness
@@ -1006,6 +1030,7 @@ async def list_videos(
     kind: Optional[str] = None,  # "video" (long) | "short" | None (all)
     access_tier: Optional[str] = None,  # "free" | "pro" | None (both)
     shorts_series_id: Optional[str] = None,
+    shorts_category: Optional[str] = None,  # xxx | drama (only meaningful for shorts)
     q: Optional[str] = None,  # case-insensitive title/tags search
     limit: int = 20,
     skip: int = 0,
@@ -1031,6 +1056,22 @@ async def list_videos(
         filt["access_tier"] = access_tier
     if shorts_series_id:
         filt["shorts_series_id"] = shorts_series_id
+    # `shorts_category` filter:
+    #   - explicit "xxx" or "drama" restricts to only shorts of that vertical.
+    #   - when omitted AND we're not fetching shorts specifically, we exclude
+    #     drama-shorts from generic listings (popular/discover/all-episodes) so
+    #     they only appear on their own /drama-shorts pages.
+    if shorts_category in ("xxx", "drama"):
+        if shorts_category == "xxx":
+            filt["$and"] = filt.get("$and", []) + [
+                {"$or": [{"shorts_category": "xxx"}, {"shorts_category": {"$exists": False}}]}
+            ]
+        else:
+            filt["shorts_category"] = "drama"
+    elif kind != "short":
+        # Long-form listings never contain shorts, but if someone bypasses `kind`
+        # we still exclude drama shorts from the mix.
+        filt["shorts_category"] = {"$ne": "drama"}
     if q:
         # Build an escaped regex so user input doesn't break Mongo
         import re as _re
@@ -1071,6 +1112,7 @@ async def count_videos(
     kind: Optional[str] = None,
     access_tier: Optional[str] = None,
     shorts_series_id: Optional[str] = None,
+    shorts_category: Optional[str] = None,
     q: Optional[str] = None,
 ):
     """Counts videos matching the same filters list_videos accepts.
@@ -1092,6 +1134,15 @@ async def count_videos(
         filt["access_tier"] = access_tier
     if shorts_series_id:
         filt["shorts_series_id"] = shorts_series_id
+    if shorts_category in ("xxx", "drama"):
+        if shorts_category == "xxx":
+            filt["$and"] = filt.get("$and", []) + [
+                {"$or": [{"shorts_category": "xxx"}, {"shorts_category": {"$exists": False}}]}
+            ]
+        else:
+            filt["shorts_category"] = "drama"
+    elif kind != "short":
+        filt["shorts_category"] = {"$ne": "drama"}
     if q:
         import re as _re
         rex = _re.escape(q.strip())
@@ -1222,6 +1273,7 @@ async def upload_video(
     category_id: Optional[str] = Form(None),
     access_tier: str = Form("free"),
     is_short: bool = Form(False),
+    shorts_category: str = Form("xxx"),
     user: dict = Depends(require_user),
 ):
     settings = await get_settings()
@@ -1247,6 +1299,8 @@ async def upload_video(
     tags_list = [t.strip() for t in tags.split(",") if t.strip()]
     if access_tier not in ("free", "pro", "vip"):
         access_tier = "free"
+    if shorts_category not in ("xxx", "drama"):
+        shorts_category = "xxx"
     v = Video(
         id=vid_id,
         title=title,
@@ -1257,6 +1311,7 @@ async def upload_video(
         uploader_username=user["username"],
         access_tier=access_tier,
         is_short=is_short,
+        shorts_category=shorts_category if is_short else "xxx",
         original_filename=file.filename or "",
         original_size_bytes=size,
         status="processing",
@@ -1505,6 +1560,9 @@ async def upload_video_finish(
         if access_tier not in ("free", "pro", "vip"):
             access_tier = "free"
         is_short = bool(payload.get("is_short", False))
+        shorts_category = (payload.get("shorts_category") or "xxx").lower()
+        if shorts_category not in ("xxx", "drama"):
+            shorts_category = "xxx"
 
         # Move blob into the canonical originals/<id><ext> path
         vid_id = new_id()
@@ -1523,6 +1581,7 @@ async def upload_video_finish(
             uploader_username=user["username"],
             access_tier=access_tier,
             is_short=is_short,
+            shorts_category=shorts_category if is_short else "xxx",
             original_filename=state.get("filename") or "",
             original_size_bytes=received,
             status="processing",
@@ -1608,6 +1667,8 @@ async def update_video(
         # Validate access_tier if provided
         if "access_tier" in upd and upd["access_tier"] not in ("free", "pro", "vip"):
             raise HTTPException(400, "access_tier must be free, pro or vip")
+        if "shorts_category" in upd and upd["shorts_category"] not in ("xxx", "drama"):
+            raise HTTPException(400, "shorts_category must be xxx or drama")
         # Subtitles update is reorder-only: caller may rearrange existing entries
         # but cannot inject new ones or alter URLs (those go through the dedicated
         # POST endpoint that performs ffmpeg conversion + storage upload).

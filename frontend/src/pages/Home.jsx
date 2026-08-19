@@ -40,13 +40,13 @@ function Section({ title, Icon, videos, seeMoreTo, testId, vertical = false, see
 }
 
 /** Netflix-style horizontal poster row for a Shorts series. */
-function SeriesPosterRow({ series }) {
+function SeriesPosterRow({ series, basePath = "/shorts/series" }) {
   return (
     <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-8 gap-2 sm:gap-3">
       {series.map((s) => (
         <Link
           key={s.id}
-          to={`/shorts/series/${s.slug || s.id}`}
+          to={`${basePath}/${s.slug || s.id}`}
           className="group block"
           data-testid={`home-series-${s.slug || s.id}`}
         >
@@ -75,6 +75,8 @@ export default function Home() {
   const [popular, setPopular] = useState([]);
   const [shorts, setShorts] = useState([]);
   const [shortsSeries, setShortsSeries] = useState([]);
+  const [dramaShorts, setDramaShorts] = useState([]);
+  const [dramaSeries, setDramaSeries] = useState([]);
 
   useEffect(() => {
     const url = (section, extra = "") =>
@@ -82,12 +84,20 @@ export default function Home() {
     api.get(url("latest")).then((r) => setLatest(r.data)).catch(() => {});
     api.get(url("popular")).then((r) => setPopular(r.data)).catch(() => {});
     api
-      .get(`/videos?section=latest&limit=${HOME_LIMIT}&kind=short`)
+      .get(`/videos?section=latest&limit=${HOME_LIMIT}&kind=short&shorts_category=xxx`)
       .then((r) => setShorts(r.data))
       .catch(() => {});
     api
-      .get("/shorts-series")
+      .get("/shorts-series?category=xxx")
       .then((r) => setShortsSeries(r.data.slice(0, HOME_LIMIT)))
+      .catch(() => {});
+    api
+      .get(`/videos?section=latest&limit=${HOME_LIMIT}&kind=short&shorts_category=drama`)
+      .then((r) => setDramaShorts(r.data))
+      .catch(() => {});
+    api
+      .get("/shorts-series?category=drama")
+      .then((r) => setDramaSeries(r.data.slice(0, HOME_LIMIT)))
       .catch(() => {});
   }, []);
 
@@ -95,7 +105,9 @@ export default function Home() {
     latest.length === 0 &&
     popular.length === 0 &&
     shorts.length === 0 &&
-    shortsSeries.length === 0;
+    shortsSeries.length === 0 &&
+    dramaShorts.length === 0 &&
+    dramaSeries.length === 0;
 
   const seeMore = t("home.seeMore");
   const heroText = (siteCfg?.home_hero_text || "").trim() || t("site.tagline");
@@ -146,7 +158,27 @@ export default function Home() {
           testId="section-shorts-series"
           seeMoreLabel={seeMore}
         >
-          <SeriesPosterRow series={shortsSeries} />
+          <SeriesPosterRow series={shortsSeries} basePath="/shorts/series" />
+        </Section>
+      )}
+      <Section
+        title={t("home.lastDramaShorts")}
+        Icon={Smartphone}
+        videos={dramaShorts}
+        seeMoreTo="/drama-shorts/all"
+        testId="section-drama-shorts"
+        vertical
+        seeMoreLabel={seeMore}
+      />
+      {dramaSeries.length > 0 && (
+        <Section
+          title={t("home.lastDramaShortsSeries")}
+          Icon={Film}
+          seeMoreTo="/drama-shorts"
+          testId="section-drama-shorts-series"
+          seeMoreLabel={seeMore}
+        >
+          <SeriesPosterRow series={dramaSeries} basePath="/drama-shorts/series" />
         </Section>
       )}
     </div>

@@ -35,6 +35,7 @@ export default function Upload() {
     category_id: "none",
     access_tier: "free",
     is_short: false,
+    shorts_category: "xxx",
   });
   const [categories, setCategories] = useState([]);
   const [busy, setBusy] = useState(false);
@@ -99,6 +100,7 @@ export default function Upload() {
           category_id: shared.category_id === "none" ? null : shared.category_id,
           access_tier: shared.access_tier,
           is_short: shared.is_short,
+          shorts_category: shared.is_short ? (shared.shorts_category || "xxx") : "xxx",
         };
         const video = await uploadVideoChunked({
           file: entry.file,
@@ -298,6 +300,23 @@ export default function Upload() {
             </div>
             <Switch checked={shared.is_short} onCheckedChange={(v) => setShared({ ...shared, is_short: v })} data-testid="upload-is-short" />
           </div>
+          {shared.is_short && (
+            <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-3" data-testid="upload-shorts-category-block">
+              <Label className="mb-2 block">Tip Shorts</Label>
+              <Select value={shared.shorts_category || "xxx"} onValueChange={(v) => setShared({ ...shared, shorts_category: v })}>
+                <SelectTrigger className="bg-zinc-950 border-zinc-800" data-testid="upload-shorts-category">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="xxx" data-testid="upload-shorts-cat-xxx">XXX Shorts</SelectItem>
+                  <SelectItem value="drama" data-testid="upload-shorts-cat-drama">Drama Shorts</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-zinc-500 mt-2">
+                XXX Shorts apar în pagina XXX Shorts. Drama Shorts apar doar în pagina Drama Shorts.
+              </p>
+            </div>
+          )}
           <Button onClick={startAll} disabled={busy} className="w-full pro-gradient text-white border-0" data-testid="upload-submit">
             {busy ? <><Loader2 size={14} className="mr-2 animate-spin" /> Se încarcă...</> : `Încarcă ${files.length} videoclip${files.length === 1 ? "" : "e"}`}
           </Button>

@@ -17,7 +17,7 @@ const MAX_CATEGORIES = 2;
  * Discover variant additionally exposes a search bar + tier/category filters.
  * Pagination is numbered (1..N) and reflected in the URL path: `/popular/page/2`.
  */
-export default function VideoList({ variant }) {
+export default function VideoList({ variant, shortsCategory }) {
   const { t, lang } = useT();
   const params = useParams();
   const navigate = useNavigate();
@@ -30,20 +30,24 @@ export default function VideoList({ variant }) {
         return { section: "popular", kind: null, titleKey: "page.popular", Icon: Flame, base: "/popular" };
       case "discover":
         return { section: "random", kind: null, titleKey: "page.discover", Icon: Shuffle, base: "/discover" };
-      case "shorts":
-        return { section: "latest", kind: "short", titleKey: "page.shorts", Icon: Smartphone, base: "/shorts" };
+      case "shorts": {
+        const base = shortsCategory === "drama" ? "/drama-shorts/all" : "/shorts/all";
+        return { section: "latest", kind: "short", titleKey: "page.shorts", Icon: Smartphone, base };
+      }
       case "all":
       default:
         return { section: "latest", kind: null, titleKey: "page.allEpisodes", Icon: ListVideo, base: "/all-episodes" };
     }
-  }, [variant]);
+  }, [variant, shortsCategory]);
 
-  const isDiscover = variant === "discover";
+  // Popular and All Episodes now expose the same search + filter panel as
+  // Discover. Shorts variants stay filter-less to keep the poster-grid clean.
+  const showFilterUI = variant === "popular" || variant === "discover" || variant === "all";
 
-  // Filter state (only used by Discover)
+  // Filter state
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
-  const [accessTier, setAccessTier] = useState("");  // "" | "free" | "pro"
+  const [accessTier, setAccessTier] = useState("");  // "" | "free" | "pro" | "vip"
   const [selectedCats, setSelectedCats] = useState([]); // category ids
   const [cats, setCats] = useState([]);
   const [showFilters, setShowFilters] = useState(false);
@@ -54,23 +58,26 @@ export default function VideoList({ variant }) {
   const [loading, setLoading] = useState(false);
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
-  // Load categories for the Discover filter pills
+  // Load categories for the filter pills
   useEffect(() => {
-    if (!isDiscover) return;
+    if (!showFilterUI) return;
     api.get("/categories").then((r) => setCats(r.data)).catch(() => {});
-  }, [isDiscover]);
+  }, [showFilterUI]);
 
   // Debounce search input → debouncedSearch (350 ms)
   useEffect(() => {
-    if (!isDiscover) return;
+    if (!showFilterUI) return;
     const id = setTimeout(() => setDebouncedSearch(search.trim()), 350);
     return () => clearTimeout(id);
-  }, [search, isDiscover]);
+  }, [search, showFilterUI]);
 
   const buildParams = useCallback(() => {
     const p = new URLSearchParams();
     if (cfg.kind) p.set("kind", cfg.kind);
-    if (isDiscover) {
+    if (variant === "shorts" && shortsCategory) {
+      p.set("shorts_category", shortsCategory);
+    }
+    if (showFilterUI) {
       if (debouncedSearch) p.set("q", debouncedSearch);
       if (accessTier) p.set("access_tier", accessTier);
       if (selectedCats.length > 0) {
@@ -78,7 +85,7 @@ export default function VideoList({ variant }) {
       }
     }
     return p;
-  }, [cfg.kind, isDiscover, debouncedSearch, accessTier, selectedCats]);
+  }, [cfg.kind, variant, shortsCategory, showFilterUI, debouncedSearch, accessTier, selectedCats]);
 
   const fetchPage = useCallback(async (page) => {
     setLoading(true);
@@ -112,7 +119,7 @@ export default function VideoList({ variant }) {
   const filterKey = `${debouncedSearch}|${accessTier}|${selectedCats.join(",")}`;
   const lastFilterKey = useRef("");
   useEffect(() => {
-    if (!isDiscover) return;
+    if (!showFilterUI) return;
     if (lastFilterKey.current === filterKey) return;
     if (lastFilterKey.current !== "") {
       // Filters changed → navigate back to page 1
@@ -155,8 +162,8 @@ export default function VideoList({ variant }) {
         <h1 className="text-3xl sm:text-4xl font-bold font-heading text-zinc-50">{t(cfg.titleKey)}</h1>
       </header>
 
-      {isDiscover && (
-        <div className="mb-8 space-y-4" data-testid="discover-filters">
+      {showFilterUI && (
+        <div className="mb-8 space-y-4" data-testid={`${variant}-filters`}>
           {/* Search bar */}
           <div className="relative">
             <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none" />
@@ -238,6 +245,14 @@ export default function VideoList({ variant }) {
                   >
                     {t("discover.tierPro")}
                   </FilterPill>
+                  <FilterPill
+                    active={accessTier === "vip"}
+                    onClick={() => setAccessTier(accessTier === "vip" ? "" : "vip")}
+                    icon={Crown}
+                    testId="tier-vip"
+                  >
+                    {t("discover.tierVip") || "Videoclipuri VIP"}
+                  </FilterPill>
                 </div>
               </div>
 
@@ -288,7 +303,7 @@ export default function VideoList({ variant }) {
 
       {items.length === 0 && !loading && (
         <p className="text-zinc-500 text-center py-12">
-          {isDiscover && activeFilterCount > 0
+          {showFilterUI && activeFilterCount > 0
             ? t("discover.noResults")
             : t("page.empty")}
         </p>
@@ -309,7 +324,7 @@ function FilterPill({ active, disabled, onClick, icon: Icon, children, testId })
       type="button"
       onClick={onClick}
       disabled={disabled}
-      data-testid={`discover-pill-${testId}`}
+      data-testid={testId}
       className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-full border transition-colors ${
         active
           ? "bg-rose-500 border-rose-500 text-white"

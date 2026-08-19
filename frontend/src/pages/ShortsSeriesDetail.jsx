@@ -9,11 +9,13 @@ import VideoCard from "@/components/VideoCard";
  * Renders the cover + description header, then the episodes grid
  * in the order returned by the backend (position asc, then created_at).
  */
-export default function ShortsSeriesDetail() {
+export default function ShortsSeriesDetail({ category = "xxx" }) {
   const { slug } = useParams();
   const [series, setSeries] = useState(null);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
+  const backPath = category === "drama" ? "/drama-shorts" : "/shorts";
+  const backLabel = category === "drama" ? "Înapoi la Drama Shorts" : "Înapoi la Shorts";
 
   useEffect(() => {
     setLoading(true);
@@ -41,11 +43,11 @@ export default function ShortsSeriesDetail() {
   return (
     <div data-testid="page-series-detail">
       <Link
-        to="/shorts"
+        to={backPath}
         className="inline-flex items-center gap-1 text-sm text-zinc-400 hover:text-zinc-200 mb-4"
         data-testid="series-back-link"
       >
-        <ArrowLeft size={14} /> Înapoi la Shorts
+        <ArrowLeft size={14} /> {backLabel}
       </Link>
 
       <header className="flex flex-col sm:flex-row gap-5 mb-8">
@@ -58,7 +60,7 @@ export default function ShortsSeriesDetail() {
         )}
         <div className="flex-1 min-w-0">
           <div className="inline-flex items-center gap-2 text-xs uppercase tracking-widest text-rose-400 mb-2">
-            <Smartphone size={12} /> Serial Shorts
+            <Smartphone size={12} /> {category === "drama" ? "Serial Drama Shorts" : "Serial Shorts"}
           </div>
           <h1 className="text-3xl sm:text-4xl font-bold font-heading text-zinc-50 mb-2" data-testid="series-title">
             {series.name}

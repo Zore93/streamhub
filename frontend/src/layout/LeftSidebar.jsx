@@ -27,6 +27,7 @@ export default function LeftSidebar({ mobileOpen = false, onClose }) {
     { to: "/popular", label: t("nav.popular"), Icon: Flame, testid: "nav-popular" },
     { to: "/discover", label: t("nav.discover"), Icon: Shuffle, testid: "nav-discover" },
     { to: "/shorts", label: t("nav.shorts"), Icon: Smartphone, testid: "nav-shorts" },
+    { to: "/drama-shorts", label: t("nav.dramaShorts") || "Drama Shorts", Icon: Smartphone, testid: "nav-drama-shorts" },
     { to: "/all-episodes", label: t("nav.allEpisodes"), Icon: ListVideo, testid: "nav-all-episodes" },
     { to: "/contact", label: t("nav.contact"), Icon: Mail, testid: "nav-contact" },
   ];

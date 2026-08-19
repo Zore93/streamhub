@@ -37,7 +37,8 @@ export default function EditVideo() {
   const nav = useNavigate();
   const [v, setV] = useState(null);
   const [cats, setCats] = useState([]);
-  const [shortsSeries, setShortsSeries] = useState([]);
+  const [shortsSeriesXxx, setShortsSeriesXxx] = useState([]);
+  const [shortsSeriesDrama, setShortsSeriesDrama] = useState([]);
   const [allLangs, setAllLangs] = useState([]);
   const [subFile, setSubFile] = useState(null);
   const [subLang, setSubLang] = useState("ro");
@@ -53,7 +54,8 @@ export default function EditVideo() {
   useEffect(() => {
     load();
     api.get("/categories").then((r) => setCats(r.data));
-    api.get("/shorts-series").then((r) => setShortsSeries(r.data)).catch(() => setShortsSeries([]));
+    api.get("/shorts-series?category=xxx").then((r) => setShortsSeriesXxx(r.data)).catch(() => setShortsSeriesXxx([]));
+    api.get("/shorts-series?category=drama").then((r) => setShortsSeriesDrama(r.data)).catch(() => setShortsSeriesDrama([]));
     api.get("/languages").then((r) => setAllLangs(r.data)).catch(() => setAllLangs(COMMON_LANGS));
   }, [id]);
 
@@ -270,7 +272,26 @@ export default function EditVideo() {
         {isShortVideo && (
           <div className="bg-zinc-950 border border-zinc-800 rounded-md p-3 space-y-3" data-testid="edit-series-block">
             <div>
-              <Label>Serie Shorts</Label>
+              <Label>Tip Shorts</Label>
+              <Select
+                value={v.shorts_category || "xxx"}
+                onValueChange={(val) => {
+                  // Switching category invalidates the previously selected series
+                  setV({ ...v, shorts_category: val, shorts_series_id: null, shorts_series_position: null });
+                  save({ shorts_category: val, shorts_series_id: null, shorts_series_position: null });
+                }}
+              >
+                <SelectTrigger className="bg-zinc-950 border-zinc-800" data-testid="edit-shorts-category">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="xxx">XXX Shorts</SelectItem>
+                  <SelectItem value="drama">Drama Shorts</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>Serie {(v.shorts_category || "xxx") === "drama" ? "Drama Shorts" : "XXX Shorts"}</Label>
               <Select
                 value={v.shorts_series_id || "none"}
                 onValueChange={(val) => {
@@ -284,16 +305,16 @@ export default function EditVideo() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="none">— Fără serie —</SelectItem>
-                  {shortsSeries.map((s) => (
+                  {((v.shorts_category || "xxx") === "drama" ? shortsSeriesDrama : shortsSeriesXxx).map((s) => (
                     <SelectItem key={s.id} value={s.id} data-testid={`edit-series-opt-${s.slug || s.id}`}>
                       {s.name}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
-              {shortsSeries.length === 0 && (
+              {((v.shorts_category || "xxx") === "drama" ? shortsSeriesDrama : shortsSeriesXxx).length === 0 && (
                 <p className="text-xs text-zinc-500 mt-1">
-                  Nu există serii încă. Creează prima din Panou Admin → Serii Shorts.
+                  Nu există serii încă. Creează prima din Panou Admin → Serii {(v.shorts_category || "xxx") === "drama" ? "Drama Shorts" : "Shorts"}.
                 </p>
               )}
             </div>

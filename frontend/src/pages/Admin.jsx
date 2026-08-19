@@ -37,6 +37,7 @@ export default function Admin() {
           <TabsTrigger value="users" data-testid="tab-users">Users</TabsTrigger>
           <TabsTrigger value="categories" data-testid="tab-categories">Categories</TabsTrigger>
           <TabsTrigger value="shorts_series" data-testid="tab-shorts-series">Serii Shorts</TabsTrigger>
+          <TabsTrigger value="drama_shorts_series" data-testid="tab-drama-shorts-series">Serii Drama Shorts</TabsTrigger>
           <TabsTrigger value="packages" data-testid="tab-packages">Packages</TabsTrigger>
           <TabsTrigger value="packages_vip" data-testid="tab-packages-vip">Packages VIP</TabsTrigger>
           <TabsTrigger value="frames" data-testid="tab-frames">Cadre Avatar</TabsTrigger>
@@ -49,7 +50,8 @@ export default function Admin() {
         <TabsContent value="videos"><VideosTab /></TabsContent>
         <TabsContent value="users"><UsersTab /></TabsContent>
         <TabsContent value="categories"><CategoriesTab /></TabsContent>
-        <TabsContent value="shorts_series"><ShortsSeriesTab /></TabsContent>
+        <TabsContent value="shorts_series"><ShortsSeriesTab category="xxx" /></TabsContent>
+        <TabsContent value="drama_shorts_series"><ShortsSeriesTab category="drama" /></TabsContent>
         <TabsContent value="packages"><PackagesTab tier="pro" /></TabsContent>
         <TabsContent value="packages_vip"><PackagesTab tier="vip" /></TabsContent>
         <TabsContent value="frames"><FramesTab /></TabsContent>
@@ -641,13 +643,14 @@ function CategoriesTab() {
     </div>
   );
 }
-function ShortsSeriesTab() {
+function ShortsSeriesTab({ category = "xxx" }) {
+  const label = category === "drama" ? "Drama Shorts" : "XXX Shorts";
   const [list, setList] = useState([]);
   const [form, setForm] = useState({ name: "", slug: "", description: "", tags: "", active: true });
   const [coverFile, setCoverFile] = useState(null);
   const [busy, setBusy] = useState(false);
-  const load = () => api.get("/shorts-series/all").then((r) => setList(r.data));
-  useEffect(() => { load(); }, []);
+  const load = () => api.get(`/shorts-series/all?category=${category}`).then((r) => setList(r.data));
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, [category]);
 
   const create = async () => {
     if (!form.name.trim()) return toast.error("Nume obligatoriu");
@@ -659,6 +662,7 @@ function ShortsSeriesTab() {
         description: form.description,
         tags: form.tags.split(",").map((t) => t.trim()).filter(Boolean),
         active: form.active,
+        category,
       });
       // Upload cover in a second step so we can attach the file directly to Wasabi
       if (coverFile) {
@@ -696,9 +700,9 @@ function ShortsSeriesTab() {
   };
 
   return (
-    <div className="mt-6 space-y-6" data-testid="admin-shorts-series">
+    <div className="mt-6 space-y-6" data-testid={`admin-shorts-series-${category}`}>
       <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4">
-        <div className="font-semibold mb-3">Serie Shorts nouă ({list.length})</div>
+        <div className="font-semibold mb-3">Serie {label} nouă ({list.length})</div>
         <div className="grid grid-cols-2 gap-3">
           <Input placeholder="Nume (ex: Compilații funny)" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className="bg-zinc-950 border-zinc-800" data-testid="new-series-name" />
           <Input placeholder="Slug (opțional — auto)" value={form.slug} onChange={(e) => setForm({ ...form, slug: e.target.value })} className="bg-zinc-950 border-zinc-800" data-testid="new-series-slug" />
