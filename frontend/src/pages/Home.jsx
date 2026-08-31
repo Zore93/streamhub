@@ -112,45 +112,96 @@ export default function Home() {
   const seeMore = t("home.seeMore");
   const heroText = (siteCfg?.home_hero_text || "").trim() || t("site.tagline");
 
+  // Vertical selector — lets the visitor filter home to a single content
+  // vertical without leaving the page (useful on mobile where the sidebar
+  // is collapsed behind a hamburger).
+  const [vertical, setVertical] = useState("all"); // all | videos | xxx | drama
+  const tabs = [
+    { id: "all",    label: t("home.tab.all")    || "Toate" },
+    { id: "videos", label: t("home.tab.videos") || "Videoclipuri" },
+    { id: "xxx",    label: t("home.tab.xxx")    || "XXX Shorts" },
+    { id: "drama",  label: t("home.tab.drama")  || "Drama Shorts" },
+  ];
+  const showVideos      = vertical === "all" || vertical === "videos";
+  const showXxxShorts   = vertical === "all" || vertical === "xxx";
+  const showDramaShorts = vertical === "all" || vertical === "drama";
+
   return (
     <div data-testid="home-page">
-      <header className="mb-10">
+      <header className="mb-6">
         <h1 className="text-sm sm:text-base lg:text-lg font-bold tracking-tight text-zinc-50 font-heading whitespace-pre-line" data-testid="home-hero-text">
           {heroText}
         </h1>
       </header>
+
+      {/* Vertical selector */}
+      <div
+        role="tablist"
+        aria-label="Vertical filter"
+        className="flex flex-wrap gap-1 mb-8 bg-zinc-900/60 border border-zinc-800 rounded-full p-1 w-fit"
+        data-testid="home-vertical-tabs"
+      >
+        {tabs.map((tab) => {
+          const active = vertical === tab.id;
+          return (
+            <button
+              key={tab.id}
+              type="button"
+              role="tab"
+              aria-selected={active}
+              onClick={() => setVertical(tab.id)}
+              data-testid={`home-vertical-${tab.id}`}
+              className={
+                "px-4 py-1.5 rounded-full text-sm font-medium transition-colors " +
+                (active
+                  ? "bg-rose-600 text-white shadow"
+                  : "text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800/60")
+              }
+            >
+              {tab.label}
+            </button>
+          );
+        })}
+      </div>
+
       {isEmpty && (
         <div className="bg-zinc-900/50 border border-zinc-800 rounded-xl p-12 text-center" data-testid="empty-state">
           <h3 className="text-xl font-semibold mb-2">{t("home.empty.title")}</h3>
           <p className="text-zinc-500">{t("home.empty.body")}</p>
         </div>
       )}
-      <Section
-        title={t("home.latest")}
-        Icon={Clock}
-        videos={latest}
-        seeMoreTo="/all-episodes"
-        testId="section-latest"
-        seeMoreLabel={seeMore}
-      />
-      <Section
-        title={t("home.popular")}
-        Icon={Flame}
-        videos={popular}
-        seeMoreTo="/popular"
-        testId="section-popular"
-        seeMoreLabel={seeMore}
-      />
-      <Section
-        title={t("home.lastShorts")}
-        Icon={Smartphone}
-        videos={shorts}
-        seeMoreTo="/shorts/all"
-        testId="section-shorts"
-        vertical
-        seeMoreLabel={seeMore}
-      />
-      {shortsSeries.length > 0 && (
+      {showVideos && (
+        <Section
+          title={t("home.latest")}
+          Icon={Clock}
+          videos={latest}
+          seeMoreTo="/all-episodes"
+          testId="section-latest"
+          seeMoreLabel={seeMore}
+        />
+      )}
+      {showVideos && (
+        <Section
+          title={t("home.popular")}
+          Icon={Flame}
+          videos={popular}
+          seeMoreTo="/popular"
+          testId="section-popular"
+          seeMoreLabel={seeMore}
+        />
+      )}
+      {showXxxShorts && (
+        <Section
+          title={t("home.lastShorts")}
+          Icon={Smartphone}
+          videos={shorts}
+          seeMoreTo="/shorts/all"
+          testId="section-shorts"
+          vertical
+          seeMoreLabel={seeMore}
+        />
+      )}
+      {showXxxShorts && shortsSeries.length > 0 && (
         <Section
           title={t("home.lastShortsSeries")}
           Icon={Film}
@@ -161,16 +212,18 @@ export default function Home() {
           <SeriesPosterRow series={shortsSeries} basePath="/shorts/series" />
         </Section>
       )}
-      <Section
-        title={t("home.lastDramaShorts")}
-        Icon={Smartphone}
-        videos={dramaShorts}
-        seeMoreTo="/drama-shorts/all"
-        testId="section-drama-shorts"
-        vertical
-        seeMoreLabel={seeMore}
-      />
-      {dramaSeries.length > 0 && (
+      {showDramaShorts && (
+        <Section
+          title={t("home.lastDramaShorts")}
+          Icon={Smartphone}
+          videos={dramaShorts}
+          seeMoreTo="/drama-shorts/all"
+          testId="section-drama-shorts"
+          vertical
+          seeMoreLabel={seeMore}
+        />
+      )}
+      {showDramaShorts && dramaSeries.length > 0 && (
         <Section
           title={t("home.lastDramaShortsSeries")}
           Icon={Film}
