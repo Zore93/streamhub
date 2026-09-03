@@ -20,6 +20,8 @@ import EditVideo from "@/pages/EditVideo";
 import VideoList from "@/pages/VideoList";
 import Shop from "@/pages/Shop";
 import Shorts from "@/pages/Shorts";
+import Anime from "@/pages/Anime";
+import AnimeSeriesDetail from "@/pages/AnimeSeriesDetail";
 import ShortsSeriesDetail from "@/pages/ShortsSeriesDetail";
 import SiteHead from "@/components/SiteHead";
 
@@ -49,6 +51,10 @@ function App() {
               <Route path="/drama-shorts/all" element={<VideoList variant="shorts" shortsCategory="drama" />} />
               <Route path="/drama-shorts/all/page/:page" element={<VideoList variant="shorts" shortsCategory="drama" />} />
               <Route path="/drama-shorts/series/:slug" element={<ShortsSeriesDetail category="drama" />} />
+              <Route path="/anime" element={<Anime />} />
+              <Route path="/anime/all" element={<VideoList variant="anime" />} />
+              <Route path="/anime/all/page/:page" element={<VideoList variant="anime" />} />
+              <Route path="/anime/series/:slug" element={<AnimeSeriesDetail />} />
               <Route path="/all-episodes" element={<VideoList variant="all" />} />
               <Route path="/all-episodes/page/:page" element={<VideoList variant="all" />} />
               <Route path="/shop" element={<Shop />} />

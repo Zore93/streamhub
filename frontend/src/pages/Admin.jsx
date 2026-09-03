@@ -38,6 +38,7 @@ export default function Admin() {
           <TabsTrigger value="categories" data-testid="tab-categories">Categories</TabsTrigger>
           <TabsTrigger value="shorts_series" data-testid="tab-shorts-series">Serii Shorts</TabsTrigger>
           <TabsTrigger value="drama_shorts_series" data-testid="tab-drama-shorts-series">Serii Drama Shorts</TabsTrigger>
+          <TabsTrigger value="anime_series" data-testid="tab-anime-series">Serii Anime</TabsTrigger>
           <TabsTrigger value="packages" data-testid="tab-packages">Packages</TabsTrigger>
           <TabsTrigger value="packages_vip" data-testid="tab-packages-vip">Packages VIP</TabsTrigger>
           <TabsTrigger value="frames" data-testid="tab-frames">Cadre Avatar</TabsTrigger>
@@ -52,6 +53,7 @@ export default function Admin() {
         <TabsContent value="categories"><CategoriesTab /></TabsContent>
         <TabsContent value="shorts_series"><ShortsSeriesTab category="xxx" /></TabsContent>
         <TabsContent value="drama_shorts_series"><ShortsSeriesTab category="drama" /></TabsContent>
+        <TabsContent value="anime_series"><AnimeSeriesTab /></TabsContent>
         <TabsContent value="packages"><PackagesTab tier="pro" /></TabsContent>
         <TabsContent value="packages_vip"><PackagesTab tier="vip" /></TabsContent>
         <TabsContent value="frames"><FramesTab /></TabsContent>
@@ -2464,3 +2466,89 @@ function Field({ label, children }) {
     </div>
   );
 }
+
+function AnimeSeriesTab() {
+  const [list, setList] = useState([]);
+  const [form, setForm] = useState({ name: "", slug: "", description: "", tags: "", active: true });
+  const [coverFile, setCoverFile] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const load = () => api.get("/anime-series/all").then((r) => setList(r.data));
+  useEffect(() => { load(); }, []);
+  const create = async () => {
+    if (!form.name.trim()) return toast.error("Nume obligatoriu");
+    setBusy(true);
+    try {
+      const { data: series } = await api.post("/anime-series", {
+        name: form.name.trim(),
+        slug: form.slug.trim() || undefined,
+        description: form.description,
+        tags: form.tags.split(",").map((t) => t.trim()).filter(Boolean),
+        active: form.active,
+      });
+      if (coverFile) {
+        const fd = new FormData();
+        fd.append("file", coverFile);
+        await api.post(`/anime-series/${series.id}/cover`, fd, { headers: { "Content-Type": "multipart/form-data" } });
+      }
+      setForm({ name: "", slug: "", description: "", tags: "", active: true });
+      setCoverFile(null);
+      toast.success("Serie Anime creată");
+      load();
+    } catch (e) { toast.error(e.response?.data?.detail || "Eroare"); } finally { setBusy(false); }
+  };
+  const patch = async (id, upd) => { try { await api.patch(`/anime-series/${id}`, upd); load(); } catch (e) { toast.error(e.response?.data?.detail || "Eroare"); } };
+  const del = async (s) => {
+    if (!window.confirm(`Ștergi seria Anime "${s.name}"?`)) return;
+    await api.delete(`/anime-series/${s.id}`);
+    load();
+  };
+  return (
+    <div className="mt-6 space-y-6" data-testid="admin-anime-series">
+      <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4">
+        <div className="font-semibold mb-3">Serie Anime nouă ({list.length})</div>
+        <div className="grid grid-cols-2 gap-3">
+          <Input placeholder="Nume (ex: Chainsaw Man S01)" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className="bg-zinc-950 border-zinc-800" data-testid="new-anime-name" />
+          <Input placeholder="Slug (opțional — auto)" value={form.slug} onChange={(e) => setForm({ ...form, slug: e.target.value })} className="bg-zinc-950 border-zinc-800" data-testid="new-anime-slug" />
+          <Input placeholder="Tag-uri (separate prin virgulă)" value={form.tags} onChange={(e) => setForm({ ...form, tags: e.target.value })} className="bg-zinc-950 border-zinc-800 col-span-2" data-testid="new-anime-tags" />
+          <Textarea placeholder="Descriere" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} className="bg-zinc-950 border-zinc-800 col-span-2" />
+          <div className="col-span-2">
+            <label htmlFor="new-anime-cover-file" className="flex items-center gap-3 bg-zinc-950 border border-dashed border-zinc-700 hover:border-zinc-500 rounded-md p-3 cursor-pointer" data-testid="new-anime-cover-label">
+              {coverFile ? (
+                <>
+                  <img src={URL.createObjectURL(coverFile)} alt="preview" className="w-14 aspect-[2/3] object-cover rounded border border-zinc-700" />
+                  <div className="flex-1 min-w-0"><div className="text-sm text-zinc-200 truncate">{coverFile.name}</div><div className="text-xs text-zinc-500">{(coverFile.size / 1024).toFixed(0)} KB</div></div>
+                </>
+              ) : (
+                <><div className="w-14 aspect-[2/3] rounded border border-dashed border-zinc-700 flex items-center justify-center text-zinc-600"><UploadIcon size={18} /></div><div className="text-sm text-zinc-400">Cover thumbnail (JPG/PNG/WebP)</div></>
+              )}
+            </label>
+            <input id="new-anime-cover-file" type="file" accept="image/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f && f.size <= 8 * 1024 * 1024) setCoverFile(f); e.target.value = ""; }} />
+          </div>
+        </div>
+        <div className="flex items-center gap-3 mt-3">
+          <Switch checked={form.active} onCheckedChange={(v) => setForm({ ...form, active: v })} />
+          <span className="text-xs text-zinc-400">Activă</span>
+          <Button onClick={create} disabled={busy} className="ml-auto pro-gradient text-white border-0" data-testid="new-anime-btn">{busy ? "Se creează…" : "Adaugă serie Anime"}</Button>
+        </div>
+      </div>
+      {list.map((s) => (
+        <div key={s.id} className="bg-zinc-900 border border-zinc-800 rounded-xl p-4" data-testid={`anime-row-${s.id}`}>
+          <div className="flex gap-4">
+            {s.cover_thumbnail ? <img src={s.cover_thumbnail} alt="" className="w-16 aspect-[2/3] object-cover rounded border border-zinc-800 shrink-0" /> : <div className="w-16 aspect-[2/3] rounded border border-dashed border-zinc-700 shrink-0" />}
+            <div className="flex-1 min-w-0">
+              <div className="flex items-start justify-between gap-3">
+                <div><div className="font-semibold text-zinc-100 truncate">{s.name}</div><div className="text-xs text-zinc-500">slug: /{s.slug} · {s.episode_count} episoade</div></div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <Switch checked={s.active} onCheckedChange={(v) => patch(s.id, { active: v })} />
+                  <Button size="sm" variant="destructive" onClick={() => del(s)}><Trash2 size={14} /></Button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      ))}
+      {list.length === 0 && <p className="text-sm text-zinc-500 text-center py-6">Nu există serii Anime. Creează prima mai sus.</p>}
+    </div>
+  );
+}
+

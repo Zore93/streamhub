@@ -77,6 +77,8 @@ export default function Home() {
   const [shortsSeries, setShortsSeries] = useState([]);
   const [dramaShorts, setDramaShorts] = useState([]);
   const [dramaSeries, setDramaSeries] = useState([]);
+  const [animeVideos, setAnimeVideos] = useState([]);
+  const [animeSeries, setAnimeSeries] = useState([]);
 
   useEffect(() => {
     const url = (section, extra = "") =>
@@ -98,6 +100,14 @@ export default function Home() {
     api
       .get("/shorts-series?category=drama")
       .then((r) => setDramaSeries(r.data.slice(0, HOME_LIMIT)))
+      .catch(() => {});
+    api
+      .get(`/videos?section=latest&limit=${HOME_LIMIT}&kind=video&is_anime=true`)
+      .then((r) => setAnimeVideos(r.data))
+      .catch(() => {});
+    api
+      .get("/anime-series")
+      .then((r) => setAnimeSeries(r.data.slice(0, HOME_LIMIT)))
       .catch(() => {});
   }, []);
 
@@ -121,10 +131,12 @@ export default function Home() {
     { id: "videos", label: t("home.tab.videos") || "Videoclipuri" },
     { id: "xxx",    label: t("home.tab.xxx")    || "XXX Shorts" },
     { id: "drama",  label: t("home.tab.drama")  || "Drama Shorts" },
+    { id: "anime",  label: t("home.tab.anime")  || "Anime" },
   ];
   const showVideos      = vertical === "all" || vertical === "videos";
   const showXxxShorts   = vertical === "all" || vertical === "xxx";
   const showDramaShorts = vertical === "all" || vertical === "drama";
+  const showAnime       = vertical === "all" || vertical === "anime";
 
   return (
     <div data-testid="home-page">
@@ -232,6 +244,27 @@ export default function Home() {
           seeMoreLabel={seeMore}
         >
           <SeriesPosterRow series={dramaSeries} basePath="/drama-shorts/series" />
+        </Section>
+      )}
+      {showAnime && (
+        <Section
+          title={t("home.lastAnime") || "Ultimele Anime adăugate"}
+          Icon={Clock}
+          videos={animeVideos}
+          seeMoreTo="/anime/all"
+          testId="section-anime"
+          seeMoreLabel={seeMore}
+        />
+      )}
+      {showAnime && animeSeries.length > 0 && (
+        <Section
+          title={t("home.lastAnimeSeries") || "Ultimele Serii Anime adăugate"}
+          Icon={Film}
+          seeMoreTo="/anime"
+          testId="section-anime-series"
+          seeMoreLabel={seeMore}
+        >
+          <SeriesPosterRow series={animeSeries} basePath="/anime/series" />
         </Section>
       )}
     </div>

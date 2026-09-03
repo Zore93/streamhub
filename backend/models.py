@@ -134,6 +134,12 @@ class Video(BaseModel):
     shorts_category: str = "xxx"  # xxx | drama — only used when is_short=True
     shorts_series_id: Optional[str] = None
     shorts_series_position: Optional[int] = None  # manual episode ordering within a series
+    # Anime — long-form videos organised into series (mirrors the shorts flow
+    # but applies to `is_short=False` clips). Anime videos never appear in
+    # /popular, /discover or /all-episodes.
+    is_anime: bool = False
+    anime_series_id: Optional[str] = None
+    anime_series_position: Optional[int] = None
     views: int = 0
     likes: List[str] = []  # user ids
     created_at: str = Field(default_factory=now_iso)
@@ -160,6 +166,9 @@ class VideoUpdateReq(BaseModel):
     shorts_category: Optional[str] = None
     shorts_series_id: Optional[str] = None
     shorts_series_position: Optional[int] = None
+    is_anime: Optional[bool] = None
+    anime_series_id: Optional[str] = None
+    anime_series_position: Optional[int] = None
     subtitles: Optional[List[dict]] = None  # allow reordering (set default) only — items must already exist
 
 
@@ -174,6 +183,19 @@ class ShortsSeries(BaseModel):
     active: bool = True
     sort_order: int = 0
     category: str = "xxx"  # xxx | drama
+    created_at: str = Field(default_factory=now_iso)
+
+
+# ============ ANIME SERIES ============
+class AnimeSeries(BaseModel):
+    id: str = Field(default_factory=new_id)
+    name: str
+    slug: str
+    description: str = ""
+    cover_thumbnail: str = ""
+    tags: List[str] = []
+    active: bool = True
+    sort_order: int = 0
     created_at: str = Field(default_factory=now_iso)
 
 

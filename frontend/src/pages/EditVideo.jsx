@@ -39,6 +39,7 @@ export default function EditVideo() {
   const [cats, setCats] = useState([]);
   const [shortsSeriesXxx, setShortsSeriesXxx] = useState([]);
   const [shortsSeriesDrama, setShortsSeriesDrama] = useState([]);
+  const [animeSeries, setAnimeSeries] = useState([]);
   const [allLangs, setAllLangs] = useState([]);
   const [subFile, setSubFile] = useState(null);
   const [subLang, setSubLang] = useState("ro");
@@ -56,6 +57,7 @@ export default function EditVideo() {
     api.get("/categories").then((r) => setCats(r.data));
     api.get("/shorts-series?category=xxx").then((r) => setShortsSeriesXxx(r.data)).catch(() => setShortsSeriesXxx([]));
     api.get("/shorts-series?category=drama").then((r) => setShortsSeriesDrama(r.data)).catch(() => setShortsSeriesDrama([]));
+    api.get("/anime-series").then((r) => setAnimeSeries(r.data)).catch(() => setAnimeSeries([]));
     api.get("/languages").then((r) => setAllLangs(r.data)).catch(() => setAllLangs(COMMON_LANGS));
   }, [id]);
 
@@ -265,10 +267,48 @@ export default function EditVideo() {
           <Label className="m-0">Marked as Shorts (vertical 9:16)</Label>
           <Switch
             checked={isShortVideo}
-            onCheckedChange={(val) => { setV({ ...v, is_short: val }); save({ is_short: val }); }}
+            onCheckedChange={(val) => {
+              setV({ ...v, is_short: val, is_anime: val ? false : v.is_anime });
+              save({ is_short: val, is_anime: val ? false : v.is_anime });
+            }}
             data-testid="edit-is-short"
           />
         </div>
+        {!isShortVideo && (
+          <div className="bg-zinc-950 border border-zinc-800 rounded-md p-3 space-y-3" data-testid="edit-anime-block">
+            <div className="flex items-center justify-between">
+              <Label className="m-0">Anime video</Label>
+              <Switch
+                checked={!!v.is_anime}
+                onCheckedChange={(val) => {
+                  setV({ ...v, is_anime: val, anime_series_id: val ? v.anime_series_id : null });
+                  save({ is_anime: val, anime_series_id: val ? v.anime_series_id : null });
+                }}
+                data-testid="edit-is-anime"
+              />
+            </div>
+            {v.is_anime && (
+              <div>
+                <Label>Serie Anime</Label>
+                <Select
+                  value={v.anime_series_id || "none"}
+                  onValueChange={(val) => {
+                    const next = val === "none" ? null : val;
+                    setV({ ...v, anime_series_id: next });
+                    save({ anime_series_id: next });
+                  }}
+                >
+                  <SelectTrigger className="bg-zinc-950 border-zinc-800" data-testid="edit-anime-series"><SelectValue placeholder="— Fără serie —" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">— Fără serie —</SelectItem>
+                    {animeSeries.map((s) => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+                {animeSeries.length === 0 && <p className="text-xs text-zinc-500 mt-1">Creează prima serie din Admin → Serii Anime.</p>}
+              </div>
+            )}
+          </div>
+        )}
         {isShortVideo && (
           <div className="bg-zinc-950 border border-zinc-800 rounded-md p-3 space-y-3" data-testid="edit-series-block">
             <div>

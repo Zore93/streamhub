@@ -51,6 +51,7 @@ from storage import (
 )
 import hashlib
 import hmac
+import tempfile
 import time
 import urllib.parse
 import subprocess
@@ -73,6 +74,7 @@ from models import (
     PaymentTransaction,
     RegisterReq,
     ShortsSeries,
+    AnimeSeries,
     StatsResponse,
     User,
     UserPublic,
@@ -109,6 +111,32 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 (UPLOAD_DIR / "covers").mkdir(exist_ok=True)
 (UPLOAD_DIR / "originals").mkdir(exist_ok=True)
 (UPLOAD_DIR / "subtitles").mkdir(exist_ok=True)
+
+
+def _stage_upload_to_tempfile(src_stream, suffix: str = "") -> Path:
+    """Stream an incoming upload to a real /tmp file first (never directly to
+    a persistent upload dir). Callers then upload to Wasabi (preferred) or
+    move the tempfile into UPLOAD_DIR for local serving. This keeps the raw
+    file staging out of app-pod persistent paths."""
+    fd, tmp_name = tempfile.mkstemp(suffix=suffix, prefix="upload_")
+    tmp_path = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "wb") as tf:
+            shutil.copyfileobj(src_stream, tf)
+    except Exception:
+        try:
+            tmp_path.unlink()
+        except Exception:
+            pass
+        raise
+    return tmp_path
+
+
+def _finalize_upload(tmp_path: Path, out_path: Path) -> None:
+    """Move a staged tempfile into its final local UPLOAD_DIR path (used only
+    when Wasabi is not configured, so the app can still serve the file)."""
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(tmp_path), str(out_path))
 
 mongo_url = os.environ["MONGO_URL"]
 client = AsyncIOMotorClient(mongo_url)
@@ -758,18 +786,19 @@ async def upload_avatar(
     ext = (Path(file.filename or "img").suffix or ".jpg").lower()
     fname = f"{user['id']}_avatar{ext}"
     out_path = UPLOAD_DIR / "avatars" / fname
-    with open(out_path, "wb") as f:
-        shutil.copyfileobj(file.file, f)
+    tmp_path = _stage_upload_to_tempfile(file.file, suffix=ext)
     rel = f"avatars/{fname}"
     settings = await get_settings()
     if wasabi_configured(settings):
-        url = await wasabi_upload(str(out_path), rel, settings)
+        url = await wasabi_upload(str(tmp_path), rel, settings)
+        try:
+            tmp_path.unlink()
+        except Exception:
+            pass
         if url:
             rel = url
-            try:
-                out_path.unlink()
-            except Exception:
-                pass
+    else:
+        _finalize_upload(tmp_path, out_path)
     await db.users.update_one({"id": user["id"]}, {"$set": {"avatar_url": rel}})
     return {"avatar_url": rel}
 
@@ -781,18 +810,19 @@ async def upload_cover(
     ext = (Path(file.filename or "img").suffix or ".jpg").lower()
     fname = f"{user['id']}_cover{ext}"
     out_path = UPLOAD_DIR / "covers" / fname
-    with open(out_path, "wb") as f:
-        shutil.copyfileobj(file.file, f)
+    tmp_path = _stage_upload_to_tempfile(file.file, suffix=ext)
     rel = f"covers/{fname}"
     settings = await get_settings()
     if wasabi_configured(settings):
-        url = await wasabi_upload(str(out_path), rel, settings)
+        url = await wasabi_upload(str(tmp_path), rel, settings)
+        try:
+            tmp_path.unlink()
+        except Exception:
+            pass
         if url:
             rel = url
-            try:
-                out_path.unlink()
-            except Exception:
-                pass
+    else:
+        _finalize_upload(tmp_path, out_path)
     await db.users.update_one({"id": user["id"]}, {"$set": {"cover_url": rel}})
     return {"cover_url": rel}
 
@@ -989,20 +1019,20 @@ async def upload_shorts_series_cover(
         raise HTTPException(400, "Only jpg/png/webp/gif images are allowed")
     fname = f"{series_id}_cover{ext}"
     out_path = UPLOAD_DIR / "series_covers" / fname
-    out_path.parent.mkdir(exist_ok=True, parents=True)
-    with open(out_path, "wb") as f:
-        shutil.copyfileobj(file.file, f)
+    tmp_path = _stage_upload_to_tempfile(file.file, suffix=ext)
     rel = f"series_covers/{fname}"
     settings = await get_settings()
     if wasabi_configured(settings):
         content_type = f"image/{ext.lstrip('.').replace('jpg', 'jpeg')}"
-        url = await wasabi_upload(str(out_path), rel, settings, content_type)
+        url = await wasabi_upload(str(tmp_path), rel, settings, content_type)
+        try:
+            tmp_path.unlink()
+        except Exception:
+            pass
         if url:
             rel = url
-            try:
-                out_path.unlink()
-            except Exception:
-                pass
+    else:
+        _finalize_upload(tmp_path, out_path)
     await db.shorts_series.update_one({"id": series_id}, {"$set": {"cover_thumbnail": rel}})
     return {"cover_thumbnail": rel}
 
@@ -1022,6 +1052,124 @@ async def reorder_shorts_series(series_id: str, payload: dict, admin: dict = Dep
 
 
 # ============ VIDEOS ============
+# ---- ANIME SERIES ----
+# Long-form counterpart to `shorts_series`. Anime videos never appear in the
+# generic listings (popular/discover/all-episodes) — only on /anime pages.
+@api.get("/anime-series")
+async def list_anime_series():
+    docs = await db.anime_series.find({"active": True}, {"_id": 0}) \
+        .sort([("sort_order", 1), ("name", 1)]).to_list(200)
+    for d in docs:
+        d["episode_count"] = await db.videos.count_documents({
+            "anime_series_id": d["id"], "status": "ready",
+        })
+    return docs
+
+
+@api.get("/anime-series/all")
+async def list_all_anime_series(admin: dict = Depends(require_admin)):
+    docs = await db.anime_series.find({}, {"_id": 0}) \
+        .sort([("sort_order", 1), ("name", 1)]).to_list(500)
+    for d in docs:
+        d["episode_count"] = await db.videos.count_documents({"anime_series_id": d["id"]})
+    return docs
+
+
+@api.get("/anime-series/{key}")
+async def get_anime_series(key: str):
+    s = await db.anime_series.find_one({"$or": [{"id": key}, {"slug": key}]}, {"_id": 0})
+    if not s:
+        raise HTTPException(404, "Series not found")
+    episodes = await db.videos.find(
+        {"anime_series_id": s["id"], "status": "ready"}, {"_id": 0},
+    ).to_list(500)
+    episodes.sort(key=lambda v: (
+        v.get("anime_series_position") if v.get("anime_series_position") is not None else 10 ** 9,
+        v.get("created_at") or "",
+    ))
+    s["episodes"] = episodes
+    s["episode_count"] = len(episodes)
+    return s
+
+
+@api.post("/anime-series")
+async def create_anime_series(payload: dict, admin: dict = Depends(require_admin)):
+    name = (payload.get("name") or "").strip()
+    if not name:
+        raise HTTPException(400, "name required")
+    slug = (payload.get("slug") or slugify(name)).strip() or slugify(name)
+    if await db.anime_series.find_one({"slug": slug}):
+        raise HTTPException(400, "A series with this slug already exists")
+    s = AnimeSeries(
+        name=name, slug=slug,
+        description=(payload.get("description") or "").strip(),
+        cover_thumbnail=(payload.get("cover_thumbnail") or "").strip(),
+        tags=[t.strip() for t in (payload.get("tags") or []) if str(t).strip()],
+        active=bool(payload.get("active", True)),
+        sort_order=int(payload.get("sort_order") or 0),
+    )
+    await db.anime_series.insert_one(s.model_dump())
+    return s.model_dump()
+
+
+@api.patch("/anime-series/{series_id}")
+async def update_anime_series(series_id: str, payload: dict, admin: dict = Depends(require_admin)):
+    allowed = {"name", "slug", "description", "cover_thumbnail", "tags", "active", "sort_order"}
+    upd = {k: v for k, v in payload.items() if k in allowed}
+    if not upd:
+        return {"ok": True}
+    if "slug" in upd:
+        upd["slug"] = (upd["slug"] or "").strip()
+        clash = await db.anime_series.find_one({"slug": upd["slug"], "id": {"$ne": series_id}})
+        if clash:
+            raise HTTPException(400, "Another series already uses this slug")
+    await db.anime_series.update_one({"id": series_id}, {"$set": upd})
+    s = await db.anime_series.find_one({"id": series_id}, {"_id": 0})
+    return s
+
+
+@api.delete("/anime-series/{series_id}")
+async def delete_anime_series(series_id: str, admin: dict = Depends(require_admin)):
+    await db.videos.update_many(
+        {"anime_series_id": series_id},
+        {"$set": {"anime_series_id": None, "anime_series_position": None, "is_anime": False}},
+    )
+    await db.anime_series.delete_one({"id": series_id})
+    return {"ok": True}
+
+
+@api.post("/anime-series/{series_id}/cover")
+async def upload_anime_series_cover(
+    series_id: str,
+    file: UploadFile = File(...),
+    admin: dict = Depends(require_admin),
+):
+    series = await db.anime_series.find_one({"id": series_id}, {"_id": 0})
+    if not series:
+        raise HTTPException(404, "Series not found")
+    ext = (Path(file.filename or "img").suffix or ".jpg").lower()
+    if ext not in (".jpg", ".jpeg", ".png", ".webp", ".gif"):
+        raise HTTPException(400, "Only jpg/png/webp/gif images are allowed")
+    fname = f"{series_id}_cover{ext}"
+    out_path = UPLOAD_DIR / "anime_covers" / fname
+    tmp_path = _stage_upload_to_tempfile(file.file, suffix=ext)
+    rel = f"anime_covers/{fname}"
+    settings = await get_settings()
+    if wasabi_configured(settings):
+        content_type = f"image/{ext.lstrip('.').replace('jpg', 'jpeg')}"
+        url = await wasabi_upload(str(tmp_path), rel, settings, content_type)
+        try:
+            tmp_path.unlink()
+        except Exception:
+            pass
+        if url:
+            rel = url
+    else:
+        _finalize_upload(tmp_path, out_path)
+    await db.anime_series.update_one({"id": series_id}, {"$set": {"cover_thumbnail": rel}})
+    return {"cover_thumbnail": rel}
+
+
 @api.get("/videos")
 async def list_videos(
     section: str = "latest",
@@ -1031,6 +1179,8 @@ async def list_videos(
     access_tier: Optional[str] = None,  # "free" | "pro" | None (both)
     shorts_series_id: Optional[str] = None,
     shorts_category: Optional[str] = None,  # xxx | drama (only meaningful for shorts)
+    anime_series_id: Optional[str] = None,
+    is_anime: Optional[bool] = None,
     q: Optional[str] = None,  # case-insensitive title/tags search
     limit: int = 20,
     skip: int = 0,
@@ -1072,6 +1222,16 @@ async def list_videos(
         # Long-form listings never contain shorts, but if someone bypasses `kind`
         # we still exclude drama shorts from the mix.
         filt["shorts_category"] = {"$ne": "drama"}
+    # Anime filter — mirrors shorts_category logic.
+    if anime_series_id:
+        filt["anime_series_id"] = anime_series_id
+    if is_anime is True:
+        filt["is_anime"] = True
+    elif is_anime is False:
+        filt["is_anime"] = {"$ne": True}
+    else:
+        # Default (no explicit ask): hide anime from generic listings.
+        filt["is_anime"] = {"$ne": True}
     if q:
         # Build an escaped regex so user input doesn't break Mongo
         import re as _re
@@ -1113,6 +1273,7 @@ async def count_videos(
     access_tier: Optional[str] = None,
     shorts_series_id: Optional[str] = None,
     shorts_category: Optional[str] = None,
+    is_anime: Optional[bool] = None,
     q: Optional[str] = None,
 ):
     """Counts videos matching the same filters list_videos accepts.
@@ -1143,6 +1304,12 @@ async def count_videos(
             filt["shorts_category"] = "drama"
     elif kind != "short":
         filt["shorts_category"] = {"$ne": "drama"}
+    if is_anime is True:
+        filt["is_anime"] = True
+    elif is_anime is False:
+        filt["is_anime"] = {"$ne": True}
+    else:
+        filt["is_anime"] = {"$ne": True}
     if q:
         import re as _re
         rex = _re.escape(q.strip())
@@ -1280,12 +1447,14 @@ async def upload_video(
     if not settings.get("allow_user_uploads", True) and user.get("role") != "admin":
         raise HTTPException(403, "User uploads disabled by admin")
     max_mb = int(settings.get("max_upload_size_mb", 1024))
-    # Save original
+    # Save original — staged to a real /tmp file (not the persistent upload
+    # dir); the transcoder reads it from there and deletes when done.
     vid_id = new_id()
     orig_ext = (Path(file.filename or "video.mp4").suffix or ".mp4").lower()
-    src_path = UPLOAD_DIR / "originals" / f"{vid_id}{orig_ext}"
+    fd, tmp_name = tempfile.mkstemp(suffix=orig_ext, prefix=f"src_{vid_id}_")
+    src_path = Path(tmp_name)
     size = 0
-    with open(src_path, "wb") as f:
+    with os.fdopen(fd, "wb") as f:
         while chunk := await file.read(1024 * 1024):
             size += len(chunk)
             if size > max_mb * 1024 * 1024:
@@ -1336,7 +1505,7 @@ async def upload_video(
 # Pending uploads live under UPLOAD_DIR/.chunks/<uid>/ with a `state.json` next
 # to the partial `blob` so the server can recover after a restart.
 
-CHUNKS_DIR = UPLOAD_DIR / ".chunks"
+CHUNKS_DIR = Path(tempfile.gettempdir()) / "streamhub_stage"
 CHUNKS_DIR.mkdir(exist_ok=True, parents=True)
 
 
@@ -1345,7 +1514,7 @@ def _chunk_state_path(upload_id: str) -> Path:
 
 
 def _chunk_blob_path(upload_id: str) -> Path:
-    return CHUNKS_DIR / upload_id / "blob"
+    return CHUNKS_DIR / upload_id / "part.bin"
 
 
 def _read_chunk_state(upload_id: str) -> Optional[dict]:
@@ -1502,17 +1671,25 @@ async def upload_video_chunk(
     written = 0
     settings = await get_settings()
     max_bytes = int(settings.get("max_upload_size_mb", 1024)) * 1024 * 1024
-    with open(blob, "ab") as f:
+    fd = os.open(str(blob), os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)
+    try:
         async for chunk in request.stream():
             if not chunk:
                 continue
-            f.write(chunk)
+            os.write(fd, chunk)
             written += len(chunk)
             if current + written > max_bytes:
                 # Abort: clean up and reject
-                f.close()
+                os.close(fd)
+                fd = -1
                 _purge_chunk_upload(upload_id)
                 raise HTTPException(413, f"File exceeds {settings.get('max_upload_size_mb')} MB limit")
+    finally:
+        if fd >= 0:
+            try:
+                os.close(fd)
+            except Exception:
+                pass
     new_size = current + written
     state["received_size"] = new_size
     _write_chunk_state(upload_id, state)
@@ -1563,6 +1740,7 @@ async def upload_video_finish(
         shorts_category = (payload.get("shorts_category") or "xxx").lower()
         if shorts_category not in ("xxx", "drama"):
             shorts_category = "xxx"
+        is_anime = bool(payload.get("is_anime", False)) and not is_short
 
         # Move blob into the canonical originals/<id><ext> path
         vid_id = new_id()
@@ -1582,6 +1760,8 @@ async def upload_video_finish(
             access_tier=access_tier,
             is_short=is_short,
             shorts_category=shorts_category if is_short else "xxx",
+            is_anime=is_anime,
+            anime_series_id=payload.get("anime_series_id") if is_anime else None,
             original_filename=state.get("filename") or "",
             original_size_bytes=received,
             status="processing",
@@ -1669,6 +1849,8 @@ async def update_video(
             raise HTTPException(400, "access_tier must be free, pro or vip")
         if "shorts_category" in upd and upd["shorts_category"] not in ("xxx", "drama"):
             raise HTTPException(400, "shorts_category must be xxx or drama")
+        if "is_anime" in upd and not isinstance(upd["is_anime"], bool):
+            raise HTTPException(400, "is_anime must be a boolean")
         # Subtitles update is reorder-only: caller may rearrange existing entries
         # but cannot inject new ones or alter URLs (those go through the dedicated
         # POST endpoint that performs ffmpeg conversion + storage upload).
@@ -2901,12 +3083,17 @@ async def add_subtitle(
     sub_id = new_id()
     orig_name = f"{vid}_{sub_id}{ext}"
     vtt_name = f"{vid}_{sub_id}.vtt"
-    orig_path = UPLOAD_DIR / "subtitles" / orig_name
-    vtt_path = UPLOAD_DIR / "subtitles" / vtt_name
+    final_orig_path = UPLOAD_DIR / "subtitles" / orig_name
+    final_vtt_path = UPLOAD_DIR / "subtitles" / vtt_name
+    # Stage into /tmp — never write raw upload bytes directly to UPLOAD_DIR.
+    vtt_fd, vtt_tmp_name = tempfile.mkstemp(suffix=".vtt", prefix="sub_")
+    os.close(vtt_fd)
+    vtt_path = Path(vtt_tmp_name)
+    orig_path: Optional[Path] = None
     if ext == ".vtt":
-        # Uploaded file already IS WebVTT — write directly to vtt_path, no original.
-        with open(vtt_path, "wb") as f:
-            shutil.copyfileobj(file.file, f)
+        # Uploaded file already IS WebVTT — stage directly.
+        vtt_path.unlink(missing_ok=True)
+        vtt_path = _stage_upload_to_tempfile(file.file, suffix=".vtt")
         # Sanity check — browsers silently drop a <track> whose src doesn't
         # start with "WEBVTT" (BOM allowed).  Guard against that pre-emptively.
         if vtt_path.exists() and vtt_path.stat().st_size > 6:
@@ -2930,8 +3117,7 @@ async def add_subtitle(
         rel_vtt = f"subtitles/{vtt_name}"
         rel_orig = None
     else:
-        with open(orig_path, "wb") as f:
-            shutil.copyfileobj(file.file, f)
+        orig_path = _stage_upload_to_tempfile(file.file, suffix=ext)
 
         # ffmpeg picks the wrong encoding on ~1 in 5 Romanian/Polish SRT files:
         # if the input isn't valid UTF-8 it silently produces an empty VTT →
@@ -2992,6 +3178,11 @@ async def add_subtitle(
             )
         rel_vtt = f"subtitles/{vtt_name}"
         rel_orig = f"subtitles/{orig_name}"
+    # Compute first-cue diagnostic BEFORE we possibly delete the staged tmp.
+    try:
+        first_cue = _first_cue_seconds(vtt_path if vtt_path.exists() else None)
+    except Exception:
+        first_cue = None
     settings = await get_settings()
     if wasabi_configured(settings):
         url_vtt = await wasabi_upload(str(vtt_path), rel_vtt, settings, "text/vtt")
@@ -3001,7 +3192,9 @@ async def add_subtitle(
                 vtt_path.unlink()
             except Exception:
                 pass
-        if rel_orig:
+        else:
+            _finalize_upload(vtt_path, final_vtt_path)
+        if rel_orig and orig_path is not None:
             url_orig = await wasabi_upload(str(orig_path), rel_orig, settings, "text/plain")
             if url_orig:
                 rel_orig = url_orig
@@ -3009,18 +3202,19 @@ async def add_subtitle(
                     orig_path.unlink()
                 except Exception:
                     pass
+            else:
+                _finalize_upload(orig_path, final_orig_path)
+    else:
+        # No Wasabi — move staged tmp files into the persistent UPLOAD_DIR so
+        # the app can serve them locally.
+        _finalize_upload(vtt_path, final_vtt_path)
+        if rel_orig and orig_path is not None:
+            _finalize_upload(orig_path, final_orig_path)
     from models import Subtitle as _Sub
     sub = _Sub(
         id=sub_id, language=language, label=label,
         url=rel_vtt, original_url=rel_orig, format=ext[1:],
     ).model_dump()
-    # Diagnostic: peek at the earliest cue timestamp so we can warn users when
-    # a subtitle file is timed for a different edit of the video (e.g. someone
-    # re-uses a full-episode SRT on a short clip cut from that episode).
-    try:
-        first_cue = _first_cue_seconds(vtt_path if vtt_path.exists() else None)
-    except Exception:
-        first_cue = None
     sub["first_cue_seconds"] = first_cue
     warning = None
     video_duration = float(v.get("duration") or 0)
@@ -4525,18 +4719,19 @@ async def admin_upload_logo(
     import time as _t
     fname = f"site_logo_{int(_t.time())}{ext}"
     out_path = UPLOAD_DIR / "branding" / fname
-    with open(out_path, "wb") as f:
-        shutil.copyfileobj(file.file, f)
+    tmp_path = _stage_upload_to_tempfile(file.file, suffix=ext)
     rel = f"branding/{fname}"
     settings = await get_settings()
     if wasabi_configured(settings):
-        url = await wasabi_upload(str(out_path), rel, settings)
+        url = await wasabi_upload(str(tmp_path), rel, settings)
+        try:
+            tmp_path.unlink()
+        except Exception:
+            pass
         if url:
             rel = url
-            try:
-                out_path.unlink()
-            except Exception:
-                pass
+    else:
+        _finalize_upload(tmp_path, out_path)
     cur = await get_settings()
     cur["site_logo_url"] = rel
     await save_settings(cur)

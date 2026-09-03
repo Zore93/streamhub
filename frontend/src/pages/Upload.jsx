@@ -36,6 +36,8 @@ export default function Upload() {
     access_tier: "free",
     is_short: false,
     shorts_category: "xxx",
+    is_anime: false,
+    anime_series_id: null,
   });
   const [categories, setCategories] = useState([]);
   const [busy, setBusy] = useState(false);
@@ -101,6 +103,8 @@ export default function Upload() {
           access_tier: shared.access_tier,
           is_short: shared.is_short,
           shorts_category: shared.is_short ? (shared.shorts_category || "xxx") : "xxx",
+          is_anime: !shared.is_short && !!shared.is_anime,
+          anime_series_id: (!shared.is_short && shared.is_anime) ? shared.anime_series_id : null,
         };
         const video = await uploadVideoChunked({
           file: entry.file,
@@ -298,8 +302,14 @@ export default function Upload() {
               <Label className="block">{t("upload.isShort")}</Label>
               <p className="text-xs text-zinc-500 mt-1">{t("upload.isShort.help", null, { dur: shortsMax })}</p>
             </div>
-            <Switch checked={shared.is_short} onCheckedChange={(v) => setShared({ ...shared, is_short: v })} data-testid="upload-is-short" />
+            <Switch checked={shared.is_short} onCheckedChange={(v) => setShared({ ...shared, is_short: v, is_anime: v ? false : shared.is_anime })} data-testid="upload-is-short" />
           </div>
+          {!shared.is_short && (
+            <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-3 flex items-center justify-between" data-testid="upload-is-anime-block">
+              <Label className="mb-0">Marchează ca Anime (apare doar în /anime)</Label>
+              <Switch checked={!!shared.is_anime} onCheckedChange={(v) => setShared({ ...shared, is_anime: v })} data-testid="upload-is-anime" />
+            </div>
+          )}
           {shared.is_short && (
             <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-3" data-testid="upload-shorts-category-block">
               <Label className="mb-2 block">Tip Shorts</Label>

@@ -34,6 +34,8 @@ export default function VideoList({ variant, shortsCategory }) {
         const base = shortsCategory === "drama" ? "/drama-shorts/all" : "/shorts/all";
         return { section: "latest", kind: "short", titleKey: "page.shorts", Icon: Smartphone, base };
       }
+      case "anime":
+        return { section: "latest", kind: "video", titleKey: "page.anime", Icon: ListVideo, base: "/anime/all", isAnime: true };
       case "all":
       default:
         return { section: "latest", kind: "video", titleKey: "page.allEpisodes", Icon: ListVideo, base: "/all-episodes" };
@@ -76,6 +78,9 @@ export default function VideoList({ variant, shortsCategory }) {
     if (cfg.kind) p.set("kind", cfg.kind);
     if (variant === "shorts" && shortsCategory) {
       p.set("shorts_category", shortsCategory);
+    }
+    if (cfg.isAnime) {
+      p.set("is_anime", "true");
     }
     if (showFilterUI) {
       if (debouncedSearch) p.set("q", debouncedSearch);
