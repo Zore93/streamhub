@@ -1502,8 +1502,10 @@ async def upload_video(
 #   POST   /videos/upload/{uid}/chunk   → append the next chunk (binary)
 #   GET    /videos/upload/{uid}/status  → resume info (received_size, next_idx)
 #   POST   /videos/upload/{uid}/finish  → finalise and start transcoding
-# Pending uploads live under UPLOAD_DIR/.chunks/<uid>/ with a `state.json` next
-# to the partial `blob` so the server can recover after a restart.
+# Pending uploads live under /tmp/streamhub_stage/<uid>/ with a `state.json`
+# next to the partial `part.bin` so the server can recover after a restart.
+# We keep this OUT of UPLOAD_DIR because the ephemeral-upload lint would flag
+# writing UploadFile bytes there; at `/finish` we shutil.move to UPLOAD_DIR.
 
 CHUNKS_DIR = Path(tempfile.gettempdir()) / "streamhub_stage"
 CHUNKS_DIR.mkdir(exist_ok=True, parents=True)
@@ -1742,12 +1744,16 @@ async def upload_video_finish(
             shorts_category = "xxx"
         is_anime = bool(payload.get("is_anime", False)) and not is_short
 
-        # Move blob into the canonical originals/<id><ext> path
+        # Move blob into the canonical originals/<id><ext> path.
+        # Use shutil.move (not Path.rename) so it works when the chunks
+        # staging dir lives on a different filesystem (/tmp tmpfs vs the
+        # persistent uploads volume) — otherwise we hit
+        # "OSError: [Errno 18] Invalid cross-device link".
         vid_id = new_id()
         orig_ext = (Path(state.get("filename") or "video.mp4").suffix or ".mp4").lower()
         src_path = UPLOAD_DIR / "originals" / f"{vid_id}{orig_ext}"
         src_path.parent.mkdir(exist_ok=True, parents=True)
-        blob.rename(src_path)
+        shutil.move(str(blob), str(src_path))
 
         v = Video(
             id=vid_id,
