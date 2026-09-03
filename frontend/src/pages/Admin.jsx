@@ -64,9 +64,9 @@ export default function Admin() {
   );
 }
 
-function StatCard({ icon: Icon, label, value }) {
+function StatCard({ icon: Icon, label, value, testId }) {
   return (
-    <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5">
+    <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-5" data-testid={testId}>
       <div className="flex items-center justify-between mb-2">
         <span className="text-xs uppercase tracking-widest text-zinc-500">{label}</span>
         <Icon size={18} className="text-rose-500" />
@@ -86,6 +86,7 @@ function Dashboard() {
       <StatCard icon={Users} label="Total Users" value={s.total_users} />
       <StatCard icon={Eye} label="Total Views" value={s.total_views} />
       <StatCard icon={Crown} label="PRO Users" value={s.total_pro_users} />
+      <StatCard icon={Crown} label="VIP Users" value={s.total_vip_users || 0} testId="stat-vip-users" />
       <StatCard icon={Heart} label="Total Likes" value={s.total_likes} />
       <StatCard icon={MessageCircle} label="Total Comments" value={s.total_comments} />
     </div>

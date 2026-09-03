@@ -27,16 +27,16 @@ export default function VideoList({ variant, shortsCategory }) {
   const cfg = useMemo(() => {
     switch (variant) {
       case "popular":
-        return { section: "popular", kind: null, titleKey: "page.popular", Icon: Flame, base: "/popular" };
+        return { section: "popular", kind: "video", titleKey: "page.popular", Icon: Flame, base: "/popular" };
       case "discover":
-        return { section: "random", kind: null, titleKey: "page.discover", Icon: Shuffle, base: "/discover" };
+        return { section: "random", kind: "video", titleKey: "page.discover", Icon: Shuffle, base: "/discover" };
       case "shorts": {
         const base = shortsCategory === "drama" ? "/drama-shorts/all" : "/shorts/all";
         return { section: "latest", kind: "short", titleKey: "page.shorts", Icon: Smartphone, base };
       }
       case "all":
       default:
-        return { section: "latest", kind: null, titleKey: "page.allEpisodes", Icon: ListVideo, base: "/all-episodes" };
+        return { section: "latest", kind: "video", titleKey: "page.allEpisodes", Icon: ListVideo, base: "/all-episodes" };
     }
   }, [variant, shortsCategory]);
 

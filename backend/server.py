@@ -2170,6 +2170,7 @@ async def admin_stats(admin: dict = Depends(require_admin)):
     total_videos = await db.videos.count_documents({})
     total_users = await db.users.count_documents({})
     total_pro = await db.users.count_documents({"is_pro": True})
+    total_vip = await db.users.count_documents({"is_vip": True})
     total_comments = await db.comments.count_documents({})
     views_agg = await db.videos.aggregate(
         [{"$group": {"_id": None, "v": {"$sum": "$views"}}}]
@@ -2182,6 +2183,7 @@ async def admin_stats(admin: dict = Depends(require_admin)):
         total_users=total_users,
         total_views=int(views_agg[0]["v"]) if views_agg else 0,
         total_pro_users=total_pro,
+        total_vip_users=total_vip,
         total_likes=int(likes_agg[0]["v"]) if likes_agg else 0,
         total_comments=total_comments,
     )

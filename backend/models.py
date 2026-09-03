@@ -379,6 +379,7 @@ class StatsResponse(BaseModel):
     total_users: int
     total_views: int
     total_pro_users: int
+    total_vip_users: int = 0
     total_likes: int
     total_comments: int
 

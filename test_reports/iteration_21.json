@@ -1,0 +1,38 @@
+{
+  "summary": "Iteration 21: verified two bug fixes — (a) admin dashboard VIP Users stat card + backend total_vip_users field; (b) /all-episodes /popular /discover no longer show shorts (VideoList variants now request kind=video). Backend: 7/7 pytest tests passed. Frontend: 6 stat cards render on Admin Dashboard including VIP Users (data-testid=stat-vip-users) showing 0, and the long-form list pages show only landscape (16:9) videos, no portrait (9:16) cards.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iteration21_vip_stat_and_shorts.py",
+    "/app/test_reports/pytest/iter21.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py is now 4874 lines — well past the recommended 700-line threshold; consider splitting into domain routers (admin, videos, packages, users, chat, seo)."
+  ],
+  "updated_files": ["/app/backend/tests/test_iteration21_vip_stat_and_shorts.py"],
+  "success_rate": {"backend": "100% (7/7)", "frontend": "100%"},
+  "test_credentials": "admin@streamhub.io / Admin123!",
+  "seed_data_creation": "Tests seed TEST_ prefixed users and videos (long + short) directly in Mongo and remove them in the cleanup phase via fixtures. All cleanup ran successfully.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "test_iteration21_vip_stat_and_shorts.py covers total_vip_users field, grant/revoke stat delta, and shorts-exclusion regression (kind=video vs kind=short). Anime feature not yet implemented — main agent will add it later.",
+  "verification_details": {
+    "admin_dashboard": {
+      "cards_rendered": ["Total Videos: 6", "Total Users: 14", "Total Views: 31", "PRO Users: 2", "VIP Users: 0", "Total Likes: 1", "Total Comments: 18"],
+      "stat_vip_users_testid_present": true
+    },
+    "video_list_variants": {
+      "/all-episodes": "no portrait 9:16 cards",
+      "/popular": "no portrait 9:16 cards",
+      "/discover": "no portrait 9:16 cards"
+    },
+    "backend": {
+      "GET /api/admin/stats": "includes total_vip_users matching db count",
+      "grant-vip then GET stats": "increments by 1",
+      "revoke-vip then GET stats": "decrements by 1",
+      "GET /api/videos?kind=video&section=latest|popular|random": "no is_short=true items returned",
+      "GET /api/videos?kind=short": "returns only is_short=true items (regression intact)"
+    }
+  }
+}
