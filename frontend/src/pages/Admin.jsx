@@ -39,6 +39,7 @@ export default function Admin() {
           <TabsTrigger value="shorts_series" data-testid="tab-shorts-series">Serii Shorts</TabsTrigger>
           <TabsTrigger value="drama_shorts_series" data-testid="tab-drama-shorts-series">Serii Drama Shorts</TabsTrigger>
           <TabsTrigger value="anime_series" data-testid="tab-anime-series">Serii Anime</TabsTrigger>
+          <TabsTrigger value="film_categories" data-testid="tab-film-categories">Categorii Filme</TabsTrigger>
           <TabsTrigger value="packages" data-testid="tab-packages">Packages</TabsTrigger>
           <TabsTrigger value="packages_vip" data-testid="tab-packages-vip">Packages VIP</TabsTrigger>
           <TabsTrigger value="frames" data-testid="tab-frames">Cadre Avatar</TabsTrigger>
@@ -54,6 +55,7 @@ export default function Admin() {
         <TabsContent value="shorts_series"><ShortsSeriesTab category="xxx" /></TabsContent>
         <TabsContent value="drama_shorts_series"><ShortsSeriesTab category="drama" /></TabsContent>
         <TabsContent value="anime_series"><AnimeSeriesTab /></TabsContent>
+        <TabsContent value="film_categories"><FilmCategoriesTab /></TabsContent>
         <TabsContent value="packages"><PackagesTab tier="pro" /></TabsContent>
         <TabsContent value="packages_vip"><PackagesTab tier="vip" /></TabsContent>
         <TabsContent value="frames"><FramesTab /></TabsContent>
@@ -2703,6 +2705,80 @@ function AnimeSeasonsManager({ series }) {
           );
         })}
       </div>
+    </div>
+  );
+}
+
+
+
+function FilmCategoriesTab() {
+  const [list, setList] = useState([]);
+  const [form, setForm] = useState({ name: "", slug: "", description: "", active: true });
+  const [busy, setBusy] = useState(false);
+  const load = () => api.get("/film-categories/all").then((r) => setList(r.data)).catch(() => setList([]));
+  useEffect(() => { load(); }, []);
+  const create = async () => {
+    if (!form.name.trim()) return toast.error("Nume obligatoriu");
+    setBusy(true);
+    try {
+      await api.post("/film-categories", {
+        name: form.name.trim(),
+        slug: form.slug.trim() || undefined,
+        description: form.description.trim(),
+        active: form.active,
+      });
+      setForm({ name: "", slug: "", description: "", active: true });
+      toast.success("Categorie creată");
+      load();
+    } catch (e) { toast.error(e.response?.data?.detail || "Eroare"); } finally { setBusy(false); }
+  };
+  const patch = async (id, upd) => {
+    try { await api.patch(`/film-categories/${id}`, upd); load(); }
+    catch (e) { toast.error(e.response?.data?.detail || "Eroare"); }
+  };
+  const del = async (c) => {
+    if (!window.confirm(`Ștergi categoria "${c.name}"? Filmele își vor păstra restul categoriilor.`)) return;
+    try { await api.delete(`/film-categories/${c.id}`); load(); toast.success("Șters"); }
+    catch (e) { toast.error(e.response?.data?.detail || "Eroare"); }
+  };
+  return (
+    <div className="mt-6 space-y-4" data-testid="admin-film-categories">
+      <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4">
+        <div className="font-semibold mb-3">Categorie nouă ({list.length})</div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <Input placeholder="Nume (ex: Acțiune)" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className="bg-zinc-950 border-zinc-800" data-testid="new-filmcat-name" />
+          <Input placeholder="Slug (opțional — auto)" value={form.slug} onChange={(e) => setForm({ ...form, slug: e.target.value })} className="bg-zinc-950 border-zinc-800" data-testid="new-filmcat-slug" />
+          <Textarea placeholder="Descriere (opțional)" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} className="bg-zinc-950 border-zinc-800 md:col-span-2" />
+        </div>
+        <div className="flex items-center gap-3 mt-3">
+          <Switch checked={form.active} onCheckedChange={(v) => setForm({ ...form, active: v })} />
+          <span className="text-xs text-zinc-400">Activă</span>
+          <Button onClick={create} disabled={busy} className="ml-auto pro-gradient text-white border-0" data-testid="new-filmcat-btn">
+            {busy ? "Se creează…" : "Adaugă categorie"}
+          </Button>
+        </div>
+      </div>
+      {list.map((c) => (
+        <div key={c.id} className="bg-zinc-900 border border-zinc-800 rounded-xl p-3 flex items-center gap-3" data-testid={`filmcat-row-${c.id}`}>
+          <div className="flex-1 min-w-0">
+            <div className="font-semibold text-zinc-100 truncate">{c.name}</div>
+            <div className="text-xs text-zinc-500 truncate">
+              slug: {c.slug} · {c.film_count || 0} filme
+              {c.description ? ` · ${c.description}` : ""}
+            </div>
+          </div>
+          <Input
+            type="number"
+            defaultValue={c.position}
+            onBlur={(e) => { const n = Number(e.target.value); if (n !== c.position) patch(c.id, { position: n }); }}
+            className="bg-zinc-950 border-zinc-800 h-8 w-16 text-xs"
+            title="Ordine"
+          />
+          <Switch checked={c.active} onCheckedChange={(v) => patch(c.id, { active: v })} />
+          <Button size="sm" variant="destructive" onClick={() => del(c)}><Trash2 size={14} /></Button>
+        </div>
+      ))}
+      {list.length === 0 && <p className="text-sm text-zinc-500 text-center py-6">Nu există categorii de filme. Creează prima mai sus.</p>}
     </div>
   );
 }

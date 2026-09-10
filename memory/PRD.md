@@ -107,6 +107,19 @@ Build a full-stack video-sharing platform inspired by hentairosub.ro with:
 - P3 — Refactor models.py into `models/` package; move chat/storage helpers to `services/`
 - P3 — Suppress announcement DialogOverlay on /login and /register (pointer blocking pre-existing)
 
+## Iteration 24 — Filme RoSub + SSR OG + Mobile Fullscreen (Feb 2026)
+- **Filme RoSub vertical** (option 2-B: multi-category, no cover per user request):
+  - Model: `FilmCategory { id, name, slug, description, active, position }`; `Video` gains `is_film_rosub: bool` + `film_category_ids: List[str]` (mutually exclusive with `is_short` and `is_anime`).
+  - Backend routes (server.py ~1400-1530): CRUD `/api/film-categories(+/all|/{key})`, `GET /api/videos/filme?category_id=…`. Default `/api/videos` filters films out (`$ne True`); admin & upload flows opt-in via `is_film_rosub=true`. Cascade `$pull` on category delete.
+  - Frontend: sidebar link `/filme-rosub` (Film icon), page `FilmeRoSub.jsx` with horizontal text-only category chip row + film grid, route `/filme-rosub/:catSlug` filters by category (chip goes rose). Admin tab `FilmCategoriesTab` (text CRUD only). Upload+EditVideo have exclusive `Este film RoSub` toggle → multi-select chip picker for categories. Home page adds `Filme RoSub` vertical tab + `section-filme` row.
+- **SSR OG for series/season/filme pages** — fixed Discord/Facebook embeds:
+  - New backend endpoints (server.py ~4680-4930): `/api/og/shorts-series/{slug}`, `/api/og/anime-series/{slug}`, `/api/og/anime-season/{s}/{sk}`, `/api/og/filme-rosub`, `/api/og/filme-rosub/{cat}`. Shared `_og_html_response` renderer for consistent OG+Twitter+canonical+robots meta.
+  - Middleware `crawler_og_middleware` (server.py ~5720) matches these routes with UA sniff. Nginx production template (`deploy/nginx/streamhub.conf.template`) mirrors rewrites for `/anime/series/*/*`, `/anime/series/*`, `/shorts/series/*`, `/filme-rosub[/…]`, `/category/*`. Fallback strategy: unknown slug returns home OG (crawler-friendly) not 404.
+- **Mobile pseudo-fullscreen (VideoPlayer.jsx)**:
+  - `toggleFullscreen` detects iOS/Android UA or missing `document.fullscreenEnabled` → toggles `pseudoFS` state applying `fixed inset-0 z-[9999] !w-screen !h-[100dvh]` (portrait, no rotate). ESC exits, body scroll locked. Native Fullscreen API still used on desktop. Icon toggles Maximize↔Minimize.
+- **Also fixed**: accidental removal of `@api.get("/videos")` decorator restored (regression from earlier edit).
+- Tests: `/app/backend/tests/test_iteration24_filme_rosub.py` — **27/27 PASS**.
+
 ## Iteration 23 — Anime Seasons layer (Feb 2026)
 - **Goal**: multi-season structure for Anime (Option 2 from Chat), no migration needed.
 - **Model**: NEW `AnimeSeason { id, series_id, number, title, slug, description, synopsis, cover_thumbnail, year, season_type (season|ova|movie|special), position, active }`. Video gains `anime_season_id` (denormalised `anime_series_id` remains — derived from season on write).

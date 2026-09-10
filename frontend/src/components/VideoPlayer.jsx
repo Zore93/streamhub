@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { Play, Pause, Volume2, VolumeX, Maximize, Subtitles, Settings, Download } from "lucide-react";
+import { Play, Pause, Volume2, VolumeX, Maximize, Minimize, Subtitles, Settings, Download } from "lucide-react";
 import { mediaUrl } from "@/lib/api";
 import {
   DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem,
@@ -186,11 +186,39 @@ export default function VideoPlayer({ video, currentRendition, resolution, setRe
     const x = parseFloat(e.target.value);
     v.volume = x; setVolume(x); setMuted(x === 0);
   };
+  const [pseudoFS, setPseudoFS] = useState(false);
   const toggleFullscreen = () => {
     const w = wrapRef.current; if (!w) return;
+    // iOS Safari (and some Android browsers) either don't support the
+    // Fullscreen API on generic elements OR force-rotate to landscape, which
+    // is precisely what mobile users don't want for portrait shorts.
+    // Fall back to a CSS-based pseudo-fullscreen so the video fills the
+    // viewport in the current orientation with our custom controls intact.
+    const supportsNative = !!(document.fullscreenEnabled ?? document.webkitFullscreenEnabled);
+    const ua = typeof navigator !== "undefined" ? (navigator.userAgent || "") : "";
+    const isIOS = /iPad|iPhone|iPod/i.test(ua) && !window.MSStream;
+    const isMobile = /Mobi|Android/i.test(ua) || isIOS;
+    if (!supportsNative || isMobile) {
+      setPseudoFS((prev) => !prev);
+      return;
+    }
     if (!document.fullscreenElement) w.requestFullscreen?.();
     else document.exitFullscreen?.();
   };
+  // ESC exits pseudo-fullscreen (mirrors the native FS behaviour)
+  useEffect(() => {
+    if (!pseudoFS) return undefined;
+    const onKey = (e) => { if (e.key === "Escape") setPseudoFS(false); };
+    document.addEventListener("keydown", onKey);
+    // Lock body scroll while in pseudo-fullscreen so background pages don't
+    // scroll behind our fixed overlay on mobile.
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [pseudoFS]);
   const selectTrack = (id) => {
     setActiveTrack(id);
     const v = ref.current; if (!v) return;
@@ -248,8 +276,9 @@ export default function VideoPlayer({ video, currentRendition, resolution, setRe
   return (
     <div
       ref={wrapRef}
-      className={`relative w-full h-full bg-black group player-wrap ${controlsVisible ? "controls-visible" : "controls-hidden"}`}
+      className={`relative w-full h-full bg-black group player-wrap ${controlsVisible ? "controls-visible" : "controls-hidden"} ${pseudoFS ? "fixed inset-0 z-[9999] !w-screen !h-[100dvh]" : ""}`}
       data-testid="video-player"
+      data-pseudo-fullscreen={pseudoFS || undefined}
       style={wrapStyle}
     >
       <video
@@ -417,8 +446,8 @@ export default function VideoPlayer({ video, currentRendition, resolution, setRe
             </a>
           )}
 
-          <button onClick={toggleFullscreen} className="hover:text-rose-400 p-1" data-testid="player-fullscreen">
-            <Maximize size={18} />
+          <button onClick={toggleFullscreen} className="hover:text-rose-400 p-1" data-testid="player-fullscreen" aria-label={pseudoFS ? "Exit fullscreen" : "Fullscreen"}>
+            {pseudoFS ? <Minimize size={18} /> : <Maximize size={18} />}
           </button>
         </div>
       </div>

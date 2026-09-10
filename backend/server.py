@@ -76,6 +76,7 @@ from models import (
     ShortsSeries,
     AnimeSeries,
     AnimeSeason,
+    FilmCategory,
     StatsResponse,
     User,
     UserPublic,
@@ -1400,6 +1401,129 @@ async def upload_anime_series_cover(
     return {"cover_thumbnail": rel}
 
 
+# ═══════════════════════════════════════════════════════════════════
+# FILM CATEGORIES (Filme RoSub vertical)
+# ═══════════════════════════════════════════════════════════════════
+def _slugify_filmcat(name: str) -> str:
+    import re as _re
+    s = (name or "").strip().lower()
+    s = _re.sub(r"[^a-z0-9]+", "-", s).strip("-")
+    return s or "categorie"
+
+
+@api.get("/film-categories")
+async def list_film_categories():
+    """Public — only active categories, ordered by position then name."""
+    rows = await db.film_categories.find({"active": True}, {"_id": 0}).to_list(500)
+    rows.sort(key=lambda x: (x.get("position") or 0, (x.get("name") or "").lower()))
+    for r in rows:
+        r["film_count"] = await db.videos.count_documents({
+            "is_film_rosub": True, "status": "ready", "film_category_ids": r["id"],
+        })
+    return rows
+
+
+@api.get("/film-categories/all")
+async def list_all_film_categories(admin: dict = Depends(require_admin)):
+    rows = await db.film_categories.find({}, {"_id": 0}).to_list(1000)
+    rows.sort(key=lambda x: (x.get("position") or 0, (x.get("name") or "").lower()))
+    for r in rows:
+        r["film_count"] = await db.videos.count_documents({
+            "is_film_rosub": True, "film_category_ids": r["id"],
+        })
+    return rows
+
+
+@api.post("/film-categories")
+async def create_film_category(payload: dict, admin: dict = Depends(require_admin)):
+    name = (payload.get("name") or "").strip()
+    if not name:
+        raise HTTPException(400, "Name is required")
+    slug = (payload.get("slug") or "").strip().lower() or _slugify_filmcat(name)
+    if await db.film_categories.find_one({"slug": slug}):
+        raise HTTPException(400, "A film category with this slug already exists")
+    pos_existing = await db.film_categories.count_documents({})
+    fc = FilmCategory(
+        name=name,
+        slug=slug,
+        description=(payload.get("description") or "").strip(),
+        active=bool(payload.get("active", True)),
+        position=int(payload.get("position") if payload.get("position") is not None else pos_existing),
+    )
+    await db.film_categories.insert_one(fc.model_dump())
+    return fc.model_dump()
+
+
+@api.get("/film-categories/{key}")
+async def get_film_category(key: str):
+    fc = await db.film_categories.find_one(
+        {"$or": [{"id": key}, {"slug": key}]}, {"_id": 0},
+    )
+    if not fc:
+        raise HTTPException(404, "Category not found")
+    fc["film_count"] = await db.videos.count_documents({
+        "is_film_rosub": True, "status": "ready", "film_category_ids": fc["id"],
+    })
+    return fc
+
+
+@api.patch("/film-categories/{cat_id}")
+async def update_film_category(cat_id: str, payload: dict, admin: dict = Depends(require_admin)):
+    fc = await db.film_categories.find_one({"id": cat_id}, {"_id": 0})
+    if not fc:
+        raise HTTPException(404, "Category not found")
+    allowed = {"name", "slug", "description", "active", "position"}
+    upd = {k: v for k, v in payload.items() if k in allowed}
+    if "slug" in upd:
+        upd["slug"] = (upd["slug"] or "").strip().lower()
+        clash = await db.film_categories.find_one({"slug": upd["slug"], "id": {"$ne": cat_id}})
+        if clash:
+            raise HTTPException(400, "Another category already uses this slug")
+    if upd:
+        await db.film_categories.update_one({"id": cat_id}, {"$set": upd})
+    return await db.film_categories.find_one({"id": cat_id}, {"_id": 0})
+
+
+@api.delete("/film-categories/{cat_id}")
+async def delete_film_category(cat_id: str, admin: dict = Depends(require_admin)):
+    # Detach category from all films (multi-select — just $pull the id)
+    await db.videos.update_many(
+        {"film_category_ids": cat_id},
+        {"$pull": {"film_category_ids": cat_id}},
+    )
+    await db.film_categories.delete_one({"id": cat_id})
+    return {"ok": True}
+
+
+@api.get("/videos/filme")
+async def list_filme_rosub(
+    category_id: Optional[str] = None,
+    q: Optional[str] = None,
+    limit: int = 40,
+    skip: int = 0,
+):
+    """Public listing of Filme RoSub. If `category_id` is given, filter to
+    films that include this category in their `film_category_ids` array.
+    Category id or slug is accepted."""
+    query: dict = {"is_film_rosub": True, "status": "ready"}
+    if category_id:
+        cat = await db.film_categories.find_one(
+            {"$or": [{"id": category_id}, {"slug": category_id}]}, {"_id": 0},
+        )
+        if not cat:
+            raise HTTPException(404, "Category not found")
+        query["film_category_ids"] = cat["id"]
+    if q:
+        query["$or"] = [
+            {"title": {"$regex": q, "$options": "i"}},
+            {"tags": {"$regex": q, "$options": "i"}},
+        ]
+    total = await db.videos.count_documents(query)
+    rows = await db.videos.find(query, {"_id": 0}).sort("created_at", -1).skip(skip).limit(limit).to_list(limit)
+    return {"total": total, "items": rows}
+
+
+
 @api.get("/videos")
 async def list_videos(
     section: str = "latest",
@@ -1411,6 +1535,8 @@ async def list_videos(
     shorts_category: Optional[str] = None,  # xxx | drama (only meaningful for shorts)
     anime_series_id: Optional[str] = None,
     is_anime: Optional[bool] = None,
+    is_film_rosub: Optional[bool] = None,
+    film_category_id: Optional[str] = None,
     q: Optional[str] = None,  # case-insensitive title/tags search
     limit: int = 20,
     skip: int = 0,
@@ -1462,6 +1588,20 @@ async def list_videos(
     else:
         # Default (no explicit ask): hide anime from generic listings.
         filt["is_anime"] = {"$ne": True}
+    # Filme RoSub — same treatment as anime: hidden by default.
+    if is_film_rosub is True:
+        filt["is_film_rosub"] = True
+    elif is_film_rosub is False:
+        filt["is_film_rosub"] = {"$ne": True}
+    else:
+        filt["is_film_rosub"] = {"$ne": True}
+    if film_category_id:
+        # Accept id or slug
+        fc = await db.film_categories.find_one(
+            {"$or": [{"id": film_category_id}, {"slug": film_category_id}]}, {"_id": 0, "id": 1},
+        )
+        if fc:
+            filt["film_category_ids"] = fc["id"]
     if q:
         # Build an escaped regex so user input doesn't break Mongo
         import re as _re
@@ -1504,6 +1644,8 @@ async def count_videos(
     shorts_series_id: Optional[str] = None,
     shorts_category: Optional[str] = None,
     is_anime: Optional[bool] = None,
+    is_film_rosub: Optional[bool] = None,
+    film_category_id: Optional[str] = None,
     q: Optional[str] = None,
 ):
     """Counts videos matching the same filters list_videos accepts.
@@ -1540,6 +1682,18 @@ async def count_videos(
         filt["is_anime"] = {"$ne": True}
     else:
         filt["is_anime"] = {"$ne": True}
+    if is_film_rosub is True:
+        filt["is_film_rosub"] = True
+    elif is_film_rosub is False:
+        filt["is_film_rosub"] = {"$ne": True}
+    else:
+        filt["is_film_rosub"] = {"$ne": True}
+    if film_category_id:
+        fc = await db.film_categories.find_one(
+            {"$or": [{"id": film_category_id}, {"slug": film_category_id}]}, {"_id": 0, "id": 1},
+        )
+        if fc:
+            filt["film_category_ids"] = fc["id"]
     if q:
         import re as _re
         rex = _re.escape(q.strip())
@@ -1973,6 +2127,19 @@ async def upload_video_finish(
         if shorts_category not in ("xxx", "drama"):
             shorts_category = "xxx"
         is_anime = bool(payload.get("is_anime", False)) and not is_short
+        # Filme RoSub — full-length, mutually exclusive with shorts + anime.
+        is_film_rosub = bool(payload.get("is_film_rosub", False)) and not is_short and not is_anime
+        film_category_ids: List[str] = []
+        if is_film_rosub:
+            raw_fcids = payload.get("film_category_ids") or []
+            if isinstance(raw_fcids, str):
+                raw_fcids = [c.strip() for c in raw_fcids.split(",") if c.strip()]
+            elif not isinstance(raw_fcids, list):
+                raw_fcids = []
+            # Validate every provided id exists (silently drop invalid ones)
+            for cid in raw_fcids:
+                if await db.film_categories.find_one({"id": cid}, {"_id": 0, "id": 1}):
+                    film_category_ids.append(cid)
         # Anime seasons — resolve season → derive series_id + auto position.
         # `anime_season_id` is the single source of truth when is_anime=True.
         anime_season_id = payload.get("anime_season_id") if is_anime else None
@@ -2013,6 +2180,8 @@ async def upload_video_finish(
             anime_series_id=anime_series_id,
             anime_season_id=anime_season_id,
             anime_series_position=anime_series_position,
+            is_film_rosub=is_film_rosub,
+            film_category_ids=film_category_ids,
             original_filename=state.get("filename") or "",
             original_size_bytes=received,
             status="processing",
@@ -2102,6 +2271,15 @@ async def update_video(
             raise HTTPException(400, "shorts_category must be xxx or drama")
         if "is_anime" in upd and not isinstance(upd["is_anime"], bool):
             raise HTTPException(400, "is_anime must be a boolean")
+        # Film categories — validate each id exists (silently drop invalid).
+        if "film_category_ids" in upd:
+            if not isinstance(upd["film_category_ids"], list):
+                raise HTTPException(400, "film_category_ids must be a list")
+            valid: list[str] = []
+            for cid in upd["film_category_ids"]:
+                if isinstance(cid, str) and await db.film_categories.find_one({"id": cid}, {"_id": 0, "id": 1}):
+                    valid.append(cid)
+            upd["film_category_ids"] = valid
         # Anime season change → derive series_id from the season so the two
         # fields never drift apart. Client can pass anime_season_id alone.
         if "anime_season_id" in upd and upd["anime_season_id"]:
@@ -4454,7 +4632,302 @@ async def og_category_html(cat_ref: str, request: Request):
     )
 
 
-# ============ SEO: Google Search Console dashboard ============
+# ────────────────────────────────────────────────────────────────────
+# SSR OG for series/season listing pages — Discord/Facebook/Twitter
+# pull these to render a rich card when someone shares a series link.
+# Without SSR, the crawlers see the SPA shell and Discord shows the
+# "Loading…" placeholder from SiteHead.jsx (visible in user's bug
+# report screenshot).
+# ────────────────────────────────────────────────────────────────────
+def _og_html_response(
+    *, title: str, description: str, canonical: str,
+    image: str, body_html: str, lang: str = "ro",
+):
+    """Shared HTML skeleton for series/season SSR pages so the meta
+    block stays consistent (og + twitter + canonical + robots)."""
+    from fastapi.responses import HTMLResponse
+    import html as _html
+    esc = _html.escape
+    og_img_tag = (
+        f'<meta property="og:image" content="{esc(image)}">\n'
+        f'<meta property="og:image:secure_url" content="{esc(image)}">\n'
+        f'<meta property="og:image:width" content="1280">\n'
+        f'<meta property="og:image:height" content="720">\n'
+        f'<meta name="twitter:image" content="{esc(image)}">'
+    ) if image else ""
+    body = f"""<!doctype html>
+<html lang="{lang}"><head>
+<meta charset="utf-8">
+<title>{esc(title)}</title>
+<meta name="description" content="{esc(description)}">
+<link rel="canonical" href="{esc(canonical)}">
+<meta property="og:type" content="website">
+<meta property="og:title" content="{esc(title)}">
+<meta property="og:description" content="{esc(description)}">
+<meta property="og:url" content="{esc(canonical)}">
+{og_img_tag}
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="{esc(title)}">
+<meta name="twitter:description" content="{esc(description)}">
+<meta name="robots" content="index, follow, max-image-preview:large">
+</head><body>{body_html}</body></html>"""
+    return HTMLResponse(
+        body,
+        status_code=200,
+        headers={
+            "Cache-Control": "public, max-age=600",
+            "Content-Type": "text/html; charset=utf-8",
+        },
+    )
+
+
+@api.get("/og/shorts-series/{slug}")
+async def og_shorts_series_html(slug: str, request: Request):
+    """SSR OG card for a Shorts series (XXX or Drama).
+
+    Fixes the Discord bug where sharing e.g. `/shorts/series/Stepmom-Summer-Fling`
+    was showing the SiteHead.jsx placeholder because the SPA hadn't rendered
+    yet. Now returns a rich HTML card with cover + description + episode list.
+    """
+    import html as _html
+    s = await get_settings()
+    site_title = s.get("site_title") or "StreamHub"
+    base = (s.get("site_canonical_url") or "").rstrip("/")
+    if not base:
+        proto = request.headers.get("x-forwarded-proto") or request.url.scheme or "https"
+        host = request.headers.get("host") or request.url.hostname or ""
+        base = f"{proto}://{host}" if host else ""
+    series = await db.shorts_series.find_one(
+        {"$or": [{"id": slug}, {"slug": slug}]}, {"_id": 0}
+    )
+    if not series:
+        return await og_home_html()
+    canonical = f"{base}/shorts/series/{series.get('slug') or series['id']}"
+    page_title = f"{series['name']} — {site_title}"
+    desc = (series.get("description") or "").strip()[:200] or f"Toate episoadele din seria {series['name']}."
+    img = mediaUrl_for_og(series.get("cover_thumbnail") or s.get("site_og_image") or "", s)
+    # Episode grid — top 40 most recent for the SSR body
+    eps = await db.videos.find(
+        {"shorts_series_id": series["id"], "status": "ready"},
+        {"_id": 0, "id": 1, "title": 1, "slug": 1, "thumbnail_url": 1, "description": 1},
+    ).sort("created_at", -1).limit(40).to_list(40)
+    esc = _html.escape
+    items = []
+    for v in eps:
+        link = f"{base}/watch/{v.get('slug') or v['id']}"
+        thumb = mediaUrl_for_og(v.get("thumbnail_url") or "", s)
+        img_html = f'<a href="{esc(link)}"><img src="{esc(thumb)}" alt="{esc(v["title"])}" width="320" height="180" loading="lazy"></a>' if thumb else ""
+        items.append(
+            f"<li>{img_html}<h3><a href='{esc(link)}'>{esc(v['title'])}</a></h3></li>"
+        )
+    body = (
+        f"<h1>{esc(series['name'])}</h1>"
+        f"<p>{esc(desc)}</p>"
+        f"<section><h2>Episoade ({len(eps)})</h2><ul>{''.join(items)}</ul></section>"
+        f"<p><a href='{esc(canonical)}'>Deschide seria →</a></p>"
+    )
+    return _og_html_response(
+        title=page_title, description=desc, canonical=canonical,
+        image=img, body_html=body,
+    )
+
+
+@api.get("/og/anime-series/{slug}")
+async def og_anime_series_html(slug: str, request: Request):
+    """SSR OG card for an Anime series (grid of seasons)."""
+    import html as _html
+    s = await get_settings()
+    site_title = s.get("site_title") or "StreamHub"
+    base = (s.get("site_canonical_url") or "").rstrip("/")
+    if not base:
+        proto = request.headers.get("x-forwarded-proto") or request.url.scheme or "https"
+        host = request.headers.get("host") or request.url.hostname or ""
+        base = f"{proto}://{host}" if host else ""
+    series = await db.anime_series.find_one(
+        {"$or": [{"id": slug}, {"slug": slug}]}, {"_id": 0}
+    )
+    if not series:
+        return await og_home_html()
+    canonical = f"{base}/anime/series/{series.get('slug') or series['id']}"
+    page_title = f"{series['name']} — {site_title}"
+    desc = (series.get("description") or "").strip()[:200] or f"Sezoane și episoade din seria anime {series['name']}."
+    img = mediaUrl_for_og(series.get("cover_thumbnail") or s.get("site_og_image") or "", s)
+    seasons = await db.anime_seasons.find(
+        {"series_id": series["id"], "active": True}, {"_id": 0}
+    ).to_list(200)
+    seasons.sort(key=lambda x: (x.get("position") or 0, x.get("number") or 0))
+    esc = _html.escape
+    items = []
+    for se in seasons:
+        link = f"{base}/anime/series/{series.get('slug') or series['id']}/{se.get('slug') or se['id']}"
+        thumb = mediaUrl_for_og(se.get("cover_thumbnail") or series.get("cover_thumbnail") or "", s)
+        img_html = f'<a href="{esc(link)}"><img src="{esc(thumb)}" alt="{esc(se.get("title","Sezon"))}" width="200" height="300" loading="lazy"></a>' if thumb else ""
+        items.append(
+            f"<li>{img_html}<h3><a href='{esc(link)}'>{esc(se.get('title','Sezon'))}</a></h3></li>"
+        )
+    body = (
+        f"<h1>{esc(series['name'])}</h1>"
+        f"<p>{esc(desc)}</p>"
+        f"<section><h2>Sezoane ({len(seasons)})</h2><ul>{''.join(items)}</ul></section>"
+        f"<p><a href='{esc(canonical)}'>Deschide seria anime →</a></p>"
+    )
+    return _og_html_response(
+        title=page_title, description=desc, canonical=canonical,
+        image=img, body_html=body,
+    )
+
+
+@api.get("/og/anime-season/{series_slug}/{season_slug}")
+async def og_anime_season_html(series_slug: str, season_slug: str, request: Request):
+    """SSR OG card for an Anime season (list of episodes)."""
+    import html as _html
+    s = await get_settings()
+    site_title = s.get("site_title") or "StreamHub"
+    base = (s.get("site_canonical_url") or "").rstrip("/")
+    if not base:
+        proto = request.headers.get("x-forwarded-proto") or request.url.scheme or "https"
+        host = request.headers.get("host") or request.url.hostname or ""
+        base = f"{proto}://{host}" if host else ""
+    series = await db.anime_series.find_one(
+        {"$or": [{"id": series_slug}, {"slug": series_slug}]}, {"_id": 0}
+    )
+    if not series:
+        return await og_home_html()
+    se = await db.anime_seasons.find_one(
+        {"series_id": series["id"], "$or": [{"id": season_slug}, {"slug": season_slug}]},
+        {"_id": 0},
+    )
+    if not se:
+        return await og_home_html()
+    canonical = f"{base}/anime/series/{series.get('slug') or series['id']}/{se.get('slug') or se['id']}"
+    page_title = f"{series['name']} · {se.get('title', 'Sezon')} — {site_title}"
+    desc = (se.get("description") or series.get("description") or "").strip()[:200] or f"Episoade din {series['name']} — {se.get('title','')}"
+    img = mediaUrl_for_og(se.get("cover_thumbnail") or series.get("cover_thumbnail") or s.get("site_og_image") or "", s)
+    eps = await db.videos.find(
+        {"anime_season_id": se["id"], "status": "ready"},
+        {"_id": 0, "id": 1, "title": 1, "slug": 1, "thumbnail_url": 1, "anime_series_position": 1},
+    ).to_list(500)
+    eps.sort(key=lambda v: (
+        v.get("anime_series_position") if v.get("anime_series_position") is not None else 10 ** 9,
+        v.get("id") or "",
+    ))
+    esc = _html.escape
+    items = []
+    for v in eps:
+        link = f"{base}/watch/{v.get('slug') or v['id']}"
+        thumb = mediaUrl_for_og(v.get("thumbnail_url") or "", s)
+        img_html = f'<a href="{esc(link)}"><img src="{esc(thumb)}" alt="{esc(v["title"])}" width="320" height="180" loading="lazy"></a>' if thumb else ""
+        items.append(
+            f"<li>{img_html}<h3><a href='{esc(link)}'>{esc(v['title'])}</a></h3></li>"
+        )
+    body = (
+        f"<h1>{esc(series['name'])} — {esc(se.get('title','Sezon'))}</h1>"
+        f"<p>{esc(desc)}</p>"
+        f"<section><h2>Episoade ({len(eps)})</h2><ul>{''.join(items)}</ul></section>"
+        f"<p><a href='{esc(canonical)}'>Deschide sezonul →</a></p>"
+    )
+    return _og_html_response(
+        title=page_title, description=desc, canonical=canonical,
+        image=img, body_html=body,
+    )
+
+
+@api.get("/og/filme-rosub")
+async def og_filme_home_html(request: Request):
+    """SSR OG card for /filme-rosub home — grid of latest full-length films."""
+    import html as _html
+    s = await get_settings()
+    site_title = s.get("site_title") or "StreamHub"
+    base = (s.get("site_canonical_url") or "").rstrip("/")
+    if not base:
+        proto = request.headers.get("x-forwarded-proto") or request.url.scheme or "https"
+        host = request.headers.get("host") or request.url.hostname or ""
+        base = f"{proto}://{host}" if host else ""
+    canonical = f"{base}/filme-rosub"
+    page_title = f"Filme RoSub — {site_title}"
+    desc = f"Toate filmele subtitrate în română pe {site_title}."
+    img = mediaUrl_for_og(s.get("site_og_image") or "", s)
+    films = await db.videos.find(
+        {"is_film_rosub": True, "status": "ready"},
+        {"_id": 0, "id": 1, "title": 1, "slug": 1, "thumbnail_url": 1, "description": 1},
+    ).sort("created_at", -1).limit(40).to_list(40)
+    cats = await db.film_categories.find({"active": True}, {"_id": 0}).to_list(200)
+    cats.sort(key=lambda x: (x.get("position") or 0, (x.get("name") or "").lower()))
+    esc = _html.escape
+    cats_html = " · ".join(
+        f'<a href="{esc(base)}/filme-rosub/{esc(c["slug"])}">{esc(c["name"])}</a>'
+        for c in cats
+    )
+    items = []
+    for v in films:
+        link = f"{base}/watch/{v.get('slug') or v['id']}"
+        thumb = mediaUrl_for_og(v.get("thumbnail_url") or "", s)
+        img_html = f'<a href="{esc(link)}"><img src="{esc(thumb)}" alt="{esc(v["title"])}" width="320" height="180" loading="lazy"></a>' if thumb else ""
+        items.append(
+            f"<li>{img_html}<h3><a href='{esc(link)}'>{esc(v['title'])}</a></h3>"
+            f"<p>{esc((v.get('description') or '')[:180])}</p></li>"
+        )
+    body = (
+        f"<h1>Filme RoSub</h1>"
+        f"<p>{esc(desc)}</p>"
+        + (f"<nav><strong>Categorii:</strong> {cats_html}</nav>" if cats_html else "")
+        + f"<section><h2>Filme ({len(films)})</h2><ul>{''.join(items)}</ul></section>"
+        f"<p><a href='{esc(canonical)}'>Deschide catalogul →</a></p>"
+    )
+    return _og_html_response(
+        title=page_title, description=desc, canonical=canonical,
+        image=img, body_html=body,
+    )
+
+
+@api.get("/og/filme-rosub/{cat_ref}")
+async def og_filme_category_html(cat_ref: str, request: Request):
+    """SSR OG card for a Filme RoSub category page."""
+    import html as _html
+    s = await get_settings()
+    site_title = s.get("site_title") or "StreamHub"
+    base = (s.get("site_canonical_url") or "").rstrip("/")
+    if not base:
+        proto = request.headers.get("x-forwarded-proto") or request.url.scheme or "https"
+        host = request.headers.get("host") or request.url.hostname or ""
+        base = f"{proto}://{host}" if host else ""
+    cat = await db.film_categories.find_one(
+        {"$or": [{"id": cat_ref}, {"slug": cat_ref}]}, {"_id": 0},
+    )
+    if not cat:
+        return await og_filme_home_html(request)
+    canonical = f"{base}/filme-rosub/{cat.get('slug') or cat['id']}"
+    page_title = f"Filme RoSub — {cat['name']} — {site_title}"
+    desc = (cat.get("description") or "").strip()[:200] or f"Filme din categoria {cat['name']} pe {site_title}."
+    img = mediaUrl_for_og(s.get("site_og_image") or "", s)
+    films = await db.videos.find(
+        {"is_film_rosub": True, "status": "ready", "film_category_ids": cat["id"]},
+        {"_id": 0, "id": 1, "title": 1, "slug": 1, "thumbnail_url": 1, "description": 1},
+    ).sort("created_at", -1).limit(40).to_list(40)
+    esc = _html.escape
+    items = []
+    for v in films:
+        link = f"{base}/watch/{v.get('slug') or v['id']}"
+        thumb = mediaUrl_for_og(v.get("thumbnail_url") or "", s)
+        img_html = f'<a href="{esc(link)}"><img src="{esc(thumb)}" alt="{esc(v["title"])}" width="320" height="180" loading="lazy"></a>' if thumb else ""
+        items.append(
+            f"<li>{img_html}<h3><a href='{esc(link)}'>{esc(v['title'])}</a></h3></li>"
+        )
+    body = (
+        f"<h1>Filme RoSub — {esc(cat['name'])}</h1>"
+        f"<p>{esc(desc)}</p>"
+        f"<section><h2>Filme ({len(films)})</h2><ul>{''.join(items)}</ul></section>"
+        f"<p><a href='{esc(canonical)}'>Deschide categoria →</a></p>"
+    )
+    return _og_html_response(
+        title=page_title, description=desc, canonical=canonical,
+        image=img, body_html=body,
+    )
+
+
+
+
+
 @api.post("/admin/seo/credentials")
 async def admin_seo_save_credentials(payload: dict, admin: dict = Depends(require_admin)):
     """Save the service-account JSON key + GSC site URL.
@@ -5252,6 +5725,13 @@ _SOCIAL_CRAWLER_RE = re.compile(
 _WATCH_PATH_RE = re.compile(r"^/watch/([^/?#]+)")
 _CATEGORY_PATH_RE = re.compile(r"^/(?:videos/)?category/([^/?#]+)")
 _LISTING_PATH_RE = re.compile(r"^/(popular|discover|shorts|all-episodes|episoade|shop)(?:/|$)")
+# Series / season / filme SSR — must match BEFORE the generic listing regex
+# so `/shorts/series/<slug>` doesn't fall into the /shorts listing bucket.
+_SHORTS_SERIES_PATH_RE = re.compile(r"^/shorts/series/([^/?#]+)")
+_ANIME_SEASON_PATH_RE = re.compile(r"^/anime/series/([^/?#]+)/([^/?#]+)")
+_ANIME_SERIES_PATH_RE = re.compile(r"^/anime/series/([^/?#]+)")
+_FILME_CATEGORY_PATH_RE = re.compile(r"^/filme-rosub/([^/?#]+)")
+_FILME_HOME_PATH_RE = re.compile(r"^/filme-rosub(?:/|$)")
 
 # Legacy URL recovery: any `.html` URL at the app root MAY have been an
 # article slug from the previous CMS.  We try to resolve it via
@@ -5307,6 +5787,22 @@ async def crawler_og_middleware(request: Request, call_next):
         m = _WATCH_PATH_RE.match(path)
         if m:
             return await og_video_html(m.group(1), request)  # type: ignore[arg-type]
+        # Anime season BEFORE anime series (longer pattern first)
+        m = _ANIME_SEASON_PATH_RE.match(path)
+        if m:
+            return await og_anime_season_html(m.group(1), m.group(2), request)  # type: ignore[arg-type]
+        m = _ANIME_SERIES_PATH_RE.match(path)
+        if m:
+            return await og_anime_series_html(m.group(1), request)  # type: ignore[arg-type]
+        m = _SHORTS_SERIES_PATH_RE.match(path)
+        if m:
+            return await og_shorts_series_html(m.group(1), request)  # type: ignore[arg-type]
+        # Filme category BEFORE filme home (longer pattern first)
+        m = _FILME_CATEGORY_PATH_RE.match(path)
+        if m:
+            return await og_filme_category_html(m.group(1), request)  # type: ignore[arg-type]
+        if _FILME_HOME_PATH_RE.match(path):
+            return await og_filme_home_html(request)  # type: ignore[arg-type]
         cm = _CATEGORY_PATH_RE.match(path)
         if cm:
             return await og_category_html(cm.group(1), request)  # type: ignore[arg-type]

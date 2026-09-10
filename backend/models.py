@@ -144,6 +144,11 @@ class Video(BaseModel):
     # movies/specials). When set, `anime_series_position` orders the episode
     # WITHIN that season, not across the whole series.
     anime_season_id: Optional[str] = None
+    # ─── Filme RoSub vertical ────────────────────────────────────────
+    # Full-length films (NOT shorts, NOT anime episodes) that appear on
+    # /filme-rosub. Mutually exclusive with `is_short` and `is_anime`.
+    is_film_rosub: bool = False
+    film_category_ids: List[str] = []  # multi-select — a film can be in many categories
     views: int = 0
     likes: List[str] = []  # user ids
     created_at: str = Field(default_factory=now_iso)
@@ -174,6 +179,8 @@ class VideoUpdateReq(BaseModel):
     anime_series_id: Optional[str] = None
     anime_series_position: Optional[int] = None
     anime_season_id: Optional[str] = None
+    is_film_rosub: Optional[bool] = None
+    film_category_ids: Optional[List[str]] = None
     subtitles: Optional[List[dict]] = None  # allow reordering (set default) only — items must already exist
 
 
@@ -452,4 +459,19 @@ class CoinTxn(BaseModel):
     delta: int  # positive earn / negative spend
     reason: str  # "like:<videoid>" | "comment:<videoid>" | "purchase:<frameid>"
     balance_after: int
+    created_at: str = Field(default_factory=now_iso)
+
+
+
+# ============ FILM CATEGORIES (Filme RoSub vertical) ============
+# Categories are text-only tags shown on the /filme-rosub page. A film can
+# belong to multiple categories (multi-select on upload). No cover image
+# per user's request.
+class FilmCategory(BaseModel):
+    id: str = Field(default_factory=new_id)
+    name: str
+    slug: str
+    description: str = ""
+    active: bool = True
+    position: int = 0
     created_at: str = Field(default_factory=now_iso)

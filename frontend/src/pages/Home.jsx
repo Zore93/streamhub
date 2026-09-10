@@ -79,6 +79,7 @@ export default function Home() {
   const [dramaSeries, setDramaSeries] = useState([]);
   const [animeVideos, setAnimeVideos] = useState([]);
   const [animeSeries, setAnimeSeries] = useState([]);
+  const [filme, setFilme] = useState([]);
 
   useEffect(() => {
     const url = (section, extra = "") =>
@@ -109,6 +110,10 @@ export default function Home() {
       .get("/anime-series")
       .then((r) => setAnimeSeries(r.data.slice(0, HOME_LIMIT)))
       .catch(() => {});
+    api
+      .get(`/videos/filme?limit=${HOME_LIMIT}`)
+      .then((r) => setFilme(r.data?.items || []))
+      .catch(() => {});
   }, []);
 
   const isEmpty =
@@ -132,11 +137,13 @@ export default function Home() {
     { id: "xxx",    label: t("home.tab.xxx")    || "XXX Shorts" },
     { id: "drama",  label: t("home.tab.drama")  || "Drama Shorts" },
     { id: "anime",  label: t("home.tab.anime")  || "Anime" },
+    { id: "filme",  label: t("home.tab.filme")  || "Filme RoSub" },
   ];
   const showVideos      = vertical === "all" || vertical === "videos";
   const showXxxShorts   = vertical === "all" || vertical === "xxx";
   const showDramaShorts = vertical === "all" || vertical === "drama";
   const showAnime       = vertical === "all" || vertical === "anime";
+  const showFilme       = vertical === "all" || vertical === "filme";
 
   return (
     <div data-testid="home-page">
@@ -266,6 +273,17 @@ export default function Home() {
         >
           <SeriesPosterRow series={animeSeries} basePath="/anime/series" />
         </Section>
+      )}
+      {showFilme && filme.length > 0 && (
+        <Section
+          title={t("home.lastFilme") || "Ultimele Filme RoSub adăugate"}
+          Icon={Film}
+          videos={filme}
+          seeMoreTo="/filme-rosub"
+          testId="section-filme"
+          seeMoreLabel={seeMore}
+        />
+      )}
       )}
     </div>
   );

@@ -39,16 +39,20 @@ export default function Upload() {
     is_anime: false,
     anime_series_id: null,
     anime_season_id: null,
+    is_film_rosub: false,
+    film_category_ids: [],
   });
   const [categories, setCategories] = useState([]);
   const [animeSeriesList, setAnimeSeriesList] = useState([]);
   const [animeSeasonsList, setAnimeSeasonsList] = useState([]);
+  const [filmCategoriesList, setFilmCategoriesList] = useState([]);
   const [busy, setBusy] = useState(false);
   const abortRef = useRef([]);
 
   useEffect(() => {
     api.get("/categories").then((r) => setCategories(r.data)).catch(() => {});
     api.get("/anime-series").then((r) => setAnimeSeriesList(r.data)).catch(() => {});
+    api.get("/film-categories").then((r) => setFilmCategoriesList(r.data)).catch(() => {});
   }, []);
 
   // Cascade: reload season list whenever the picked series changes.
@@ -118,6 +122,8 @@ export default function Upload() {
           is_anime: !shared.is_short && !!shared.is_anime,
           anime_season_id: (!shared.is_short && shared.is_anime) ? shared.anime_season_id : null,
           anime_series_id: (!shared.is_short && shared.is_anime) ? shared.anime_series_id : null,
+          is_film_rosub: !shared.is_short && !shared.is_anime && !!shared.is_film_rosub,
+          film_category_ids: (!shared.is_short && !shared.is_anime && shared.is_film_rosub) ? (shared.film_category_ids || []) : [],
         };
         const video = await uploadVideoChunked({
           file: entry.file,
@@ -386,6 +392,54 @@ export default function Upload() {
               )}
             </div>
           )}
+          {!shared.is_short && !shared.is_anime && (
+            <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-3 space-y-3" data-testid="upload-is-film-block">
+              <div className="flex items-center justify-between">
+                <Label className="mb-0">Este film RoSub (apare doar în /filme-rosub)</Label>
+                <Switch
+                  checked={!!shared.is_film_rosub}
+                  onCheckedChange={(v) => setShared({
+                    ...shared,
+                    is_film_rosub: v,
+                    film_category_ids: v ? (shared.film_category_ids || []) : [],
+                  })}
+                  data-testid="upload-is-film-rosub"
+                />
+              </div>
+              {shared.is_film_rosub && (
+                <div>
+                  <Label>Categorii film (poți alege mai multe)</Label>
+                  {filmCategoriesList.length === 0 && (
+                    <p className="text-xs text-zinc-500 mt-1">
+                      Nu există categorii încă. Creează-le din Admin → Categorii Filme.
+                    </p>
+                  )}
+                  <div className="flex flex-wrap gap-2 mt-2" data-testid="upload-film-categories">
+                    {filmCategoriesList.map((c) => {
+                      const selected = (shared.film_category_ids || []).includes(c.id);
+                      return (
+                        <button
+                          key={c.id}
+                          type="button"
+                          onClick={() => {
+                            const cur = new Set(shared.film_category_ids || []);
+                            if (cur.has(c.id)) cur.delete(c.id);
+                            else cur.add(c.id);
+                            setShared({ ...shared, film_category_ids: Array.from(cur) });
+                          }}
+                          className={`text-xs px-3 py-1.5 rounded-full border transition-colors ${selected ? "bg-rose-600 border-rose-500 text-white" : "bg-zinc-950 border-zinc-700 text-zinc-300 hover:border-zinc-500"}`}
+                          data-testid={`upload-film-cat-${c.slug}`}
+                        >
+                          {c.name}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
           {shared.is_short && (
             <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-3" data-testid="upload-shorts-category-block">
               <Label className="mb-2 block">Tip Shorts</Label>

@@ -42,6 +42,7 @@ export default function EditVideo() {
   const [animeSeries, setAnimeSeries] = useState([]);
   const [animeSeasons, setAnimeSeasons] = useState([]);
   const [selectedAnimeSeriesId, setSelectedAnimeSeriesId] = useState(null);
+  const [filmCategories, setFilmCategories] = useState([]);
   const [allLangs, setAllLangs] = useState([]);
   const [subFile, setSubFile] = useState(null);
   const [subLang, setSubLang] = useState("ro");
@@ -61,6 +62,7 @@ export default function EditVideo() {
     api.get("/shorts-series?category=xxx").then((r) => setShortsSeriesXxx(r.data)).catch(() => setShortsSeriesXxx([]));
     api.get("/shorts-series?category=drama").then((r) => setShortsSeriesDrama(r.data)).catch(() => setShortsSeriesDrama([]));
     api.get("/anime-series").then((r) => setAnimeSeries(r.data)).catch(() => setAnimeSeries([]));
+    api.get("/film-categories").then((r) => setFilmCategories(r.data)).catch(() => setFilmCategories([]));
     api.get("/languages").then((r) => setAllLangs(r.data)).catch(() => setAllLangs(COMMON_LANGS));
   }, [id]);
 
@@ -369,6 +371,63 @@ export default function EditVideo() {
                 )}
               </>
             )}
+        {!isShortVideo && (
+          <div className="bg-zinc-950 border border-zinc-800 rounded-md p-3 space-y-3" data-testid="edit-film-block">
+            <div className="flex items-center justify-between">
+              <Label className="m-0">Este film RoSub</Label>
+              <Switch
+                checked={!!v.is_film_rosub}
+                onCheckedChange={(val) => {
+                  // Films are mutually exclusive with anime — flip and clean the other side.
+                  const next = {
+                    is_film_rosub: val,
+                    is_anime: val ? false : v.is_anime,
+                    anime_series_id: val ? null : v.anime_series_id,
+                    anime_season_id: val ? null : v.anime_season_id,
+                    film_category_ids: val ? (v.film_category_ids || []) : [],
+                  };
+                  setV({ ...v, ...next });
+                  save(next);
+                  if (val) setSelectedAnimeSeriesId(null);
+                }}
+                data-testid="edit-is-film-rosub"
+              />
+            </div>
+            {v.is_film_rosub && (
+              <div>
+                <Label>Categorii film (poți alege mai multe)</Label>
+                {filmCategories.length === 0 && (
+                  <p className="text-xs text-zinc-500 mt-1">
+                    Nu există categorii încă. Creează-le din Admin → Categorii Filme.
+                  </p>
+                )}
+                <div className="flex flex-wrap gap-2 mt-2" data-testid="edit-film-categories">
+                  {filmCategories.map((c) => {
+                    const selected = (v.film_category_ids || []).includes(c.id);
+                    return (
+                      <button
+                        key={c.id}
+                        type="button"
+                        onClick={() => {
+                          const cur = new Set(v.film_category_ids || []);
+                          if (cur.has(c.id)) cur.delete(c.id); else cur.add(c.id);
+                          const next = Array.from(cur);
+                          setV({ ...v, film_category_ids: next });
+                          save({ film_category_ids: next });
+                        }}
+                        className={`text-xs px-3 py-1.5 rounded-full border transition-colors ${selected ? "bg-rose-600 border-rose-500 text-white" : "bg-zinc-950 border-zinc-700 text-zinc-300 hover:border-zinc-500"}`}
+                        data-testid={`edit-film-cat-${c.slug}`}
+                      >
+                        {c.name}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
           </div>
         )}
         {isShortVideo && (

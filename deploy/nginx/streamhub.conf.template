@@ -68,12 +68,87 @@ server {
     }
 
     # ── Social-media crawler routing ───────────────────────────────────────
-    # When a known crawler (see top-of-file `map`) hits /watch/<id> we rewrite
-    # to the backend's server-rendered OG-card endpoint so link previews show
-    # the episode thumbnail + title.  Humans still get the React SPA.
+    # When a known crawler (see top-of-file `map`) hits a shareable route we
+    # rewrite to the backend's server-rendered OG-card endpoint so link
+    # previews show the correct title + thumbnail. Humans still get the
+    # React SPA below.
     location ~ ^/watch/([^/?#]+) {
         if ($is_social_crawler) {
             rewrite ^/watch/([^/?#]+).*$ /api/og/video/$1 last;
+        }
+        proxy_pass http://sh_frontend;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # ⚠ Anime SEASON must be matched BEFORE the SERIES-only rule below so the
+    # longer 2-segment path doesn't fall through to the shorter one.
+    location ~ ^/anime/series/([^/?#]+)/([^/?#]+) {
+        if ($is_social_crawler) {
+            rewrite ^/anime/series/([^/?#]+)/([^/?#]+).*$ /api/og/anime-season/$1/$2 last;
+        }
+        proxy_pass http://sh_frontend;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location ~ ^/anime/series/([^/?#]+) {
+        if ($is_social_crawler) {
+            rewrite ^/anime/series/([^/?#]+).*$ /api/og/anime-series/$1 last;
+        }
+        proxy_pass http://sh_frontend;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location ~ ^/shorts/series/([^/?#]+) {
+        if ($is_social_crawler) {
+            rewrite ^/shorts/series/([^/?#]+).*$ /api/og/shorts-series/$1 last;
+        }
+        proxy_pass http://sh_frontend;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location ~ ^/filme-rosub/([^/?#]+) {
+        if ($is_social_crawler) {
+            rewrite ^/filme-rosub/([^/?#]+).*$ /api/og/filme-rosub/$1 last;
+        }
+        proxy_pass http://sh_frontend;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location = /filme-rosub {
+        if ($is_social_crawler) {
+            rewrite ^.*$ /api/og/filme-rosub last;
+        }
+        proxy_pass http://sh_frontend;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location ~ ^/category/([^/?#]+) {
+        if ($is_social_crawler) {
+            rewrite ^/category/([^/?#]+).*$ /api/og/category/$1 last;
         }
         proxy_pass http://sh_frontend;
         proxy_http_version 1.1;
