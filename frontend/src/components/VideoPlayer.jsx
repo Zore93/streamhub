@@ -273,13 +273,31 @@ export default function VideoPlayer({ video, currentRendition, resolution, setRe
     ? { backgroundImage: `url(${posterUrl})`, backgroundSize: "cover", backgroundPosition: "center", backgroundRepeat: "no-repeat" }
     : undefined;
 
+  // Style adjustments for pseudo-fullscreen so it truly fills the viewport
+  // on iOS Safari (where the aspect-video parent container would otherwise
+  // clip us to 16:9). We escape the parent by using `position: fixed` and
+  // explicit viewport sizing — done via inline style to defeat any Tailwind
+  // ordering conflicts with `relative w-full h-full` in the normal branch.
+  const pseudoStyle = pseudoFS
+    ? {
+        position: "fixed",
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        width: "100vw",
+        height: "100dvh",
+        zIndex: 9999,
+      }
+    : {};
+
   return (
     <div
       ref={wrapRef}
-      className={`relative w-full h-full bg-black group player-wrap ${controlsVisible ? "controls-visible" : "controls-hidden"} ${pseudoFS ? "fixed inset-0 z-[9999] !w-screen !h-[100dvh]" : ""}`}
+      className={`${pseudoFS ? "" : "relative w-full h-full"} bg-black group player-wrap ${controlsVisible ? "controls-visible" : "controls-hidden"}`}
       data-testid="video-player"
       data-pseudo-fullscreen={pseudoFS || undefined}
-      style={wrapStyle}
+      style={{ ...wrapStyle, ...pseudoStyle }}
     >
       <video
         ref={ref}
@@ -289,7 +307,7 @@ export default function VideoPlayer({ video, currentRendition, resolution, setRe
          * respond with `Access-Control-Allow-Origin` when crossOrigin is set —
          * so we skip it entirely when there are no <track> children. */
         crossOrigin={(video.subtitles || []).length > 0 ? "anonymous" : undefined}
-        className="w-full h-full"
+        className={pseudoFS ? "w-full h-full object-contain" : "w-full h-full"}
         preload="metadata"
         playsInline
         onTimeUpdate={() => setSavedTime(ref.current?.currentTime || 0)}
