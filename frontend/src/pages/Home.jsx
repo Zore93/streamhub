@@ -284,7 +284,6 @@ export default function Home() {
           seeMoreLabel={seeMore}
         />
       )}
-      )}
     </div>
   );
 }
