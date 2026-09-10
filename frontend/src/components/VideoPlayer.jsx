@@ -189,28 +189,35 @@ export default function VideoPlayer({ video, currentRendition, resolution, setRe
   const [pseudoFS, setPseudoFS] = useState(false);
   const toggleFullscreen = () => {
     const w = wrapRef.current; if (!w) return;
-    // Pseudo-fullscreen is ONLY for shorts (portrait 9:16) — regular
-    // videos keep native Fullscreen API which correctly rotates to
-    // landscape on mobile. Users rely on that native behaviour for
-    // horizontal content; pseudo-FS is a shorts-only affordance.
+    const videoEl = ref.current;
     const ua = typeof navigator !== "undefined" ? (navigator.userAgent || "") : "";
     const isIOS = /iPad|iPhone|iPod/i.test(ua) && !window.MSStream;
     const isMobile = /Mobi|Android/i.test(ua) || isIOS;
-    const supportsNative = !!(document.fullscreenEnabled ?? document.webkitFullscreenEnabled);
+    // Shorts on mobile → CSS pseudo-fullscreen (portrait, no rotation).
     if (isShort && isMobile) {
-      // Portrait shorts on mobile → CSS pseudo-fullscreen so the video
-      // fills the phone viewport without forcing a rotation to landscape.
       setPseudoFS((prev) => !prev);
       return;
     }
+    // Regular videos on iOS Safari: `<div>.requestFullscreen()` isn't
+    // supported — only the video element's `webkitEnterFullscreen()` works
+    // (and it correctly rotates to landscape). Use that path first.
+    if (isIOS && videoEl?.webkitEnterFullscreen) {
+      try { videoEl.webkitEnterFullscreen(); return; } catch (_e) { /* fallthrough */ }
+    }
+    // Standard Fullscreen API on the wrap (desktop + Android Chrome).
+    const supportsNative = !!(document.fullscreenEnabled ?? document.webkitFullscreenEnabled);
     if (!supportsNative) {
-      // Very old browsers with no Fullscreen API at all — fall back to
-      // pseudo-FS so users still get *some* fullscreen experience.
+      // Very old browsers → pseudo-FS so users still get *something*.
       setPseudoFS((prev) => !prev);
       return;
     }
-    if (!document.fullscreenElement) w.requestFullscreen?.();
-    else document.exitFullscreen?.();
+    if (!document.fullscreenElement) {
+      // Prefer wrap so our custom controls stay visible; fall back to
+      // the video element (some engines only allow FS on media elements).
+      (w.requestFullscreen || w.webkitRequestFullscreen)?.call(w);
+    } else {
+      (document.exitFullscreen || document.webkitExitFullscreen)?.call(document);
+    }
   };
   // ESC exits pseudo-fullscreen (mirrors the native FS behaviour)
   useEffect(() => {
