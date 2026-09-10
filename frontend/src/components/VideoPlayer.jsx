@@ -283,7 +283,11 @@ export default function VideoPlayer({ video, currentRendition, resolution, setRe
   // Painting the thumbnail behind the <video> causes a visible repaint flicker
   // whenever a subtitle line appears/disappears (browsers redraw the layer).
   const isShort = !!video.is_short;
-  const wrapStyle = posterUrl && !isShort
+  // Paint the poster as a background ONLY before playback starts. Once the
+  // user hits play we drop it so the black letterbox bars aren't polluted
+  // by a blurry thumbnail behind the video (matches the reference iOS
+  // player screenshots the user attached).
+  const wrapStyle = posterUrl && !isShort && !hasPlayed
     ? { backgroundImage: `url(${posterUrl})`, backgroundSize: "cover", backgroundPosition: "center", backgroundRepeat: "no-repeat" }
     : undefined;
 
