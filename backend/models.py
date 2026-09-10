@@ -140,6 +140,10 @@ class Video(BaseModel):
     is_anime: bool = False
     anime_series_id: Optional[str] = None
     anime_series_position: Optional[int] = None
+    # Season the episode belongs to (a series can have multiple seasons/OVAs/
+    # movies/specials). When set, `anime_series_position` orders the episode
+    # WITHIN that season, not across the whole series.
+    anime_season_id: Optional[str] = None
     views: int = 0
     likes: List[str] = []  # user ids
     created_at: str = Field(default_factory=now_iso)
@@ -169,6 +173,7 @@ class VideoUpdateReq(BaseModel):
     is_anime: Optional[bool] = None
     anime_series_id: Optional[str] = None
     anime_series_position: Optional[int] = None
+    anime_season_id: Optional[str] = None
     subtitles: Optional[List[dict]] = None  # allow reordering (set default) only — items must already exist
 
 
@@ -196,6 +201,23 @@ class AnimeSeries(BaseModel):
     tags: List[str] = []
     active: bool = True
     sort_order: int = 0
+    created_at: str = Field(default_factory=now_iso)
+
+
+# ============ ANIME SEASON ============
+class AnimeSeason(BaseModel):
+    id: str = Field(default_factory=new_id)
+    series_id: str
+    number: int = 1  # Season 1, 2, 3 ... (or 0 for OVA/Movie/Special)
+    title: str = ""  # Optional custom title e.g. "Kizuna no Allele Part 2"
+    slug: str  # unique per series (e.g. "s01", "ova-2024")
+    description: str = ""
+    synopsis: str = ""  # AI-generated long-form; per-season
+    cover_thumbnail: str = ""
+    year: Optional[int] = None
+    season_type: str = "season"  # season | ova | movie | special
+    position: int = 0  # display order within the series
+    active: bool = True
     created_at: str = Field(default_factory=now_iso)
 
 

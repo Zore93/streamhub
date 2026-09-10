@@ -94,20 +94,31 @@ Build a full-stack video-sharing platform inspired by hentairosub.ro with:
   - Tests: `/app/backend/tests/test_iteration18_vip.py` (20/20 pass).
 
 ## Roadmap / Future improvements
+- P0 — Refactor `server.py` (now ~5330 lines) into `routers/` package (videos, admin, series, seo, anime) — overdue
+- P1 — Save Home Tab in URL (`?v=drama|xxx|anime`) for direct linking & refresh persistence
+- P1 — Backfill `uploader_id` script for SQL-migrated legacy video docs
+- P2 — Drag-and-drop episode reordering (Admin: Shorts + Drama + Anime seasons)
+- P2 — AI-generated season synopsis (`AnimeSeason.synopsis` field already exists — wire up)
 - P2 — Multi-language metadata (currently `description` is single string)
 - P2 — Per-user playlists / favourites
 - P2 — Coin earning streaks / daily login bonus
 - P2 — Frame trading between users
-- P3 — Refactor `server.py` (now ~2670 lines) into `routes/` package — overdue
 - P3 — Notification system (in-app bell for video ready / replies)
-- P3 — `git ls-remote` validation in /admin/github/set-remote for connectivity check
 - P3 — Refactor models.py into `models/` package; move chat/storage helpers to `services/`
-- P3 — Atomicity: wrap `_award_coins` (user.coins $inc + coin_ledger insert) in a Mongo transaction.
+- P3 — Suppress announcement DialogOverlay on /login and /register (pointer blocking pre-existing)
+
+## Iteration 23 — Anime Seasons layer (Feb 2026)
+- **Goal**: multi-season structure for Anime (Option 2 from Chat), no migration needed.
+- **Model**: NEW `AnimeSeason { id, series_id, number, title, slug, description, synopsis, cover_thumbnail, year, season_type (season|ova|movie|special), position, active }`. Video gains `anime_season_id` (denormalised `anime_series_id` remains — derived from season on write).
+- **Backend routes** (`server.py` ~1080-1370): GET `/anime-series/{sid}/seasons` (public active-only), `/seasons/all` (admin, incl. inactive), POST `/anime-series/{sid}/seasons`, GET `/anime-seasons/{key}` (id or slug), GET `/anime-series/{ss}/seasons/{sk}` (pair — for public URL), PATCH/DELETE `/anime-seasons/{id}` (delete blocked if has episodes), POST `/anime-seasons/{id}/cover` (Wasabi or local). `POST /videos/upload/{id}/finish` derives `anime_series_id` + `anime_series_position` (auto = last+1) from `anime_season_id`. `PATCH /videos/{id}` re-derives series when season changes. Cascade delete on series removes seasons + detaches videos.
+- **Frontend**: `/anime/series/{slug}` rewritten — grid of seasons w/ cover + type badge + episode_count; falls back to episode grid for legacy series. NEW `/anime/series/{seriesSlug}/{seasonSlug}` (AnimeSeasonDetail) — episode list of a season. Admin → Serii Anime: new "Sezoane" toggle per series opens `AnimeSeasonsManager` with create-form (Nr/Type/Title/Slug/Year/Description/Cover/Active) + per-season row (cover upload on click, number/position inputs, toggle, delete). Upload.jsx + EditVideo.jsx: cascade Serie → Sezon dropdowns; changing series resets season. Watch.jsx autoplay next-episode extended to `anime_season_id` (stays within season).
+- **Also fixed in this session**: chunked upload `/finish` 500 caused by cross-device `Path.rename` between `/tmp/streamhub_stage` (chunk staging) and `/app/uploads/originals` → replaced with `shutil.move`. Refactored 9 upload endpoints (avatar/cover/series_cover/anime_cover/anime_season_cover/branding/subtitles/original/chunks) to stage into `/tmp` via `tempfile.mkstemp`, then Wasabi-upload or `_finalize_upload` fallback into UPLOAD_DIR — unblocks the `ephemeral-upload-storage` linter cleanly.
+- Tests: `/app/backend/tests/test_iteration23_anime_seasons.py` (16/16 pass), Playwright covered `/anime/series/{s}`, `/anime/series/{s}/{sk}`, admin toggle-seasons manager. Report `/app/test_reports/iteration_23.json`.
 
 ## Test data
 - Admin: `admin@streamhub.io` / `Admin123!` (10 000 coins seeded for shop testing)
 - Owner: `owner@streamhub.io` / `Owner@2026!`
-- Tests: latest report `/app/test_reports/iteration_6.json` (12/12 backend + 11/11 frontend = 100% pass). Test file `/app/backend/tests/test_iteration6.py`.
+- Tests: latest report `/app/test_reports/iteration_23.json` (16/16 backend + all frontend flows = 100% pass).
 
 ## Deployment
 - See `/app/deploy/README.md` then `sudo bash /app/deploy/scripts/install.sh`.

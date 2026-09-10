@@ -38,14 +38,26 @@ export default function Upload() {
     shorts_category: "xxx",
     is_anime: false,
     anime_series_id: null,
+    anime_season_id: null,
   });
   const [categories, setCategories] = useState([]);
+  const [animeSeriesList, setAnimeSeriesList] = useState([]);
+  const [animeSeasonsList, setAnimeSeasonsList] = useState([]);
   const [busy, setBusy] = useState(false);
   const abortRef = useRef([]);
 
   useEffect(() => {
     api.get("/categories").then((r) => setCategories(r.data)).catch(() => {});
+    api.get("/anime-series").then((r) => setAnimeSeriesList(r.data)).catch(() => {});
   }, []);
+
+  // Cascade: reload season list whenever the picked series changes.
+  useEffect(() => {
+    if (!shared.anime_series_id) { setAnimeSeasonsList([]); return; }
+    api.get(`/anime-series/${shared.anime_series_id}/seasons`)
+      .then((r) => setAnimeSeasonsList(r.data))
+      .catch(() => setAnimeSeasonsList([]));
+  }, [shared.anime_series_id]);
 
   const shortsMax = siteCfg?.shorts_max_duration_sec ?? 60;
   const bulkEnabled = siteCfg?.bulk_upload_enabled ?? true;
@@ -104,6 +116,7 @@ export default function Upload() {
           is_short: shared.is_short,
           shorts_category: shared.is_short ? (shared.shorts_category || "xxx") : "xxx",
           is_anime: !shared.is_short && !!shared.is_anime,
+          anime_season_id: (!shared.is_short && shared.is_anime) ? shared.anime_season_id : null,
           anime_series_id: (!shared.is_short && shared.is_anime) ? shared.anime_series_id : null,
         };
         const video = await uploadVideoChunked({
@@ -305,9 +318,72 @@ export default function Upload() {
             <Switch checked={shared.is_short} onCheckedChange={(v) => setShared({ ...shared, is_short: v, is_anime: v ? false : shared.is_anime })} data-testid="upload-is-short" />
           </div>
           {!shared.is_short && (
-            <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-3 flex items-center justify-between" data-testid="upload-is-anime-block">
-              <Label className="mb-0">Marchează ca Anime (apare doar în /anime)</Label>
-              <Switch checked={!!shared.is_anime} onCheckedChange={(v) => setShared({ ...shared, is_anime: v })} data-testid="upload-is-anime" />
+            <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-3 space-y-3" data-testid="upload-is-anime-block">
+              <div className="flex items-center justify-between">
+                <Label className="mb-0">Marchează ca Anime (apare doar în /anime)</Label>
+                <Switch
+                  checked={!!shared.is_anime}
+                  onCheckedChange={(v) => setShared({
+                    ...shared, is_anime: v,
+                    anime_series_id: v ? shared.anime_series_id : null,
+                    anime_season_id: v ? shared.anime_season_id : null,
+                  })}
+                  data-testid="upload-is-anime"
+                />
+              </div>
+              {shared.is_anime && (
+                <>
+                  <div>
+                    <Label>Serie Anime</Label>
+                    <Select
+                      value={shared.anime_series_id || "none"}
+                      onValueChange={(val) => {
+                        const next = val === "none" ? null : val;
+                        // Reset season when series changes
+                        setShared({ ...shared, anime_series_id: next, anime_season_id: null });
+                      }}
+                    >
+                      <SelectTrigger className="bg-zinc-950 border-zinc-800" data-testid="upload-anime-series"><SelectValue placeholder="— Alege serie —" /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">— Alege serie —</SelectItem>
+                        {animeSeriesList.map((s) => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                    {animeSeriesList.length === 0 && (
+                      <p className="text-xs text-zinc-500 mt-1">
+                        Creează prima serie din Admin → Serii Anime.
+                      </p>
+                    )}
+                  </div>
+                  {shared.anime_series_id && (
+                    <div>
+                      <Label>Sezon</Label>
+                      <Select
+                        value={shared.anime_season_id || "none"}
+                        onValueChange={(val) => {
+                          const next = val === "none" ? null : val;
+                          setShared({ ...shared, anime_season_id: next });
+                        }}
+                      >
+                        <SelectTrigger className="bg-zinc-950 border-zinc-800" data-testid="upload-anime-season"><SelectValue placeholder="— Alege sezon —" /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="none">— Alege sezon —</SelectItem>
+                          {animeSeasonsList.map((se) => (
+                            <SelectItem key={se.id} value={se.id}>
+                              {se.season_type === "season" ? "" : `[${se.season_type.toUpperCase()}] `}{se.title}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      {animeSeasonsList.length === 0 && (
+                        <p className="text-xs text-zinc-500 mt-1">
+                          Această serie nu are încă sezoane. Adaugă unul din Admin → Serii Anime → butonul „Sezoane".
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </>
+              )}
             </div>
           )}
           {shared.is_short && (

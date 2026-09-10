@@ -40,6 +40,8 @@ export default function EditVideo() {
   const [shortsSeriesXxx, setShortsSeriesXxx] = useState([]);
   const [shortsSeriesDrama, setShortsSeriesDrama] = useState([]);
   const [animeSeries, setAnimeSeries] = useState([]);
+  const [animeSeasons, setAnimeSeasons] = useState([]);
+  const [selectedAnimeSeriesId, setSelectedAnimeSeriesId] = useState(null);
   const [allLangs, setAllLangs] = useState([]);
   const [subFile, setSubFile] = useState(null);
   const [subLang, setSubLang] = useState("ro");
@@ -51,6 +53,7 @@ export default function EditVideo() {
   const load = async () => {
     const { data } = await api.get(`/videos/${id}`);
     setV(data);
+    if (data.anime_series_id) setSelectedAnimeSeriesId(data.anime_series_id);
   };
   useEffect(() => {
     load();
@@ -60,6 +63,15 @@ export default function EditVideo() {
     api.get("/anime-series").then((r) => setAnimeSeries(r.data)).catch(() => setAnimeSeries([]));
     api.get("/languages").then((r) => setAllLangs(r.data)).catch(() => setAllLangs(COMMON_LANGS));
   }, [id]);
+
+  // Load seasons whenever the currently-selected anime series changes so the
+  // season dropdown always mirrors the picked series.
+  useEffect(() => {
+    if (!selectedAnimeSeriesId) { setAnimeSeasons([]); return; }
+    api.get(`/anime-series/${selectedAnimeSeriesId}/seasons/all`)
+      .then((r) => setAnimeSeasons(r.data))
+      .catch(() => setAnimeSeasons([]));
+  }, [selectedAnimeSeriesId]);
 
   // Auto-suggest label when language changes
   useEffect(() => {
@@ -281,31 +293,81 @@ export default function EditVideo() {
               <Switch
                 checked={!!v.is_anime}
                 onCheckedChange={(val) => {
-                  setV({ ...v, is_anime: val, anime_series_id: val ? v.anime_series_id : null });
-                  save({ is_anime: val, anime_series_id: val ? v.anime_series_id : null });
+                  setV({ ...v, is_anime: val, anime_series_id: val ? v.anime_series_id : null, anime_season_id: val ? v.anime_season_id : null });
+                  save({ is_anime: val, anime_series_id: val ? v.anime_series_id : null, anime_season_id: val ? v.anime_season_id : null });
+                  if (!val) setSelectedAnimeSeriesId(null);
                 }}
                 data-testid="edit-is-anime"
               />
             </div>
             {v.is_anime && (
-              <div>
-                <Label>Serie Anime</Label>
-                <Select
-                  value={v.anime_series_id || "none"}
-                  onValueChange={(val) => {
-                    const next = val === "none" ? null : val;
-                    setV({ ...v, anime_series_id: next });
-                    save({ anime_series_id: next });
-                  }}
-                >
-                  <SelectTrigger className="bg-zinc-950 border-zinc-800" data-testid="edit-anime-series"><SelectValue placeholder="— Fără serie —" /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">— Fără serie —</SelectItem>
-                    {animeSeries.map((s) => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-                {animeSeries.length === 0 && <p className="text-xs text-zinc-500 mt-1">Creează prima serie din Admin → Serii Anime.</p>}
-              </div>
+              <>
+                <div>
+                  <Label>Serie Anime</Label>
+                  <Select
+                    value={v.anime_series_id || "none"}
+                    onValueChange={(val) => {
+                      const next = val === "none" ? null : val;
+                      // Changing series clears the season (must pick again)
+                      setV({ ...v, anime_series_id: next, anime_season_id: null });
+                      save({ anime_series_id: next, anime_season_id: null });
+                      setSelectedAnimeSeriesId(next);
+                    }}
+                  >
+                    <SelectTrigger className="bg-zinc-950 border-zinc-800" data-testid="edit-anime-series"><SelectValue placeholder="— Fără serie —" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">— Fără serie —</SelectItem>
+                      {animeSeries.map((s) => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                  {animeSeries.length === 0 && <p className="text-xs text-zinc-500 mt-1">Creează prima serie din Admin → Serii Anime.</p>}
+                </div>
+                {v.anime_series_id && (
+                  <div>
+                    <Label>Sezon</Label>
+                    <Select
+                      value={v.anime_season_id || "none"}
+                      onValueChange={(val) => {
+                        const next = val === "none" ? null : val;
+                        setV({ ...v, anime_season_id: next });
+                        save({ anime_season_id: next });
+                      }}
+                    >
+                      <SelectTrigger className="bg-zinc-950 border-zinc-800" data-testid="edit-anime-season"><SelectValue placeholder="— Fără sezon —" /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">— Fără sezon —</SelectItem>
+                        {animeSeasons.map((se) => (
+                          <SelectItem key={se.id} value={se.id}>
+                            {se.season_type === "season" ? "" : `[${se.season_type.toUpperCase()}] `}{se.title}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {animeSeasons.length === 0 && <p className="text-xs text-zinc-500 mt-1">Adaugă un sezon din Admin → Serii Anime → butonul „Sezoane".</p>}
+                  </div>
+                )}
+                {v.anime_season_id && (
+                  <div>
+                    <Label>Poziție episod în sezon</Label>
+                    <Input
+                      type="number"
+                      min="1"
+                      value={v.anime_series_position || ""}
+                      onChange={(e) => {
+                        const n = Number(e.target.value) || null;
+                        setV({ ...v, anime_series_position: n });
+                      }}
+                      onBlur={(e) => {
+                        const n = Number(e.target.value) || null;
+                        save({ anime_series_position: n });
+                      }}
+                      className="bg-zinc-950 border-zinc-800"
+                      data-testid="edit-anime-position"
+                      placeholder="1, 2, 3..."
+                    />
+                  </div>
+                )}
+              </>
             )}
           </div>
         )}

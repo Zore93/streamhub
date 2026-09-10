@@ -22,6 +22,7 @@ import Shop from "@/pages/Shop";
 import Shorts from "@/pages/Shorts";
 import Anime from "@/pages/Anime";
 import AnimeSeriesDetail from "@/pages/AnimeSeriesDetail";
+import AnimeSeasonDetail from "@/pages/AnimeSeasonDetail";
 import ShortsSeriesDetail from "@/pages/ShortsSeriesDetail";
 import SiteHead from "@/components/SiteHead";
 
@@ -55,6 +56,7 @@ function App() {
               <Route path="/anime/all" element={<VideoList variant="anime" />} />
               <Route path="/anime/all/page/:page" element={<VideoList variant="anime" />} />
               <Route path="/anime/series/:slug" element={<AnimeSeriesDetail />} />
+              <Route path="/anime/series/:seriesSlug/:seasonSlug" element={<AnimeSeasonDetail />} />
               <Route path="/all-episodes" element={<VideoList variant="all" />} />
               <Route path="/all-episodes/page/:page" element={<VideoList variant="all" />} />
               <Route path="/shop" element={<Shop />} />

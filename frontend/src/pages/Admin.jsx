@@ -2472,6 +2472,7 @@ function AnimeSeriesTab() {
   const [form, setForm] = useState({ name: "", slug: "", description: "", tags: "", active: true });
   const [coverFile, setCoverFile] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [expanded, setExpanded] = useState({}); // seriesId → bool
   const load = () => api.get("/anime-series/all").then((r) => setList(r.data));
   useEffect(() => { load(); }, []);
   const create = async () => {
@@ -2498,16 +2499,17 @@ function AnimeSeriesTab() {
   };
   const patch = async (id, upd) => { try { await api.patch(`/anime-series/${id}`, upd); load(); } catch (e) { toast.error(e.response?.data?.detail || "Eroare"); } };
   const del = async (s) => {
-    if (!window.confirm(`Ștergi seria Anime "${s.name}"?`)) return;
+    if (!window.confirm(`Ștergi seria Anime "${s.name}"? Toate sezoanele vor fi șterse.`)) return;
     await api.delete(`/anime-series/${s.id}`);
     load();
   };
+  const toggleExpand = (id) => setExpanded((prev) => ({ ...prev, [id]: !prev[id] }));
   return (
     <div className="mt-6 space-y-6" data-testid="admin-anime-series">
       <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4">
         <div className="font-semibold mb-3">Serie Anime nouă ({list.length})</div>
         <div className="grid grid-cols-2 gap-3">
-          <Input placeholder="Nume (ex: Chainsaw Man S01)" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className="bg-zinc-950 border-zinc-800" data-testid="new-anime-name" />
+          <Input placeholder="Nume (ex: Chainsaw Man)" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className="bg-zinc-950 border-zinc-800" data-testid="new-anime-name" />
           <Input placeholder="Slug (opțional — auto)" value={form.slug} onChange={(e) => setForm({ ...form, slug: e.target.value })} className="bg-zinc-950 border-zinc-800" data-testid="new-anime-slug" />
           <Input placeholder="Tag-uri (separate prin virgulă)" value={form.tags} onChange={(e) => setForm({ ...form, tags: e.target.value })} className="bg-zinc-950 border-zinc-800 col-span-2" data-testid="new-anime-tags" />
           <Textarea placeholder="Descriere" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} className="bg-zinc-950 border-zinc-800 col-span-2" />
@@ -2537,17 +2539,170 @@ function AnimeSeriesTab() {
             {s.cover_thumbnail ? <img src={s.cover_thumbnail} alt="" className="w-16 aspect-[2/3] object-cover rounded border border-zinc-800 shrink-0" /> : <div className="w-16 aspect-[2/3] rounded border border-dashed border-zinc-700 shrink-0" />}
             <div className="flex-1 min-w-0">
               <div className="flex items-start justify-between gap-3">
-                <div><div className="font-semibold text-zinc-100 truncate">{s.name}</div><div className="text-xs text-zinc-500">slug: /{s.slug} · {s.episode_count} episoade</div></div>
+                <div>
+                  <div className="font-semibold text-zinc-100 truncate">{s.name}</div>
+                  <div className="text-xs text-zinc-500">slug: /{s.slug} · {s.episode_count} episoade</div>
+                </div>
                 <div className="flex items-center gap-2 shrink-0">
+                  <Button size="sm" variant="outline" onClick={() => toggleExpand(s.id)} data-testid={`anime-toggle-seasons-${s.id}`} className="border-zinc-700">
+                    {expanded[s.id] ? "Ascunde sezoane" : "Sezoane"}
+                  </Button>
                   <Switch checked={s.active} onCheckedChange={(v) => patch(s.id, { active: v })} />
                   <Button size="sm" variant="destructive" onClick={() => del(s)}><Trash2 size={14} /></Button>
                 </div>
               </div>
+              {expanded[s.id] && <AnimeSeasonsManager series={s} />}
             </div>
           </div>
         </div>
       ))}
       {list.length === 0 && <p className="text-sm text-zinc-500 text-center py-6">Nu există serii Anime. Creează prima mai sus.</p>}
+    </div>
+  );
+}
+
+
+const SEASON_TYPES = [
+  { value: "season", label: "Sezon" },
+  { value: "ova", label: "OVA" },
+  { value: "movie", label: "Film" },
+  { value: "special", label: "Special" },
+];
+
+
+function AnimeSeasonsManager({ series }) {
+  const [seasons, setSeasons] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [form, setForm] = useState({
+    number: 1, title: "", slug: "", season_type: "season", year: "", description: "", active: true,
+  });
+  const [coverFile, setCoverFile] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const load = () => {
+    setLoading(true);
+    api.get(`/anime-series/${series.id}/seasons/all`).then((r) => setSeasons(r.data))
+      .catch(() => setSeasons([]))
+      .finally(() => setLoading(false));
+  };
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, [series.id]);
+
+  const create = async () => {
+    setBusy(true);
+    try {
+      const payload = {
+        number: Number(form.number) || 1,
+        title: form.title.trim(),
+        slug: form.slug.trim() || undefined,
+        season_type: form.season_type,
+        year: form.year ? Number(form.year) : null,
+        description: form.description,
+        active: form.active,
+      };
+      const { data: se } = await api.post(`/anime-series/${series.id}/seasons`, payload);
+      if (coverFile) {
+        const fd = new FormData();
+        fd.append("file", coverFile);
+        await api.post(`/anime-seasons/${se.id}/cover`, fd, { headers: { "Content-Type": "multipart/form-data" } });
+      }
+      toast.success("Sezon creat");
+      setForm({ number: (Number(form.number) || 1) + 1, title: "", slug: "", season_type: "season", year: form.year, description: "", active: true });
+      setCoverFile(null);
+      load();
+    } catch (e) { toast.error(e.response?.data?.detail || "Eroare"); } finally { setBusy(false); }
+  };
+  const patch = async (id, upd) => {
+    try { await api.patch(`/anime-seasons/${id}`, upd); load(); }
+    catch (e) { toast.error(e.response?.data?.detail || "Eroare"); }
+  };
+  const del = async (se) => {
+    if (!window.confirm(`Ștergi sezonul "${se.title}"?`)) return;
+    try { await api.delete(`/anime-seasons/${se.id}`); load(); }
+    catch (e) { toast.error(e.response?.data?.detail || "Eroare"); }
+  };
+  const uploadCover = async (id, file) => {
+    if (!file) return;
+    const fd = new FormData();
+    fd.append("file", file);
+    try {
+      await api.post(`/anime-seasons/${id}/cover`, fd, { headers: { "Content-Type": "multipart/form-data" } });
+      toast.success("Cover actualizat");
+      load();
+    } catch (e) { toast.error(e.response?.data?.detail || "Eroare"); }
+  };
+
+  return (
+    <div className="mt-4 pt-4 border-t border-zinc-800" data-testid={`anime-seasons-${series.id}`}>
+      <div className="text-sm font-semibold text-zinc-300 mb-3">Sezoane ({seasons.length})</div>
+
+      {/* Add new season form */}
+      <div className="bg-zinc-950 border border-zinc-800 rounded-md p-3 mb-3">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+          <Input type="number" min="0" placeholder="Nr" value={form.number} onChange={(e) => setForm({ ...form, number: e.target.value })} className="bg-zinc-900 border-zinc-800" data-testid={`new-season-number-${series.id}`} />
+          <Select value={form.season_type} onValueChange={(v) => setForm({ ...form, season_type: v })}>
+            <SelectTrigger className="bg-zinc-900 border-zinc-800" data-testid={`new-season-type-${series.id}`}><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {SEASON_TYPES.map((t) => <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>)}
+            </SelectContent>
+          </Select>
+          <Input placeholder="Titlu (auto — ex: Sezonul 1)" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} className="bg-zinc-900 border-zinc-800 md:col-span-2" data-testid={`new-season-title-${series.id}`} />
+          <Input placeholder="Slug (auto — ex: s01)" value={form.slug} onChange={(e) => setForm({ ...form, slug: e.target.value })} className="bg-zinc-900 border-zinc-800" data-testid={`new-season-slug-${series.id}`} />
+          <Input type="number" placeholder="An (ex: 2024)" value={form.year} onChange={(e) => setForm({ ...form, year: e.target.value })} className="bg-zinc-900 border-zinc-800" data-testid={`new-season-year-${series.id}`} />
+          <Input placeholder="Descriere scurtă" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} className="bg-zinc-900 border-zinc-800 md:col-span-2" />
+        </div>
+        <div className="mt-2 flex items-center gap-3">
+          <label htmlFor={`new-season-cover-${series.id}`} className="flex items-center gap-2 bg-zinc-900 border border-dashed border-zinc-700 hover:border-zinc-500 rounded px-3 py-2 cursor-pointer text-sm">
+            {coverFile ? (
+              <><img src={URL.createObjectURL(coverFile)} alt="" className="w-10 aspect-[2/3] object-cover rounded" /><span className="text-zinc-300 truncate max-w-[8rem]">{coverFile.name}</span></>
+            ) : (
+              <><UploadIcon size={14} /><span className="text-zinc-400">Cover sezon (opțional)</span></>
+            )}
+          </label>
+          <input id={`new-season-cover-${series.id}`} type="file" accept="image/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f && f.size <= 8 * 1024 * 1024) setCoverFile(f); e.target.value = ""; }} />
+          <div className="flex items-center gap-2 ml-auto">
+            <Switch checked={form.active} onCheckedChange={(v) => setForm({ ...form, active: v })} />
+            <span className="text-xs text-zinc-400">Activ</span>
+            <Button size="sm" onClick={create} disabled={busy} className="pro-gradient text-white border-0" data-testid={`new-season-btn-${series.id}`}>{busy ? "..." : "+ Sezon"}</Button>
+          </div>
+        </div>
+      </div>
+
+      {/* Existing seasons list */}
+      {loading && <p className="text-xs text-zinc-500">Se încarcă…</p>}
+      {!loading && seasons.length === 0 && (
+        <p className="text-xs text-zinc-500 italic">Niciun sezon. Adaugă primul deasupra.</p>
+      )}
+      <div className="space-y-2">
+        {seasons.map((se) => {
+          const typeLabel = SEASON_TYPES.find((t) => t.value === se.season_type)?.label || "Sezon";
+          return (
+            <div key={se.id} className="bg-zinc-950 border border-zinc-800 rounded p-2 flex gap-3 items-center" data-testid={`season-row-${se.id}`}>
+              <label htmlFor={`season-cover-upl-${se.id}`} className="shrink-0 cursor-pointer" title="Click pentru upload cover">
+                {se.cover_thumbnail ? (
+                  <img src={se.cover_thumbnail} alt="" className="w-10 aspect-[2/3] object-cover rounded border border-zinc-800 hover:opacity-80" />
+                ) : (
+                  <div className="w-10 aspect-[2/3] rounded border border-dashed border-zinc-700 flex items-center justify-center text-zinc-600 hover:border-zinc-500"><UploadIcon size={12} /></div>
+                )}
+              </label>
+              <input id={`season-cover-upl-${se.id}`} type="file" accept="image/*" className="hidden" onChange={(e) => uploadCover(se.id, e.target.files?.[0])} />
+              <div className="flex-1 min-w-0 grid grid-cols-2 md:grid-cols-5 gap-2 items-center text-sm">
+                <div className="col-span-2">
+                  <div className="text-zinc-200 truncate font-medium flex items-center gap-2">
+                    <span className="bg-rose-600/20 text-rose-300 text-[10px] uppercase font-bold px-1.5 py-0.5 rounded">{typeLabel}</span>
+                    {se.title}
+                  </div>
+                  <div className="text-[11px] text-zinc-500 truncate">slug: {se.slug} · {se.episode_count} ep{se.year ? ` · ${se.year}` : ""}</div>
+                </div>
+                <Input type="number" defaultValue={se.number} onBlur={(e) => { const n = Number(e.target.value); if (n !== se.number) patch(se.id, { number: n }); }} className="bg-zinc-900 border-zinc-800 h-8 text-xs" title="Nr" />
+                <Input type="number" defaultValue={se.position} onBlur={(e) => { const n = Number(e.target.value); if (n !== se.position) patch(se.id, { position: n }); }} className="bg-zinc-900 border-zinc-800 h-8 text-xs" title="Ordine" />
+                <div className="flex items-center gap-2 justify-end">
+                  <Switch checked={se.active} onCheckedChange={(v) => patch(se.id, { active: v })} />
+                  <Button size="sm" variant="destructive" onClick={() => del(se)} className="h-7 px-2"><Trash2 size={12} /></Button>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }

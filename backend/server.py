@@ -75,6 +75,7 @@ from models import (
     RegisterReq,
     ShortsSeries,
     AnimeSeries,
+    AnimeSeason,
     StatsResponse,
     User,
     UserPublic,
@@ -1080,6 +1081,17 @@ async def get_anime_series(key: str):
     s = await db.anime_series.find_one({"$or": [{"id": key}, {"slug": key}]}, {"_id": 0})
     if not s:
         raise HTTPException(404, "Series not found")
+    # Seasons: shown as poster grid on the series detail page.
+    seasons = await db.anime_seasons.find(
+        {"series_id": s["id"], "active": True}, {"_id": 0},
+    ).to_list(200)
+    seasons.sort(key=lambda x: (x.get("position") or 0, x.get("number") or 0))
+    for se in seasons:
+        se["episode_count"] = await db.videos.count_documents({
+            "anime_season_id": se["id"], "status": "ready",
+        })
+    # Episodes: kept for backward compat (older UI) — legacy series with no
+    # seasons will still show episodes here.
     episodes = await db.videos.find(
         {"anime_series_id": s["id"], "status": "ready"}, {"_id": 0},
     ).to_list(500)
@@ -1087,9 +1099,219 @@ async def get_anime_series(key: str):
         v.get("anime_series_position") if v.get("anime_series_position") is not None else 10 ** 9,
         v.get("created_at") or "",
     ))
+    s["seasons"] = seasons
     s["episodes"] = episodes
     s["episode_count"] = len(episodes)
     return s
+
+
+# ============ ANIME SEASONS ============
+@api.get("/anime-series/{series_key}/seasons")
+async def list_seasons_of_series(series_key: str):
+    """Public endpoint — returns only active seasons. Admin variant below
+    returns inactive ones too."""
+    s = await db.anime_series.find_one(
+        {"$or": [{"id": series_key}, {"slug": series_key}]}, {"_id": 0}
+    )
+    if not s:
+        raise HTTPException(404, "Series not found")
+    seasons = await db.anime_seasons.find(
+        {"series_id": s["id"], "active": True}, {"_id": 0},
+    ).to_list(200)
+    seasons.sort(key=lambda x: (x.get("position") or 0, x.get("number") or 0))
+    for se in seasons:
+        se["episode_count"] = await db.videos.count_documents({
+            "anime_season_id": se["id"], "status": "ready",
+        })
+    return seasons
+
+
+@api.get("/anime-series/{series_key}/seasons/all")
+async def list_all_seasons_of_series(series_key: str, admin: dict = Depends(require_admin)):
+    s = await db.anime_series.find_one(
+        {"$or": [{"id": series_key}, {"slug": series_key}]}, {"_id": 0}
+    )
+    if not s:
+        raise HTTPException(404, "Series not found")
+    seasons = await db.anime_seasons.find(
+        {"series_id": s["id"]}, {"_id": 0},
+    ).to_list(500)
+    seasons.sort(key=lambda x: (x.get("position") or 0, x.get("number") or 0))
+    for se in seasons:
+        se["episode_count"] = await db.videos.count_documents({"anime_season_id": se["id"]})
+    return seasons
+
+
+@api.post("/anime-series/{series_id}/seasons")
+async def create_anime_season(series_id: str, payload: dict, admin: dict = Depends(require_admin)):
+    series = await db.anime_series.find_one({"id": series_id}, {"_id": 0})
+    if not series:
+        raise HTTPException(404, "Series not found")
+    season_type = (payload.get("season_type") or "season").lower()
+    if season_type not in {"season", "ova", "movie", "special"}:
+        season_type = "season"
+    number = int(payload.get("number") or 1)
+    slug_in = (payload.get("slug") or "").strip()
+    if not slug_in:
+        if season_type == "season":
+            slug_in = f"s{number:02d}"
+        else:
+            slug_in = f"{season_type}-{number}"
+    # Enforce uniqueness within the series
+    if await db.anime_seasons.find_one({"series_id": series_id, "slug": slug_in}):
+        raise HTTPException(400, "A season with this slug already exists in this series")
+    title = (payload.get("title") or "").strip()
+    if not title:
+        title = {
+            "season": f"Sezonul {number}",
+            "ova": f"OVA {number}",
+            "movie": f"Film {number}",
+            "special": f"Special {number}",
+        }.get(season_type, f"Sezonul {number}")
+    pos_existing = await db.anime_seasons.count_documents({"series_id": series_id})
+    se = AnimeSeason(
+        series_id=series_id,
+        number=number,
+        title=title,
+        slug=slug_in,
+        description=(payload.get("description") or "").strip(),
+        synopsis=(payload.get("synopsis") or "").strip(),
+        cover_thumbnail=(payload.get("cover_thumbnail") or "").strip(),
+        year=payload.get("year") or None,
+        season_type=season_type,
+        position=int(payload.get("position") if payload.get("position") is not None else pos_existing),
+        active=bool(payload.get("active", True)),
+    )
+    await db.anime_seasons.insert_one(se.model_dump())
+    return se.model_dump()
+
+
+@api.get("/anime-seasons/{key}")
+async def get_anime_season(key: str):
+    se = await db.anime_seasons.find_one({"$or": [{"id": key}, {"slug": key}]}, {"_id": 0})
+    if not se:
+        raise HTTPException(404, "Season not found")
+    series = await db.anime_series.find_one({"id": se["series_id"]}, {"_id": 0})
+    episodes = await db.videos.find(
+        {"anime_season_id": se["id"], "status": "ready"}, {"_id": 0},
+    ).to_list(500)
+    episodes.sort(key=lambda v: (
+        v.get("anime_series_position") if v.get("anime_series_position") is not None else 10 ** 9,
+        v.get("created_at") or "",
+    ))
+    se["series"] = {
+        "id": series["id"], "name": series["name"], "slug": series["slug"],
+        "cover_thumbnail": series.get("cover_thumbnail", ""),
+    } if series else None
+    se["episodes"] = episodes
+    se["episode_count"] = len(episodes)
+    return se
+
+
+@api.get("/anime-series/{series_key}/seasons/{season_key}")
+async def get_anime_season_by_pair(series_key: str, season_key: str):
+    """Fetch season by (series_slug|id, season_slug|id) pair — useful for
+    the public /anime/<series>/<season> route so we can 404 fast when the
+    season doesn't belong to the given series."""
+    series = await db.anime_series.find_one(
+        {"$or": [{"id": series_key}, {"slug": series_key}]}, {"_id": 0}
+    )
+    if not series:
+        raise HTTPException(404, "Series not found")
+    se = await db.anime_seasons.find_one(
+        {"series_id": series["id"], "$or": [{"id": season_key}, {"slug": season_key}]},
+        {"_id": 0},
+    )
+    if not se:
+        raise HTTPException(404, "Season not found")
+    episodes = await db.videos.find(
+        {"anime_season_id": se["id"], "status": "ready"}, {"_id": 0},
+    ).to_list(500)
+    episodes.sort(key=lambda v: (
+        v.get("anime_series_position") if v.get("anime_series_position") is not None else 10 ** 9,
+        v.get("created_at") or "",
+    ))
+    se["series"] = {
+        "id": series["id"], "name": series["name"], "slug": series["slug"],
+        "cover_thumbnail": series.get("cover_thumbnail", ""),
+    }
+    se["episodes"] = episodes
+    se["episode_count"] = len(episodes)
+    return se
+
+
+@api.patch("/anime-seasons/{season_id}")
+async def update_anime_season(season_id: str, payload: dict, admin: dict = Depends(require_admin)):
+    se = await db.anime_seasons.find_one({"id": season_id}, {"_id": 0})
+    if not se:
+        raise HTTPException(404, "Season not found")
+    allowed = {
+        "number", "title", "slug", "description", "synopsis",
+        "cover_thumbnail", "year", "season_type", "position", "active",
+    }
+    upd = {k: v for k, v in payload.items() if k in allowed}
+    if not upd:
+        return se
+    if "season_type" in upd:
+        upd["season_type"] = (upd["season_type"] or "season").lower()
+        if upd["season_type"] not in {"season", "ova", "movie", "special"}:
+            upd["season_type"] = "season"
+    if "slug" in upd:
+        upd["slug"] = (upd["slug"] or "").strip()
+        clash = await db.anime_seasons.find_one({
+            "series_id": se["series_id"],
+            "slug": upd["slug"],
+            "id": {"$ne": season_id},
+        })
+        if clash:
+            raise HTTPException(400, "Another season already uses this slug")
+    await db.anime_seasons.update_one({"id": season_id}, {"$set": upd})
+    return await db.anime_seasons.find_one({"id": season_id}, {"_id": 0})
+
+
+@api.delete("/anime-seasons/{season_id}")
+async def delete_anime_season(season_id: str, admin: dict = Depends(require_admin)):
+    ep_count = await db.videos.count_documents({"anime_season_id": season_id})
+    if ep_count > 0:
+        raise HTTPException(
+            400,
+            f"Cannot delete — season still has {ep_count} episode(s). "
+            "Reassign or delete them first.",
+        )
+    await db.anime_seasons.delete_one({"id": season_id})
+    return {"ok": True}
+
+
+@api.post("/anime-seasons/{season_id}/cover")
+async def upload_anime_season_cover(
+    season_id: str,
+    file: UploadFile = File(...),
+    admin: dict = Depends(require_admin),
+):
+    se = await db.anime_seasons.find_one({"id": season_id}, {"_id": 0})
+    if not se:
+        raise HTTPException(404, "Season not found")
+    ext = (Path(file.filename or "img").suffix or ".jpg").lower()
+    if ext not in (".jpg", ".jpeg", ".png", ".webp", ".gif"):
+        raise HTTPException(400, "Only jpg/png/webp/gif images are allowed")
+    fname = f"{season_id}_cover{ext}"
+    out_path = UPLOAD_DIR / "anime_season_covers" / fname
+    tmp_path = _stage_upload_to_tempfile(file.file, suffix=ext)
+    rel = f"anime_season_covers/{fname}"
+    settings = await get_settings()
+    if wasabi_configured(settings):
+        content_type = f"image/{ext.lstrip('.').replace('jpg', 'jpeg')}"
+        url = await wasabi_upload(str(tmp_path), rel, settings, content_type)
+        try:
+            tmp_path.unlink()
+        except Exception:
+            pass
+        if url:
+            rel = url
+    else:
+        _finalize_upload(tmp_path, out_path)
+    await db.anime_seasons.update_one({"id": season_id}, {"$set": {"cover_thumbnail": rel}})
+    return {"cover_thumbnail": rel}
 
 
 @api.post("/anime-series")
@@ -1130,10 +1352,18 @@ async def update_anime_series(series_id: str, payload: dict, admin: dict = Depen
 
 @api.delete("/anime-series/{series_id}")
 async def delete_anime_series(series_id: str, admin: dict = Depends(require_admin)):
+    # Clean episodes first (detach from series + all seasons)
     await db.videos.update_many(
         {"anime_series_id": series_id},
-        {"$set": {"anime_series_id": None, "anime_series_position": None, "is_anime": False}},
+        {"$set": {
+            "anime_series_id": None,
+            "anime_series_position": None,
+            "anime_season_id": None,
+            "is_anime": False,
+        }},
     )
+    # Cascade-delete all seasons belonging to this series
+    await db.anime_seasons.delete_many({"series_id": series_id})
     await db.anime_series.delete_one({"id": series_id})
     return {"ok": True}
 
@@ -1743,6 +1973,19 @@ async def upload_video_finish(
         if shorts_category not in ("xxx", "drama"):
             shorts_category = "xxx"
         is_anime = bool(payload.get("is_anime", False)) and not is_short
+        # Anime seasons — resolve season → derive series_id + auto position.
+        # `anime_season_id` is the single source of truth when is_anime=True.
+        anime_season_id = payload.get("anime_season_id") if is_anime else None
+        anime_series_id = payload.get("anime_series_id") if is_anime else None
+        anime_series_position = None
+        if is_anime and anime_season_id:
+            se = await db.anime_seasons.find_one({"id": anime_season_id}, {"_id": 0})
+            if not se:
+                raise HTTPException(400, "anime_season_id doesn't exist")
+            anime_series_id = se["series_id"]
+            # Auto-position as last episode in the season.
+            existing = await db.videos.count_documents({"anime_season_id": anime_season_id})
+            anime_series_position = existing + 1
 
         # Move blob into the canonical originals/<id><ext> path.
         # Use shutil.move (not Path.rename) so it works when the chunks
@@ -1767,7 +2010,9 @@ async def upload_video_finish(
             is_short=is_short,
             shorts_category=shorts_category if is_short else "xxx",
             is_anime=is_anime,
-            anime_series_id=payload.get("anime_series_id") if is_anime else None,
+            anime_series_id=anime_series_id,
+            anime_season_id=anime_season_id,
+            anime_series_position=anime_series_position,
             original_filename=state.get("filename") or "",
             original_size_bytes=received,
             status="processing",
@@ -1857,6 +2102,13 @@ async def update_video(
             raise HTTPException(400, "shorts_category must be xxx or drama")
         if "is_anime" in upd and not isinstance(upd["is_anime"], bool):
             raise HTTPException(400, "is_anime must be a boolean")
+        # Anime season change → derive series_id from the season so the two
+        # fields never drift apart. Client can pass anime_season_id alone.
+        if "anime_season_id" in upd and upd["anime_season_id"]:
+            se = await db.anime_seasons.find_one({"id": upd["anime_season_id"]}, {"_id": 0})
+            if not se:
+                raise HTTPException(400, "anime_season_id doesn't exist")
+            upd["anime_series_id"] = se["series_id"]
         # Subtitles update is reorder-only: caller may rearrange existing entries
         # but cannot inject new ones or alter URLs (those go through the dedicated
         # POST endpoint that performs ffmpeg conversion + storage upload).

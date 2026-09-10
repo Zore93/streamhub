@@ -32,20 +32,33 @@ export default function Watch() {
   }, []);
   const category = categories.find((c) => c.id === video?.category_id);
 
-  // When this video belongs to a Shorts series, look up the next episode so
-  // we can auto-advance playback + show a "Next episode" link in the UI.
+  // When this video belongs to a Shorts series OR an Anime season, look up
+  // the next episode so we can auto-advance playback + show a "Next episode"
+  // link in the UI.
   useEffect(() => {
-    if (!video?.shorts_series_id) { setNextInSeries(null); return; }
     let alive = true;
-    api.get(`/shorts-series/${video.shorts_series_id}`).then((r) => {
-      if (!alive) return;
-      const eps = r.data.episodes || [];
-      const idx = eps.findIndex((e) => e.id === video.id);
-      const next = idx >= 0 && idx + 1 < eps.length ? eps[idx + 1] : null;
-      setNextInSeries(next);
-    }).catch(() => {});
+    if (video?.shorts_series_id) {
+      api.get(`/shorts-series/${video.shorts_series_id}`).then((r) => {
+        if (!alive) return;
+        const eps = r.data.episodes || [];
+        const idx = eps.findIndex((e) => e.id === video.id);
+        const next = idx >= 0 && idx + 1 < eps.length ? eps[idx + 1] : null;
+        setNextInSeries(next);
+      }).catch(() => {});
+    } else if (video?.anime_season_id) {
+      // Autoplay stays within the same season (a new season means new arc).
+      api.get(`/anime-seasons/${video.anime_season_id}`).then((r) => {
+        if (!alive) return;
+        const eps = r.data.episodes || [];
+        const idx = eps.findIndex((e) => e.id === video.id);
+        const next = idx >= 0 && idx + 1 < eps.length ? eps[idx + 1] : null;
+        setNextInSeries(next);
+      }).catch(() => {});
+    } else {
+      setNextInSeries(null);
+    }
     return () => { alive = false; };
-  }, [video?.shorts_series_id, video?.id]);
+  }, [video?.shorts_series_id, video?.anime_season_id, video?.id]);
 
   const goToNextEpisode = () => {
     if (!nextInSeries) return;
