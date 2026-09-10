@@ -189,16 +189,23 @@ export default function VideoPlayer({ video, currentRendition, resolution, setRe
   const [pseudoFS, setPseudoFS] = useState(false);
   const toggleFullscreen = () => {
     const w = wrapRef.current; if (!w) return;
-    // iOS Safari (and some Android browsers) either don't support the
-    // Fullscreen API on generic elements OR force-rotate to landscape, which
-    // is precisely what mobile users don't want for portrait shorts.
-    // Fall back to a CSS-based pseudo-fullscreen so the video fills the
-    // viewport in the current orientation with our custom controls intact.
-    const supportsNative = !!(document.fullscreenEnabled ?? document.webkitFullscreenEnabled);
+    // Pseudo-fullscreen is ONLY for shorts (portrait 9:16) — regular
+    // videos keep native Fullscreen API which correctly rotates to
+    // landscape on mobile. Users rely on that native behaviour for
+    // horizontal content; pseudo-FS is a shorts-only affordance.
     const ua = typeof navigator !== "undefined" ? (navigator.userAgent || "") : "";
     const isIOS = /iPad|iPhone|iPod/i.test(ua) && !window.MSStream;
     const isMobile = /Mobi|Android/i.test(ua) || isIOS;
-    if (!supportsNative || isMobile) {
+    const supportsNative = !!(document.fullscreenEnabled ?? document.webkitFullscreenEnabled);
+    if (isShort && isMobile) {
+      // Portrait shorts on mobile → CSS pseudo-fullscreen so the video
+      // fills the phone viewport without forcing a rotation to landscape.
+      setPseudoFS((prev) => !prev);
+      return;
+    }
+    if (!supportsNative) {
+      // Very old browsers with no Fullscreen API at all — fall back to
+      // pseudo-FS so users still get *some* fullscreen experience.
       setPseudoFS((prev) => !prev);
       return;
     }
