@@ -71,8 +71,6 @@ function SeriesPosterRow({ series, basePath = "/shorts/series" }) {
 
 export default function Home() {
   const { t, siteCfg } = useT();
-  const [latest, setLatest] = useState([]);
-  const [popular, setPopular] = useState([]);
   const [shorts, setShorts] = useState([]);
   const [shortsSeries, setShortsSeries] = useState([]);
   const [dramaShorts, setDramaShorts] = useState([]);
@@ -80,14 +78,11 @@ export default function Home() {
   const [animeVideos, setAnimeVideos] = useState([]);
   const [animeSeries, setAnimeSeries] = useState([]);
   const [hentaiSeries, setHentaiSeries] = useState([]);
+  const [hentaiEpisodes, setHentaiEpisodes] = useState([]);
   const [tvSeries, setTvSeries] = useState([]);
   const [filme, setFilme] = useState([]);
 
   useEffect(() => {
-    const url = (section, extra = "") =>
-      `/videos?section=${section}&limit=${HOME_LIMIT}&kind=video${extra}`;
-    api.get(url("latest")).then((r) => setLatest(r.data)).catch(() => {});
-    api.get(url("popular")).then((r) => setPopular(r.data)).catch(() => {});
     api
       .get(`/videos?section=latest&limit=${HOME_LIMIT}&kind=short&shorts_category=xxx`)
       .then((r) => setShorts(r.data))
@@ -121,14 +116,17 @@ export default function Home() {
       .then((r) => setHentaiSeries(r.data.slice(0, HOME_LIMIT)))
       .catch(() => {});
     api
+      .get(`/videos?section=latest&limit=${HOME_LIMIT}&kind=video&is_hentai=true`)
+      .then((r) => setHentaiEpisodes(r.data))
+      .catch(() => {});
+    api
       .get("/tv-series")
       .then((r) => setTvSeries(r.data.slice(0, HOME_LIMIT)))
       .catch(() => {});
   }, []);
 
   const isEmpty =
-    latest.length === 0 &&
-    popular.length === 0 &&
+    hentaiEpisodes.length === 0 &&
     shorts.length === 0 &&
     shortsSeries.length === 0 &&
     dramaShorts.length === 0 &&
@@ -140,10 +138,9 @@ export default function Home() {
   // Vertical selector — lets the visitor filter home to a single content
   // vertical without leaving the page (useful on mobile where the sidebar
   // is collapsed behind a hamburger).
-  const [vertical, setVertical] = useState("all"); // all | videos | xxx | drama
+  const [vertical, setVertical] = useState("all");
   const tabs = [
     { id: "all",    label: t("home.tab.all")    || "Toate" },
-    { id: "videos", label: t("home.tab.videos") || "Videoclipuri" },
     { id: "xxx",    label: t("home.tab.xxx")    || "XXX Shorts" },
     { id: "drama",  label: t("home.tab.drama")  || "Drama Shorts" },
     { id: "anime",  label: t("home.tab.anime")  || "Anime" },
@@ -151,7 +148,6 @@ export default function Home() {
     { id: "tv",     label: t("home.tab.tv")     || "Seriale TV" },
     { id: "filme",  label: t("home.tab.filme")  || "Filme RoSub" },
   ];
-  const showVideos      = vertical === "all" || vertical === "videos";
   const showXxxShorts   = vertical === "all" || vertical === "xxx";
   const showDramaShorts = vertical === "all" || vertical === "drama";
   const showAnime       = vertical === "all" || vertical === "anime";
@@ -203,13 +199,13 @@ export default function Home() {
           <p className="text-zinc-500">{t("home.empty.body")}</p>
         </div>
       )}
-      {showVideos && (
+      {showHentai && (
         <Section
-          title={t("home.latest")}
+          title={t("home.lastHentaiEpisodes") || "Ultimele episoade hentai adăugate"}
           Icon={Clock}
-          videos={latest}
-          seeMoreTo="/all-episodes"
-          testId="section-latest"
+          videos={hentaiEpisodes}
+          seeMoreTo="/hentai"
+          testId="section-hentai-latest"
           seeMoreLabel={seeMore}
         />
       )}

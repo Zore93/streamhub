@@ -13,7 +13,7 @@ const PAGE_SIZE = 24;
 const MAX_CATEGORIES = 2;
 
 /**
- * Generic listing page used by /popular, /discover, /shorts, /all-episodes.
+ * Generic listing page used by /popular, /discover, /shorts, /anime/all.
  * Discover variant additionally exposes a search bar + tier/category filters.
  * Pagination is numbered (1..N) and reflected in the URL path: `/popular/page/2`.
  */
@@ -36,15 +36,14 @@ export default function VideoList({ variant, shortsCategory }) {
       }
       case "anime":
         return { section: "latest", kind: "video", titleKey: "page.anime", Icon: ListVideo, base: "/anime/all", isAnime: true };
-      case "all":
       default:
-        return { section: "latest", kind: "video", titleKey: "page.allEpisodes", Icon: ListVideo, base: "/all-episodes" };
+        return { section: "latest", kind: "video", titleKey: "page.popular", Icon: Flame, base: "/popular" };
     }
   }, [variant, shortsCategory]);
 
   // Popular and All Episodes now expose the same search + filter panel as
   // Discover. Shorts variants stay filter-less to keep the poster-grid clean.
-  const showFilterUI = variant === "popular" || variant === "discover" || variant === "all";
+  const showFilterUI = variant === "popular" || variant === "discover";
 
   // Filter state
   const [search, setSearch] = useState("");

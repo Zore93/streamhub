@@ -1,3 +1,13 @@
+## Iteration 26 — Home redesigned around Hentai + sidebar cleanup (Feb 2026)
+- **Home page**: Removed "Ultimele Încărcări" (generic latest) section and replaced it with "Ultimele episoade hentai adăugate" (last 12 hentai videos from `/videos?section=latest&kind=video&is_hentai=true`). New section lives inside the `showHentai` gate, so it shows on "Toate" tab and "Hentai RoSub" tab.
+- **Home tabs**: Removed "Videoclipuri" tab (no longer meaningful since generic latest section was dropped). Also removed `latest`/`popular`/`showVideos` state in `Home.jsx`.
+- **Sidebar**: Removed "Toate Episoadele" (`/all-episodes`) nav entry from `LeftSidebar.jsx` and `ListVideo` icon import.
+- **Routes**: Deleted `/all-episodes` and `/all-episodes/page/:page` routes from `App.js`. `VideoList.jsx` `"all"` variant and `titleKey: "page.allEpisodes"` dropped (file retained for /popular, /discover, /shorts, /anime/all).
+- **Backend `/videos` + `/videos/count`**: Added `is_hentai: Optional[bool]` query param. Hentai videos now also surface in Popular (sorted by views) and Discover (random `$sample`) because the hard `is_hentai = {$ne: True}` guard no longer applies when `section in ("popular", "random")` and no explicit hentai filter is supplied.
+- **i18n**: Added `home.lastHentaiEpisodes` ("Ultimele episoade hentai adăugate" / "Latest hentai episodes added").
+- Smoke test (Playwright): sidebar no longer contains "Toate Episoadele"; home tabs = `[Toate, XXX Shorts, Drama Shorts, Anime, Hentai RoSub, Seriale TV, Filme RoSub]`. Backend curl verified `is_hentai=true` filter and new popular/random visibility.
+
+
 # StreamHub — Product Requirements & Status
 
 ## Original problem statement

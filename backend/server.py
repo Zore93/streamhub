@@ -2229,6 +2229,7 @@ async def list_videos(
     shorts_category: Optional[str] = None,  # xxx | drama (only meaningful for shorts)
     anime_series_id: Optional[str] = None,
     is_anime: Optional[bool] = None,
+    is_hentai: Optional[bool] = None,
     is_film_rosub: Optional[bool] = None,
     film_category_id: Optional[str] = None,
     q: Optional[str] = None,  # case-insensitive title/tags search
@@ -2282,8 +2283,17 @@ async def list_videos(
     else:
         # Default (no explicit ask): hide anime from generic listings.
         filt["is_anime"] = {"$ne": True}
-    # Hentai + TV default: hidden from generic listings (same policy as anime).
-    filt["is_hentai"] = {"$ne": True}
+    # Hentai: include when explicitly requested OR in the Popular/Discover
+    # sections (so hentai episodes appear mixed with normal videos there).
+    # TV default: hidden from generic listings (same policy as anime).
+    if is_hentai is True:
+        filt["is_hentai"] = True
+    elif is_hentai is False:
+        filt["is_hentai"] = {"$ne": True}
+    elif section in ("popular", "random"):
+        pass  # allow hentai to appear in Popular/Discover mixes
+    else:
+        filt["is_hentai"] = {"$ne": True}
     filt["is_tv"] = {"$ne": True}
     # Filme RoSub — same treatment as anime: hidden by default.
     if is_film_rosub is True:
@@ -2341,6 +2351,7 @@ async def count_videos(
     shorts_series_id: Optional[str] = None,
     shorts_category: Optional[str] = None,
     is_anime: Optional[bool] = None,
+    is_hentai: Optional[bool] = None,
     is_film_rosub: Optional[bool] = None,
     film_category_id: Optional[str] = None,
     q: Optional[str] = None,
@@ -2379,7 +2390,14 @@ async def count_videos(
         filt["is_anime"] = {"$ne": True}
     else:
         filt["is_anime"] = {"$ne": True}
-    filt["is_hentai"] = {"$ne": True}
+    if is_hentai is True:
+        filt["is_hentai"] = True
+    elif is_hentai is False:
+        filt["is_hentai"] = {"$ne": True}
+    elif section in ("popular", "random"):
+        pass  # allow hentai in Popular/Discover counts to match listing
+    else:
+        filt["is_hentai"] = {"$ne": True}
     filt["is_tv"] = {"$ne": True}
     if is_film_rosub is True:
         filt["is_film_rosub"] = True

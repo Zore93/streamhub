@@ -71,8 +71,6 @@ function App() {
               <Route path="/seriale-tv/series/:seriesSlug/:seasonSlug" element={<TvSeasonDetail />} />
               <Route path="/filme-rosub" element={<FilmeRoSub />} />
               <Route path="/filme-rosub/:catSlug" element={<FilmeRoSub />} />
-              <Route path="/all-episodes" element={<VideoList variant="all" />} />
-              <Route path="/all-episodes/page/:page" element={<VideoList variant="all" />} />
               <Route path="/shop" element={<Shop />} />
               <Route path="/login" element={<Login />} />
               <Route path="/register" element={<Register />} />
