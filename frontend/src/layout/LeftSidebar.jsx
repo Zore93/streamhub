@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import {
   Folder, Home as HomeIcon, Flame, Shuffle, Smartphone, ListVideo,
-  Film,
+  Film, Heart, Tv2,
   Upload as UploadIcon, Shield, Mail, X, Languages,
 } from "lucide-react";
 import api, { mediaUrl } from "@/lib/api";
@@ -30,6 +30,8 @@ export default function LeftSidebar({ mobileOpen = false, onClose }) {
     { to: "/shorts", label: t("nav.shorts"), Icon: Smartphone, testid: "nav-shorts" },
     { to: "/drama-shorts", label: t("nav.dramaShorts") || "Drama Shorts", Icon: Smartphone, testid: "nav-drama-shorts" },
     { to: "/anime", label: "Anime", Icon: Smartphone, testid: "nav-anime" },
+    { to: "/hentai", label: "Hentai RoSub", Icon: Heart, testid: "nav-hentai" },
+    { to: "/seriale-tv", label: "Seriale TV", Icon: Tv2, testid: "nav-seriale-tv" },
     { to: "/filme-rosub", label: "Filme RoSub", Icon: Film, testid: "nav-filme-rosub" },
     { to: "/all-episodes", label: t("nav.allEpisodes"), Icon: ListVideo, testid: "nav-all-episodes" },
     { to: "/contact", label: t("nav.contact"), Icon: Mail, testid: "nav-contact" },

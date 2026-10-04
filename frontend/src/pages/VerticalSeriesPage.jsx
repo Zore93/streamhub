@@ -3,17 +3,31 @@ import { Link } from "react-router-dom";
 import { Film, Tv, Search } from "lucide-react";
 import api from "@/lib/api";
 
-/** /anime — poster grid of anime series (long-form). Now with inline
- *  search over series names so users can quickly jump to a title in a
- *  large library without scrolling the whole poster wall. */
-export default function Anime() {
+/**
+ * Generic grid of "series posters" for a vertical (hentai, tv, …).
+ * One component powers /hentai and /seriale-tv so the UI stays consistent
+ * even as we add more verticals. Pass the API base path, URL base path,
+ * title and testid prefix via props.
+ */
+export default function VerticalSeriesPage({
+  apiBase,
+  basePath,
+  title,
+  testIdPrefix,
+  // seasonFieldKey — kept for future "aggregate episodes" page, not used here
+  seasonFieldKey,
+}) {
   const [series, setSeries] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
 
   useEffect(() => {
-    api.get("/anime-series").then((r) => setSeries(r.data)).catch(() => {}).finally(() => setLoading(false));
-  }, []);
+    setLoading(true);
+    api.get(apiBase)
+      .then((r) => setSeries(r.data))
+      .catch(() => setSeries([]))
+      .finally(() => setLoading(false));
+  }, [apiBase]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -25,41 +39,38 @@ export default function Anime() {
   }, [search, series]);
 
   return (
-    <div data-testid="page-anime">
+    <div data-testid={`page-${testIdPrefix}`}>
       <header className="flex items-center justify-between gap-3 mb-6 flex-wrap">
         <div className="flex items-center gap-3">
           <Tv size={26} className="text-rose-500" />
-          <h1 className="text-3xl sm:text-4xl font-bold font-heading text-zinc-50">Anime</h1>
+          <h1 className="text-3xl sm:text-4xl font-bold font-heading text-zinc-50">{title}</h1>
         </div>
-        <Link to="/anime/all" className="text-sm text-rose-400 hover:text-rose-300 flex items-center gap-1" data-testid="anime-view-all">
-          <Film size={14} /> Toate episoadele Anime
-        </Link>
       </header>
 
-      <div className="relative mb-6 max-w-xl" data-testid="anime-search-wrap">
+      <div className="relative mb-6 max-w-xl" data-testid={`${testIdPrefix}-search-wrap`}>
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500" size={16} />
         <input
           type="text"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="Caută serie Anime după nume…"
+          placeholder={`Caută serie ${title} după nume…`}
           className="w-full bg-zinc-900 border border-zinc-800 focus:border-rose-500/60 focus:outline-none text-zinc-100 pl-9 pr-3 py-2 rounded-md text-sm"
-          data-testid="anime-search-input"
+          data-testid={`${testIdPrefix}-search-input`}
         />
       </div>
 
       {loading && <p className="text-zinc-500 text-center py-12">Se încarcă…</p>}
       {!loading && filtered.length === 0 && (
-        <p className="text-zinc-500 text-center py-12" data-testid="anime-empty">
+        <p className="text-zinc-500 text-center py-12" data-testid={`${testIdPrefix}-empty`}>
           {series.length === 0
-            ? "Nu există încă serii Anime. Un admin le poate crea din Panou Admin → Serii Anime."
+            ? `Nu există încă serii ${title}. Un admin le poate crea din Panou Admin.`
             : `Niciun rezultat pentru „${search}".`}
         </p>
       )}
       {!loading && filtered.length > 0 && (
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3 sm:gap-4" data-testid="anime-grid">
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3 sm:gap-4" data-testid={`${testIdPrefix}-grid`}>
           {filtered.map((s) => (
-            <Link key={s.id} to={`/anime/series/${s.slug || s.id}`} className="group block" data-testid={`anime-poster-${s.slug || s.id}`}>
+            <Link key={s.id} to={`${basePath}/series/${s.slug || s.id}`} className="group block" data-testid={`${testIdPrefix}-poster-${s.slug || s.id}`}>
               <div className="relative aspect-[2/3] rounded-lg overflow-hidden bg-zinc-900 border border-zinc-800 group-hover:border-zinc-600 transition-colors">
                 {s.cover_thumbnail ? (
                   <img src={s.cover_thumbnail} alt={s.name} loading="lazy" className="w-full h-full object-cover transition-transform group-hover:scale-105" />

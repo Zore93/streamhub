@@ -23,6 +23,11 @@ import Shorts from "@/pages/Shorts";
 import Anime from "@/pages/Anime";
 import AnimeSeriesDetail from "@/pages/AnimeSeriesDetail";
 import AnimeSeasonDetail from "@/pages/AnimeSeasonDetail";
+import VerticalSeriesPage from "@/pages/VerticalSeriesPage";
+import HentaiSeriesDetail from "@/pages/HentaiSeriesDetail";
+import HentaiSeasonDetail from "@/pages/HentaiSeasonDetail";
+import TvSeriesDetail from "@/pages/TvSeriesDetail";
+import TvSeasonDetail from "@/pages/TvSeasonDetail";
 import FilmeRoSub from "@/pages/FilmeRoSub";
 import ShortsSeriesDetail from "@/pages/ShortsSeriesDetail";
 import SiteHead from "@/components/SiteHead";
@@ -58,6 +63,12 @@ function App() {
               <Route path="/anime/all/page/:page" element={<VideoList variant="anime" />} />
               <Route path="/anime/series/:slug" element={<AnimeSeriesDetail />} />
               <Route path="/anime/series/:seriesSlug/:seasonSlug" element={<AnimeSeasonDetail />} />
+              <Route path="/hentai" element={<VerticalSeriesPage apiBase="/hentai-series" basePath="/hentai" title="Hentai RoSub" testIdPrefix="hentai" seasonFieldKey="hentai_season_id" />} />
+              <Route path="/hentai/series/:slug" element={<HentaiSeriesDetail />} />
+              <Route path="/hentai/series/:seriesSlug/:seasonSlug" element={<HentaiSeasonDetail />} />
+              <Route path="/seriale-tv" element={<VerticalSeriesPage apiBase="/tv-series" basePath="/seriale-tv" title="Seriale TV" testIdPrefix="tv" seasonFieldKey="tv_season_id" />} />
+              <Route path="/seriale-tv/series/:slug" element={<TvSeriesDetail />} />
+              <Route path="/seriale-tv/series/:seriesSlug/:seasonSlug" element={<TvSeasonDetail />} />
               <Route path="/filme-rosub" element={<FilmeRoSub />} />
               <Route path="/filme-rosub/:catSlug" element={<FilmeRoSub />} />
               <Route path="/all-episodes" element={<VideoList variant="all" />} />

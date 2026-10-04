@@ -41,6 +41,12 @@ export default function EditVideo() {
   const [shortsSeriesDrama, setShortsSeriesDrama] = useState([]);
   const [animeSeries, setAnimeSeries] = useState([]);
   const [animeSeasons, setAnimeSeasons] = useState([]);
+  const [hentaiSeries, setHentaiSeries] = useState([]);
+  const [hentaiSeasons, setHentaiSeasons] = useState([]);
+  const [tvSeries, setTvSeries] = useState([]);
+  const [tvSeasons, setTvSeasons] = useState([]);
+  const [selectedHentaiSeriesId, setSelectedHentaiSeriesId] = useState(null);
+  const [selectedTvSeriesId, setSelectedTvSeriesId] = useState(null);
   const [selectedAnimeSeriesId, setSelectedAnimeSeriesId] = useState(null);
   const [filmCategories, setFilmCategories] = useState([]);
   const [allLangs, setAllLangs] = useState([]);
@@ -55,6 +61,8 @@ export default function EditVideo() {
     const { data } = await api.get(`/videos/${id}`);
     setV(data);
     if (data.anime_series_id) setSelectedAnimeSeriesId(data.anime_series_id);
+    if (data.hentai_series_id) setSelectedHentaiSeriesId(data.hentai_series_id);
+    if (data.tv_series_id) setSelectedTvSeriesId(data.tv_series_id);
   };
   useEffect(() => {
     load();
@@ -62,6 +70,8 @@ export default function EditVideo() {
     api.get("/shorts-series?category=xxx").then((r) => setShortsSeriesXxx(r.data)).catch(() => setShortsSeriesXxx([]));
     api.get("/shorts-series?category=drama").then((r) => setShortsSeriesDrama(r.data)).catch(() => setShortsSeriesDrama([]));
     api.get("/anime-series").then((r) => setAnimeSeries(r.data)).catch(() => setAnimeSeries([]));
+    api.get("/hentai-series").then((r) => setHentaiSeries(r.data)).catch(() => setHentaiSeries([]));
+    api.get("/tv-series").then((r) => setTvSeries(r.data)).catch(() => setTvSeries([]));
     api.get("/film-categories").then((r) => setFilmCategories(r.data)).catch(() => setFilmCategories([]));
     api.get("/languages").then((r) => setAllLangs(r.data)).catch(() => setAllLangs(COMMON_LANGS));
   }, [id]);
@@ -74,6 +84,18 @@ export default function EditVideo() {
       .then((r) => setAnimeSeasons(r.data))
       .catch(() => setAnimeSeasons([]));
   }, [selectedAnimeSeriesId]);
+  useEffect(() => {
+    if (!selectedHentaiSeriesId) { setHentaiSeasons([]); return; }
+    api.get(`/hentai-series/${selectedHentaiSeriesId}/seasons/all`)
+      .then((r) => setHentaiSeasons(r.data))
+      .catch(() => setHentaiSeasons([]));
+  }, [selectedHentaiSeriesId]);
+  useEffect(() => {
+    if (!selectedTvSeriesId) { setTvSeasons([]); return; }
+    api.get(`/tv-series/${selectedTvSeriesId}/seasons/all`)
+      .then((r) => setTvSeasons(r.data))
+      .catch(() => setTvSeasons([]));
+  }, [selectedTvSeriesId]);
 
   // Auto-suggest label when language changes
   useEffect(() => {
@@ -371,6 +393,144 @@ export default function EditVideo() {
                 )}
               </>
             )}
+          </div>
+        )}
+        {/* Hentai RoSub — mirrors Anime block */}
+        {!isShortVideo && (
+          <div className="bg-zinc-950 border border-zinc-800 rounded-md p-3 space-y-3" data-testid="edit-hentai-block">
+            <div className="flex items-center justify-between">
+              <Label className="m-0">Hentai RoSub</Label>
+              <Switch
+                checked={!!v.is_hentai}
+                onCheckedChange={(val) => {
+                  const next = { is_hentai: val, hentai_series_id: val ? v.hentai_series_id : null, hentai_season_id: val ? v.hentai_season_id : null };
+                  if (val) { next.is_anime = false; next.anime_series_id = null; next.anime_season_id = null; next.is_tv = false; next.tv_series_id = null; next.tv_season_id = null; }
+                  setV({ ...v, ...next });
+                  save(next);
+                  if (!val) setSelectedHentaiSeriesId(null);
+                }}
+                data-testid="edit-is-hentai"
+              />
+            </div>
+            {v.is_hentai && (
+              <>
+                <div>
+                  <Label>Serie Hentai</Label>
+                  <Select value={v.hentai_series_id || "none"} onValueChange={(val) => {
+                    const next = val === "none" ? null : val;
+                    setV({ ...v, hentai_series_id: next, hentai_season_id: null });
+                    save({ hentai_series_id: next, hentai_season_id: null });
+                    setSelectedHentaiSeriesId(next);
+                  }}>
+                    <SelectTrigger className="bg-zinc-950 border-zinc-800" data-testid="edit-hentai-series"><SelectValue placeholder="— Fără serie —" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">— Fără serie —</SelectItem>
+                      {hentaiSeries.map((s) => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+                {v.hentai_series_id && (
+                  <div>
+                    <Label>Sezon</Label>
+                    <Select value={v.hentai_season_id || "none"} onValueChange={(val) => {
+                      const next = val === "none" ? null : val;
+                      setV({ ...v, hentai_season_id: next });
+                      save({ hentai_season_id: next });
+                    }}>
+                      <SelectTrigger className="bg-zinc-950 border-zinc-800" data-testid="edit-hentai-season"><SelectValue placeholder="— Fără sezon —" /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">— Fără sezon —</SelectItem>
+                        {hentaiSeasons.map((se) => (
+                          <SelectItem key={se.id} value={se.id}>
+                            {se.season_type === "season" ? "" : `[${se.season_type.toUpperCase()}] `}{se.title}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+                {v.hentai_season_id && (
+                  <div>
+                    <Label>Poziție episod în sezon</Label>
+                    <Input type="number" min="1" value={v.hentai_series_position || ""}
+                      onChange={(e) => setV({ ...v, hentai_series_position: Number(e.target.value) || null })}
+                      onBlur={(e) => save({ hentai_series_position: Number(e.target.value) || null })}
+                      className="bg-zinc-950 border-zinc-800" data-testid="edit-hentai-position" placeholder="1, 2, 3..."
+                    />
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )}
+        {/* Seriale TV — mirrors Anime block */}
+        {!isShortVideo && (
+          <div className="bg-zinc-950 border border-zinc-800 rounded-md p-3 space-y-3" data-testid="edit-tv-block">
+            <div className="flex items-center justify-between">
+              <Label className="m-0">Serial TV</Label>
+              <Switch
+                checked={!!v.is_tv}
+                onCheckedChange={(val) => {
+                  const next = { is_tv: val, tv_series_id: val ? v.tv_series_id : null, tv_season_id: val ? v.tv_season_id : null };
+                  if (val) { next.is_anime = false; next.anime_series_id = null; next.anime_season_id = null; next.is_hentai = false; next.hentai_series_id = null; next.hentai_season_id = null; }
+                  setV({ ...v, ...next });
+                  save(next);
+                  if (!val) setSelectedTvSeriesId(null);
+                }}
+                data-testid="edit-is-tv"
+              />
+            </div>
+            {v.is_tv && (
+              <>
+                <div>
+                  <Label>Serial TV</Label>
+                  <Select value={v.tv_series_id || "none"} onValueChange={(val) => {
+                    const next = val === "none" ? null : val;
+                    setV({ ...v, tv_series_id: next, tv_season_id: null });
+                    save({ tv_series_id: next, tv_season_id: null });
+                    setSelectedTvSeriesId(next);
+                  }}>
+                    <SelectTrigger className="bg-zinc-950 border-zinc-800" data-testid="edit-tv-series"><SelectValue placeholder="— Fără serial —" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">— Fără serial —</SelectItem>
+                      {tvSeries.map((s) => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+                {v.tv_series_id && (
+                  <div>
+                    <Label>Sezon</Label>
+                    <Select value={v.tv_season_id || "none"} onValueChange={(val) => {
+                      const next = val === "none" ? null : val;
+                      setV({ ...v, tv_season_id: next });
+                      save({ tv_season_id: next });
+                    }}>
+                      <SelectTrigger className="bg-zinc-950 border-zinc-800" data-testid="edit-tv-season"><SelectValue placeholder="— Fără sezon —" /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">— Fără sezon —</SelectItem>
+                        {tvSeasons.map((se) => (
+                          <SelectItem key={se.id} value={se.id}>
+                            {se.season_type === "season" ? "" : `[${se.season_type.toUpperCase()}] `}{se.title}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+                {v.tv_season_id && (
+                  <div>
+                    <Label>Poziție episod în sezon</Label>
+                    <Input type="number" min="1" value={v.tv_series_position || ""}
+                      onChange={(e) => setV({ ...v, tv_series_position: Number(e.target.value) || null })}
+                      onBlur={(e) => save({ tv_series_position: Number(e.target.value) || null })}
+                      className="bg-zinc-950 border-zinc-800" data-testid="edit-tv-position" placeholder="1, 2, 3..."
+                    />
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )}
         {!isShortVideo && (
           <div className="bg-zinc-950 border border-zinc-800 rounded-md p-3 space-y-3" data-testid="edit-film-block">
             <div className="flex items-center justify-between">
@@ -428,8 +588,6 @@ export default function EditVideo() {
           </div>
         )}
 
-          </div>
-        )}
         {isShortVideo && (
           <div className="bg-zinc-950 border border-zinc-800 rounded-md p-3 space-y-3" data-testid="edit-series-block">
             <div>

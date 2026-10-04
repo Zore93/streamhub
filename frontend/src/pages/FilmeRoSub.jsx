@@ -1,6 +1,6 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useParams, Link, useSearchParams } from "react-router-dom";
-import { Film } from "lucide-react";
+import { Film, Search } from "lucide-react";
 import api from "@/lib/api";
 import VideoCard from "@/components/VideoCard";
 
@@ -20,6 +20,16 @@ export default function FilmeRoSub() {
   const [films, setFilms] = useState([]);
   const [activeCat, setActiveCat] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState("");
+
+  const visibleFilms = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return films;
+    return films.filter((v) =>
+      (v.title || "").toLowerCase().includes(q) ||
+      (v.tags || []).some((t) => (t || "").toLowerCase().includes(q))
+    );
+  }, [films, search]);
 
   useEffect(() => {
     api.get("/film-categories").then((r) => setCategories(r.data)).catch(() => {});
@@ -80,18 +90,32 @@ export default function FilmeRoSub() {
         </p>
       )}
 
+      <div className="relative mb-6 max-w-xl" data-testid="filme-search-wrap">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500" size={16} />
+        <input
+          type="text"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Caută film după titlu…"
+          className="w-full bg-zinc-900 border border-zinc-800 focus:border-rose-500/60 focus:outline-none text-zinc-100 pl-9 pr-3 py-2 rounded-md text-sm"
+          data-testid="filme-search-input"
+        />
+      </div>
+
       {/* Films grid */}
       {loading && <p className="text-zinc-500 text-center py-12">Se încarcă…</p>}
-      {!loading && films.length === 0 && (
+      {!loading && visibleFilms.length === 0 && (
         <p className="text-zinc-500 text-center py-12" data-testid="filme-empty">
-          {activeCat
-            ? `Nu există filme în categoria "${activeCat.name}" încă.`
-            : "Nu există filme RoSub încă. Adaugă unul din /upload → Este film RoSub."}
+          {search
+            ? `Niciun rezultat pentru „${search}".`
+            : activeCat
+              ? `Nu există filme în categoria "${activeCat.name}" încă.`
+              : "Nu există filme RoSub încă. Adaugă unul din /upload → Este film RoSub."}
         </p>
       )}
-      {!loading && films.length > 0 && (
+      {!loading && visibleFilms.length > 0 && (
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4" data-testid="filme-grid">
-          {films.map((v) => <VideoCard key={v.id} v={v} />)}
+          {visibleFilms.map((v) => <VideoCard key={v.id} v={v} />)}
         </div>
       )}
     </div>

@@ -140,13 +140,18 @@ class Video(BaseModel):
     is_anime: bool = False
     anime_series_id: Optional[str] = None
     anime_series_position: Optional[int] = None
-    # Season the episode belongs to (a series can have multiple seasons/OVAs/
-    # movies/specials). When set, `anime_series_position` orders the episode
-    # WITHIN that season, not across the whole series.
     anime_season_id: Optional[str] = None
+    # ─── Hentai RoSub vertical (same shape as anime) ────────────────
+    is_hentai: bool = False
+    hentai_series_id: Optional[str] = None
+    hentai_season_id: Optional[str] = None
+    hentai_series_position: Optional[int] = None
+    # ─── Seriale TV vertical (same shape as anime) ──────────────────
+    is_tv: bool = False
+    tv_series_id: Optional[str] = None
+    tv_season_id: Optional[str] = None
+    tv_series_position: Optional[int] = None
     # ─── Filme RoSub vertical ────────────────────────────────────────
-    # Full-length films (NOT shorts, NOT anime episodes) that appear on
-    # /filme-rosub. Mutually exclusive with `is_short` and `is_anime`.
     is_film_rosub: bool = False
     film_category_ids: List[str] = []  # multi-select — a film can be in many categories
     views: int = 0
@@ -179,6 +184,14 @@ class VideoUpdateReq(BaseModel):
     anime_series_id: Optional[str] = None
     anime_series_position: Optional[int] = None
     anime_season_id: Optional[str] = None
+    is_hentai: Optional[bool] = None
+    hentai_series_id: Optional[str] = None
+    hentai_season_id: Optional[str] = None
+    hentai_series_position: Optional[int] = None
+    is_tv: Optional[bool] = None
+    tv_series_id: Optional[str] = None
+    tv_season_id: Optional[str] = None
+    tv_series_position: Optional[int] = None
     is_film_rosub: Optional[bool] = None
     film_category_ids: Optional[List[str]] = None
     subtitles: Optional[List[dict]] = None  # allow reordering (set default) only — items must already exist
@@ -224,6 +237,64 @@ class AnimeSeason(BaseModel):
     year: Optional[int] = None
     season_type: str = "season"  # season | ova | movie | special
     position: int = 0  # display order within the series
+    active: bool = True
+    created_at: str = Field(default_factory=now_iso)
+
+
+# ============ HENTAI SERIES + SEASON (mirrors Anime by request) ============
+class HentaiSeries(BaseModel):
+    id: str = Field(default_factory=new_id)
+    name: str
+    slug: str
+    description: str = ""
+    cover_thumbnail: str = ""
+    tags: List[str] = []
+    active: bool = True
+    sort_order: int = 0
+    created_at: str = Field(default_factory=now_iso)
+
+
+class HentaiSeason(BaseModel):
+    id: str = Field(default_factory=new_id)
+    series_id: str
+    number: int = 1
+    title: str = ""
+    slug: str
+    description: str = ""
+    synopsis: str = ""
+    cover_thumbnail: str = ""
+    year: Optional[int] = None
+    season_type: str = "season"
+    position: int = 0
+    active: bool = True
+    created_at: str = Field(default_factory=now_iso)
+
+
+# ============ SERIALE TV SERIES + SEASON (mirrors Anime by request) ========
+class TVSeries(BaseModel):
+    id: str = Field(default_factory=new_id)
+    name: str
+    slug: str
+    description: str = ""
+    cover_thumbnail: str = ""
+    tags: List[str] = []
+    active: bool = True
+    sort_order: int = 0
+    created_at: str = Field(default_factory=now_iso)
+
+
+class TVSeason(BaseModel):
+    id: str = Field(default_factory=new_id)
+    series_id: str
+    number: int = 1
+    title: str = ""
+    slug: str
+    description: str = ""
+    synopsis: str = ""
+    cover_thumbnail: str = ""
+    year: Optional[int] = None
+    season_type: str = "season"
+    position: int = 0
     active: bool = True
     created_at: str = Field(default_factory=now_iso)
 

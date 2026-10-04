@@ -1,6 +1,6 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { Smartphone, Film } from "lucide-react";
+import { Smartphone, Film, Search } from "lucide-react";
 import api from "@/lib/api";
 import { useT } from "@/contexts/LanguageContext";
 
@@ -13,10 +13,12 @@ export default function Shorts({ category = "xxx" }) {
   const { t } = useT();
   const [series, setSeries] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState("");
   const isDrama = category === "drama";
   const heading = isDrama ? "Drama Shorts" : "XXX Shorts";
   const listAllPath = isDrama ? "/drama-shorts/all" : "/shorts/all";
   const seriesPathBase = isDrama ? "/drama-shorts/series" : "/shorts/series";
+  const filteredSeries = useFilteredSeries(series, search);
 
   useEffect(() => {
     setLoading(true);
@@ -44,25 +46,50 @@ export default function Shorts({ category = "xxx" }) {
         </Link>
       </header>
 
+      <div className="relative mb-6 max-w-xl" data-testid={`shorts-${category}-search-wrap`}>
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500" size={16} />
+        <input
+          type="text"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder={`Caută serie ${heading} după nume…`}
+          className="w-full bg-zinc-900 border border-zinc-800 focus:border-rose-500/60 focus:outline-none text-zinc-100 pl-9 pr-3 py-2 rounded-md text-sm"
+          data-testid={`shorts-${category}-search-input`}
+        />
+      </div>
+
       {loading && (
         <p className="text-zinc-500 text-center py-12">
           {t("common.loading") || "Se încarcă…"}
         </p>
       )}
 
-      {!loading && series.length === 0 && (
+      {!loading && filteredSeries.length === 0 && (
         <p className="text-zinc-500 text-center py-12" data-testid={`shorts-${category}-empty`}>
-          Nu există încă serii {heading}. Un admin le poate crea din Panou Admin.
+          {series.length === 0
+            ? `Nu există încă serii ${heading}. Un admin le poate crea din Panou Admin.`
+            : `Niciun rezultat pentru „${search}".`}
         </p>
       )}
 
-      {!loading && series.length > 0 && (
+      {!loading && filteredSeries.length > 0 && (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3 sm:gap-4">
-          {series.map((s) => <SeriesPoster key={s.id} s={s} basePath={seriesPathBase} />)}
+          {filteredSeries.map((s) => <SeriesPoster key={s.id} s={s} basePath={seriesPathBase} />)}
         </div>
       )}
     </div>
   );
+}
+
+function useFilteredSeries(series, search) {
+  return useMemo(() => {
+    const q = (search || "").trim().toLowerCase();
+    if (!q) return series;
+    return series.filter((s) =>
+      (s.name || "").toLowerCase().includes(q) ||
+      (s.tags || []).some((t) => (t || "").toLowerCase().includes(q))
+    );
+  }, [series, search]);
 }
 
 function SeriesPoster({ s, basePath }) {

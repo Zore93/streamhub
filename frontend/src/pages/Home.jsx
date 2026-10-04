@@ -79,6 +79,8 @@ export default function Home() {
   const [dramaSeries, setDramaSeries] = useState([]);
   const [animeVideos, setAnimeVideos] = useState([]);
   const [animeSeries, setAnimeSeries] = useState([]);
+  const [hentaiSeries, setHentaiSeries] = useState([]);
+  const [tvSeries, setTvSeries] = useState([]);
   const [filme, setFilme] = useState([]);
 
   useEffect(() => {
@@ -114,6 +116,14 @@ export default function Home() {
       .get(`/videos/filme?limit=${HOME_LIMIT}`)
       .then((r) => setFilme(r.data?.items || []))
       .catch(() => {});
+    api
+      .get("/hentai-series")
+      .then((r) => setHentaiSeries(r.data.slice(0, HOME_LIMIT)))
+      .catch(() => {});
+    api
+      .get("/tv-series")
+      .then((r) => setTvSeries(r.data.slice(0, HOME_LIMIT)))
+      .catch(() => {});
   }, []);
 
   const isEmpty =
@@ -137,12 +147,16 @@ export default function Home() {
     { id: "xxx",    label: t("home.tab.xxx")    || "XXX Shorts" },
     { id: "drama",  label: t("home.tab.drama")  || "Drama Shorts" },
     { id: "anime",  label: t("home.tab.anime")  || "Anime" },
+    { id: "hentai", label: t("home.tab.hentai") || "Hentai RoSub" },
+    { id: "tv",     label: t("home.tab.tv")     || "Seriale TV" },
     { id: "filme",  label: t("home.tab.filme")  || "Filme RoSub" },
   ];
   const showVideos      = vertical === "all" || vertical === "videos";
   const showXxxShorts   = vertical === "all" || vertical === "xxx";
   const showDramaShorts = vertical === "all" || vertical === "drama";
   const showAnime       = vertical === "all" || vertical === "anime";
+  const showHentai      = vertical === "all" || vertical === "hentai";
+  const showTv          = vertical === "all" || vertical === "tv";
   const showFilme       = vertical === "all" || vertical === "filme";
 
   return (
@@ -199,15 +213,16 @@ export default function Home() {
           seeMoreLabel={seeMore}
         />
       )}
-      {showVideos && (
+      {showHentai && hentaiSeries.length > 0 && (
         <Section
-          title={t("home.popular")}
+          title={t("home.lastHentaiSeries") || "Ultimele Serii Hentai adăugate"}
           Icon={Flame}
-          videos={popular}
-          seeMoreTo="/popular"
-          testId="section-popular"
+          seeMoreTo="/hentai"
+          testId="section-hentai-series"
           seeMoreLabel={seeMore}
-        />
+        >
+          <SeriesPosterRow series={hentaiSeries} basePath="/hentai/series" />
+        </Section>
       )}
       {showXxxShorts && (
         <Section
@@ -284,6 +299,18 @@ export default function Home() {
           seeMoreLabel={seeMore}
         />
       )}
+      {showTv && tvSeries.length > 0 && (
+        <Section
+          title={t("home.lastTvSeries") || "Ultimele Seriale TV adăugate"}
+          Icon={Film}
+          seeMoreTo="/seriale-tv"
+          testId="section-tv-series"
+          seeMoreLabel={seeMore}
+        >
+          <SeriesPosterRow series={tvSeries} basePath="/seriale-tv/series" />
+        </Section>
+      )}
+
     </div>
   );
 }

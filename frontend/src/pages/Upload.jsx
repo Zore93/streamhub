@@ -39,12 +39,24 @@ export default function Upload() {
     is_anime: false,
     anime_series_id: null,
     anime_season_id: null,
+    is_hentai: false,
+    hentai_series_id: null,
+    hentai_season_id: null,
+    hentai_series_position: null,
+    is_tv: false,
+    tv_series_id: null,
+    tv_season_id: null,
+    tv_series_position: null,
     is_film_rosub: false,
     film_category_ids: [],
   });
   const [categories, setCategories] = useState([]);
   const [animeSeriesList, setAnimeSeriesList] = useState([]);
   const [animeSeasonsList, setAnimeSeasonsList] = useState([]);
+  const [hentaiSeriesList, setHentaiSeriesList] = useState([]);
+  const [hentaiSeasonsList, setHentaiSeasonsList] = useState([]);
+  const [tvSeriesList, setTvSeriesList] = useState([]);
+  const [tvSeasonsList, setTvSeasonsList] = useState([]);
   const [filmCategoriesList, setFilmCategoriesList] = useState([]);
   const [busy, setBusy] = useState(false);
   const abortRef = useRef([]);
@@ -52,6 +64,8 @@ export default function Upload() {
   useEffect(() => {
     api.get("/categories").then((r) => setCategories(r.data)).catch(() => {});
     api.get("/anime-series").then((r) => setAnimeSeriesList(r.data)).catch(() => {});
+    api.get("/hentai-series").then((r) => setHentaiSeriesList(r.data)).catch(() => {});
+    api.get("/tv-series").then((r) => setTvSeriesList(r.data)).catch(() => {});
     api.get("/film-categories").then((r) => setFilmCategoriesList(r.data)).catch(() => {});
   }, []);
 
@@ -62,6 +76,18 @@ export default function Upload() {
       .then((r) => setAnimeSeasonsList(r.data))
       .catch(() => setAnimeSeasonsList([]));
   }, [shared.anime_series_id]);
+  useEffect(() => {
+    if (!shared.hentai_series_id) { setHentaiSeasonsList([]); return; }
+    api.get(`/hentai-series/${shared.hentai_series_id}/seasons`)
+      .then((r) => setHentaiSeasonsList(r.data))
+      .catch(() => setHentaiSeasonsList([]));
+  }, [shared.hentai_series_id]);
+  useEffect(() => {
+    if (!shared.tv_series_id) { setTvSeasonsList([]); return; }
+    api.get(`/tv-series/${shared.tv_series_id}/seasons`)
+      .then((r) => setTvSeasonsList(r.data))
+      .catch(() => setTvSeasonsList([]));
+  }, [shared.tv_series_id]);
 
   const shortsMax = siteCfg?.shorts_max_duration_sec ?? 60;
   const bulkEnabled = siteCfg?.bulk_upload_enabled ?? true;
@@ -122,8 +148,14 @@ export default function Upload() {
           is_anime: !shared.is_short && !!shared.is_anime,
           anime_season_id: (!shared.is_short && shared.is_anime) ? shared.anime_season_id : null,
           anime_series_id: (!shared.is_short && shared.is_anime) ? shared.anime_series_id : null,
-          is_film_rosub: !shared.is_short && !shared.is_anime && !!shared.is_film_rosub,
-          film_category_ids: (!shared.is_short && !shared.is_anime && shared.is_film_rosub) ? (shared.film_category_ids || []) : [],
+          is_hentai: !shared.is_short && !shared.is_anime && !!shared.is_hentai,
+          hentai_season_id: (!shared.is_short && !shared.is_anime && shared.is_hentai) ? shared.hentai_season_id : null,
+          hentai_series_id: (!shared.is_short && !shared.is_anime && shared.is_hentai) ? shared.hentai_series_id : null,
+          is_tv: !shared.is_short && !shared.is_anime && !shared.is_hentai && !!shared.is_tv,
+          tv_season_id: (!shared.is_short && !shared.is_anime && !shared.is_hentai && shared.is_tv) ? shared.tv_season_id : null,
+          tv_series_id: (!shared.is_short && !shared.is_anime && !shared.is_hentai && shared.is_tv) ? shared.tv_series_id : null,
+          is_film_rosub: !shared.is_short && !shared.is_anime && !shared.is_hentai && !shared.is_tv && !!shared.is_film_rosub,
+          film_category_ids: (!shared.is_short && !shared.is_anime && !shared.is_hentai && !shared.is_tv && shared.is_film_rosub) ? (shared.film_category_ids || []) : [],
         };
         const video = await uploadVideoChunked({
           file: entry.file,
@@ -392,7 +424,112 @@ export default function Upload() {
               )}
             </div>
           )}
+          {/* Hentai RoSub — mirrors Anime block */}
           {!shared.is_short && !shared.is_anime && (
+            <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-3 space-y-3" data-testid="upload-is-hentai-block">
+              <div className="flex items-center justify-between">
+                <Label className="mb-0">Este Hentai RoSub (apare doar în /hentai)</Label>
+                <Switch
+                  checked={!!shared.is_hentai}
+                  onCheckedChange={(v) => setShared({
+                    ...shared, is_hentai: v,
+                    hentai_series_id: v ? shared.hentai_series_id : null,
+                    hentai_season_id: v ? shared.hentai_season_id : null,
+                  })}
+                  data-testid="upload-is-hentai"
+                />
+              </div>
+              {shared.is_hentai && (
+                <>
+                  <div>
+                    <Label>Serie Hentai</Label>
+                    <Select value={shared.hentai_series_id || "none"} onValueChange={(val) => {
+                      const next = val === "none" ? null : val;
+                      setShared({ ...shared, hentai_series_id: next, hentai_season_id: null });
+                    }}>
+                      <SelectTrigger className="bg-zinc-950 border-zinc-800" data-testid="upload-hentai-series"><SelectValue placeholder="— Alege serie —" /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">— Alege serie —</SelectItem>
+                        {hentaiSeriesList.map((s) => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                    {hentaiSeriesList.length === 0 && <p className="text-xs text-zinc-500 mt-1">Creează prima serie din Admin → Serii Hentai.</p>}
+                  </div>
+                  {shared.hentai_series_id && (
+                    <div>
+                      <Label>Sezon</Label>
+                      <Select value={shared.hentai_season_id || "none"} onValueChange={(val) => setShared({ ...shared, hentai_season_id: val === "none" ? null : val })}>
+                        <SelectTrigger className="bg-zinc-950 border-zinc-800" data-testid="upload-hentai-season"><SelectValue placeholder="— Alege sezon —" /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="none">— Alege sezon —</SelectItem>
+                          {hentaiSeasonsList.map((se) => (
+                            <SelectItem key={se.id} value={se.id}>
+                              {se.season_type === "season" ? "" : `[${se.season_type.toUpperCase()}] `}{se.title}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      {hentaiSeasonsList.length === 0 && <p className="text-xs text-zinc-500 mt-1">Această serie nu are încă sezoane. Adaugă unul din Admin → Serii Hentai → butonul „Sezoane".</p>}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+          {/* Seriale TV — mirrors Anime block */}
+          {!shared.is_short && !shared.is_anime && !shared.is_hentai && (
+            <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-3 space-y-3" data-testid="upload-is-tv-block">
+              <div className="flex items-center justify-between">
+                <Label className="mb-0">Este Serial TV (apare doar în /seriale-tv)</Label>
+                <Switch
+                  checked={!!shared.is_tv}
+                  onCheckedChange={(v) => setShared({
+                    ...shared, is_tv: v,
+                    tv_series_id: v ? shared.tv_series_id : null,
+                    tv_season_id: v ? shared.tv_season_id : null,
+                  })}
+                  data-testid="upload-is-tv"
+                />
+              </div>
+              {shared.is_tv && (
+                <>
+                  <div>
+                    <Label>Serial TV</Label>
+                    <Select value={shared.tv_series_id || "none"} onValueChange={(val) => {
+                      const next = val === "none" ? null : val;
+                      setShared({ ...shared, tv_series_id: next, tv_season_id: null });
+                    }}>
+                      <SelectTrigger className="bg-zinc-950 border-zinc-800" data-testid="upload-tv-series"><SelectValue placeholder="— Alege serial —" /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">— Alege serial —</SelectItem>
+                        {tvSeriesList.map((s) => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                    {tvSeriesList.length === 0 && <p className="text-xs text-zinc-500 mt-1">Creează primul serial din Admin → Seriale TV.</p>}
+                  </div>
+                  {shared.tv_series_id && (
+                    <div>
+                      <Label>Sezon</Label>
+                      <Select value={shared.tv_season_id || "none"} onValueChange={(val) => setShared({ ...shared, tv_season_id: val === "none" ? null : val })}>
+                        <SelectTrigger className="bg-zinc-950 border-zinc-800" data-testid="upload-tv-season"><SelectValue placeholder="— Alege sezon —" /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="none">— Alege sezon —</SelectItem>
+                          {tvSeasonsList.map((se) => (
+                            <SelectItem key={se.id} value={se.id}>
+                              {se.season_type === "season" ? "" : `[${se.season_type.toUpperCase()}] `}{se.title}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      {tvSeasonsList.length === 0 && <p className="text-xs text-zinc-500 mt-1">Acest serial nu are încă sezoane. Adaugă unul din Admin → Seriale TV → butonul „Sezoane".</p>}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+
+          {!shared.is_short && !shared.is_anime && !shared.is_hentai && !shared.is_tv && (
             <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-3 space-y-3" data-testid="upload-is-film-block">
               <div className="flex items-center justify-between">
                 <Label className="mb-0">Este film RoSub (apare doar în /filme-rosub)</Label>

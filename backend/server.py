@@ -76,6 +76,10 @@ from models import (
     ShortsSeries,
     AnimeSeries,
     AnimeSeason,
+    HentaiSeries,
+    HentaiSeason,
+    TVSeries,
+    TVSeason,
     FilmCategory,
     StatsResponse,
     User,
@@ -1401,6 +1405,696 @@ async def upload_anime_series_cover(
     return {"cover_thumbnail": rel}
 
 
+# ═══ HENTAI ROSUB (mirrors Anime) ═══
+@api.get("/hentai-series")
+async def list_hentai_series():
+    docs = await db.hentai_series.find({"active": True}, {"_id": 0}) \
+        .sort([("sort_order", 1), ("name", 1)]).to_list(200)
+    for d in docs:
+        d["episode_count"] = await db.videos.count_documents({
+            "hentai_series_id": d["id"], "status": "ready",
+        })
+    return docs
+
+
+@api.get("/hentai-series/all")
+async def list_all_hentai_series(admin: dict = Depends(require_admin)):
+    docs = await db.hentai_series.find({}, {"_id": 0}) \
+        .sort([("sort_order", 1), ("name", 1)]).to_list(500)
+    for d in docs:
+        d["episode_count"] = await db.videos.count_documents({"hentai_series_id": d["id"]})
+    return docs
+
+
+@api.get("/hentai-series/{key}")
+async def get_hentai_series(key: str):
+    s = await db.hentai_series.find_one({"$or": [{"id": key}, {"slug": key}]}, {"_id": 0})
+    if not s:
+        raise HTTPException(404, "Series not found")
+    # Seasons: shown as poster grid on the series detail page.
+    seasons = await db.hentai_seasons.find(
+        {"series_id": s["id"], "active": True}, {"_id": 0},
+    ).to_list(200)
+    seasons.sort(key=lambda x: (x.get("position") or 0, x.get("number") or 0))
+    for se in seasons:
+        se["episode_count"] = await db.videos.count_documents({
+            "hentai_season_id": se["id"], "status": "ready",
+        })
+    # Episodes: kept for backward compat (older UI) — legacy series with no
+    # seasons will still show episodes here.
+    episodes = await db.videos.find(
+        {"hentai_series_id": s["id"], "status": "ready"}, {"_id": 0},
+    ).to_list(500)
+    episodes.sort(key=lambda v: (
+        v.get("hentai_series_position") if v.get("hentai_series_position") is not None else 10 ** 9,
+        v.get("created_at") or "",
+    ))
+    s["seasons"] = seasons
+    s["episodes"] = episodes
+    s["episode_count"] = len(episodes)
+    return s
+
+
+# ============ HENTAI SEASONS ============
+@api.get("/hentai-series/{series_key}/seasons")
+async def list_seasons_of_hentai_series(series_key: str):
+    """Public endpoint — returns only active seasons. Admin variant below
+    returns inactive ones too."""
+    s = await db.hentai_series.find_one(
+        {"$or": [{"id": series_key}, {"slug": series_key}]}, {"_id": 0}
+    )
+    if not s:
+        raise HTTPException(404, "Series not found")
+    seasons = await db.hentai_seasons.find(
+        {"series_id": s["id"], "active": True}, {"_id": 0},
+    ).to_list(200)
+    seasons.sort(key=lambda x: (x.get("position") or 0, x.get("number") or 0))
+    for se in seasons:
+        se["episode_count"] = await db.videos.count_documents({
+            "hentai_season_id": se["id"], "status": "ready",
+        })
+    return seasons
+
+
+@api.get("/hentai-series/{series_key}/seasons/all")
+async def list_all_seasons_of_hentai_series(series_key: str, admin: dict = Depends(require_admin)):
+    s = await db.hentai_series.find_one(
+        {"$or": [{"id": series_key}, {"slug": series_key}]}, {"_id": 0}
+    )
+    if not s:
+        raise HTTPException(404, "Series not found")
+    seasons = await db.hentai_seasons.find(
+        {"series_id": s["id"]}, {"_id": 0},
+    ).to_list(500)
+    seasons.sort(key=lambda x: (x.get("position") or 0, x.get("number") or 0))
+    for se in seasons:
+        se["episode_count"] = await db.videos.count_documents({"hentai_season_id": se["id"]})
+    return seasons
+
+
+@api.post("/hentai-series/{series_id}/seasons")
+async def create_hentai_season(series_id: str, payload: dict, admin: dict = Depends(require_admin)):
+    series = await db.hentai_series.find_one({"id": series_id}, {"_id": 0})
+    if not series:
+        raise HTTPException(404, "Series not found")
+    season_type = (payload.get("season_type") or "season").lower()
+    if season_type not in {"season", "ova", "movie", "special"}:
+        season_type = "season"
+    number = int(payload.get("number") or 1)
+    slug_in = (payload.get("slug") or "").strip()
+    if not slug_in:
+        if season_type == "season":
+            slug_in = f"s{number:02d}"
+        else:
+            slug_in = f"{season_type}-{number}"
+    # Enforce uniqueness within the series
+    if await db.hentai_seasons.find_one({"series_id": series_id, "slug": slug_in}):
+        raise HTTPException(400, "A season with this slug already exists in this series")
+    title = (payload.get("title") or "").strip()
+    if not title:
+        title = {
+            "season": f"Sezonul {number}",
+            "ova": f"OVA {number}",
+            "movie": f"Film {number}",
+            "special": f"Special {number}",
+        }.get(season_type, f"Sezonul {number}")
+    pos_existing = await db.hentai_seasons.count_documents({"series_id": series_id})
+    se = HentaiSeason(
+        series_id=series_id,
+        number=number,
+        title=title,
+        slug=slug_in,
+        description=(payload.get("description") or "").strip(),
+        synopsis=(payload.get("synopsis") or "").strip(),
+        cover_thumbnail=(payload.get("cover_thumbnail") or "").strip(),
+        year=payload.get("year") or None,
+        season_type=season_type,
+        position=int(payload.get("position") if payload.get("position") is not None else pos_existing),
+        active=bool(payload.get("active", True)),
+    )
+    await db.hentai_seasons.insert_one(se.model_dump())
+    return se.model_dump()
+
+
+@api.get("/hentai-seasons/{key}")
+async def get_hentai_season(key: str):
+    se = await db.hentai_seasons.find_one({"$or": [{"id": key}, {"slug": key}]}, {"_id": 0})
+    if not se:
+        raise HTTPException(404, "Season not found")
+    series = await db.hentai_series.find_one({"id": se["series_id"]}, {"_id": 0})
+    episodes = await db.videos.find(
+        {"hentai_season_id": se["id"], "status": "ready"}, {"_id": 0},
+    ).to_list(500)
+    episodes.sort(key=lambda v: (
+        v.get("hentai_series_position") if v.get("hentai_series_position") is not None else 10 ** 9,
+        v.get("created_at") or "",
+    ))
+    se["series"] = {
+        "id": series["id"], "name": series["name"], "slug": series["slug"],
+        "cover_thumbnail": series.get("cover_thumbnail", ""),
+    } if series else None
+    se["episodes"] = episodes
+    se["episode_count"] = len(episodes)
+    return se
+
+
+@api.get("/hentai-series/{series_key}/seasons/{season_key}")
+async def get_hentai_season_by_pair(series_key: str, season_key: str):
+    """Fetch season by (series_slug|id, season_slug|id) pair — useful for
+    the public /anime/<series>/<season> route so we can 404 fast when the
+    season doesn't belong to the given series."""
+    series = await db.hentai_series.find_one(
+        {"$or": [{"id": series_key}, {"slug": series_key}]}, {"_id": 0}
+    )
+    if not series:
+        raise HTTPException(404, "Series not found")
+    se = await db.hentai_seasons.find_one(
+        {"series_id": series["id"], "$or": [{"id": season_key}, {"slug": season_key}]},
+        {"_id": 0},
+    )
+    if not se:
+        raise HTTPException(404, "Season not found")
+    episodes = await db.videos.find(
+        {"hentai_season_id": se["id"], "status": "ready"}, {"_id": 0},
+    ).to_list(500)
+    episodes.sort(key=lambda v: (
+        v.get("hentai_series_position") if v.get("hentai_series_position") is not None else 10 ** 9,
+        v.get("created_at") or "",
+    ))
+    se["series"] = {
+        "id": series["id"], "name": series["name"], "slug": series["slug"],
+        "cover_thumbnail": series.get("cover_thumbnail", ""),
+    }
+    se["episodes"] = episodes
+    se["episode_count"] = len(episodes)
+    return se
+
+
+@api.patch("/hentai-seasons/{season_id}")
+async def update_hentai_season(season_id: str, payload: dict, admin: dict = Depends(require_admin)):
+    se = await db.hentai_seasons.find_one({"id": season_id}, {"_id": 0})
+    if not se:
+        raise HTTPException(404, "Season not found")
+    allowed = {
+        "number", "title", "slug", "description", "synopsis",
+        "cover_thumbnail", "year", "season_type", "position", "active",
+    }
+    upd = {k: v for k, v in payload.items() if k in allowed}
+    if not upd:
+        return se
+    if "season_type" in upd:
+        upd["season_type"] = (upd["season_type"] or "season").lower()
+        if upd["season_type"] not in {"season", "ova", "movie", "special"}:
+            upd["season_type"] = "season"
+    if "slug" in upd:
+        upd["slug"] = (upd["slug"] or "").strip()
+        clash = await db.hentai_seasons.find_one({
+            "series_id": se["series_id"],
+            "slug": upd["slug"],
+            "id": {"$ne": season_id},
+        })
+        if clash:
+            raise HTTPException(400, "Another season already uses this slug")
+    await db.hentai_seasons.update_one({"id": season_id}, {"$set": upd})
+    return await db.hentai_seasons.find_one({"id": season_id}, {"_id": 0})
+
+
+@api.delete("/hentai-seasons/{season_id}")
+async def delete_hentai_season(season_id: str, admin: dict = Depends(require_admin)):
+    ep_count = await db.videos.count_documents({"hentai_season_id": season_id})
+    if ep_count > 0:
+        raise HTTPException(
+            400,
+            f"Cannot delete — season still has {ep_count} episode(s). "
+            "Reassign or delete them first.",
+        )
+    await db.hentai_seasons.delete_one({"id": season_id})
+    return {"ok": True}
+
+
+@api.post("/hentai-seasons/{season_id}/cover")
+async def upload_hentai_season_cover(
+    season_id: str,
+    file: UploadFile = File(...),
+    admin: dict = Depends(require_admin),
+):
+    se = await db.hentai_seasons.find_one({"id": season_id}, {"_id": 0})
+    if not se:
+        raise HTTPException(404, "Season not found")
+    ext = (Path(file.filename or "img").suffix or ".jpg").lower()
+    if ext not in (".jpg", ".jpeg", ".png", ".webp", ".gif"):
+        raise HTTPException(400, "Only jpg/png/webp/gif images are allowed")
+    fname = f"{season_id}_cover{ext}"
+    out_path = UPLOAD_DIR / "hentai_season_covers" / fname
+    tmp_path = _stage_upload_to_tempfile(file.file, suffix=ext)
+    rel = f"hentai_season_covers/{fname}"
+    settings = await get_settings()
+    if wasabi_configured(settings):
+        content_type = f"image/{ext.lstrip('.').replace('jpg', 'jpeg')}"
+        url = await wasabi_upload(str(tmp_path), rel, settings, content_type)
+        try:
+            tmp_path.unlink()
+        except Exception:
+            pass
+        if url:
+            rel = url
+    else:
+        _finalize_upload(tmp_path, out_path)
+    await db.hentai_seasons.update_one({"id": season_id}, {"$set": {"cover_thumbnail": rel}})
+    return {"cover_thumbnail": rel}
+
+
+@api.post("/hentai-series")
+async def create_hentai_series(payload: dict, admin: dict = Depends(require_admin)):
+    name = (payload.get("name") or "").strip()
+    if not name:
+        raise HTTPException(400, "name required")
+    slug = (payload.get("slug") or slugify(name)).strip() or slugify(name)
+    if await db.hentai_series.find_one({"slug": slug}):
+        raise HTTPException(400, "A series with this slug already exists")
+    s = HentaiSeries(
+        name=name, slug=slug,
+        description=(payload.get("description") or "").strip(),
+        cover_thumbnail=(payload.get("cover_thumbnail") or "").strip(),
+        tags=[t.strip() for t in (payload.get("tags") or []) if str(t).strip()],
+        active=bool(payload.get("active", True)),
+        sort_order=int(payload.get("sort_order") or 0),
+    )
+    await db.hentai_series.insert_one(s.model_dump())
+    return s.model_dump()
+
+
+@api.patch("/hentai-series/{series_id}")
+async def update_hentai_series(series_id: str, payload: dict, admin: dict = Depends(require_admin)):
+    allowed = {"name", "slug", "description", "cover_thumbnail", "tags", "active", "sort_order"}
+    upd = {k: v for k, v in payload.items() if k in allowed}
+    if not upd:
+        return {"ok": True}
+    if "slug" in upd:
+        upd["slug"] = (upd["slug"] or "").strip()
+        clash = await db.hentai_series.find_one({"slug": upd["slug"], "id": {"$ne": series_id}})
+        if clash:
+            raise HTTPException(400, "Another series already uses this slug")
+    await db.hentai_series.update_one({"id": series_id}, {"$set": upd})
+    s = await db.hentai_series.find_one({"id": series_id}, {"_id": 0})
+    return s
+
+
+@api.delete("/hentai-series/{series_id}")
+async def delete_hentai_series(series_id: str, admin: dict = Depends(require_admin)):
+    # Clean episodes first (detach from series + all seasons)
+    await db.videos.update_many(
+        {"hentai_series_id": series_id},
+        {"$set": {
+            "hentai_series_id": None,
+            "hentai_series_position": None,
+            "hentai_season_id": None,
+            "is_anime": False,
+        }},
+    )
+    # Cascade-delete all seasons belonging to this series
+    await db.hentai_seasons.delete_many({"series_id": series_id})
+    await db.hentai_series.delete_one({"id": series_id})
+    return {"ok": True}
+
+
+@api.post("/hentai-series/{series_id}/cover")
+async def upload_hentai_series_cover(
+    series_id: str,
+    file: UploadFile = File(...),
+    admin: dict = Depends(require_admin),
+):
+    series = await db.hentai_series.find_one({"id": series_id}, {"_id": 0})
+    if not series:
+        raise HTTPException(404, "Series not found")
+    ext = (Path(file.filename or "img").suffix or ".jpg").lower()
+    if ext not in (".jpg", ".jpeg", ".png", ".webp", ".gif"):
+        raise HTTPException(400, "Only jpg/png/webp/gif images are allowed")
+    fname = f"{series_id}_cover{ext}"
+    out_path = UPLOAD_DIR / "hentai_covers" / fname
+    tmp_path = _stage_upload_to_tempfile(file.file, suffix=ext)
+    rel = f"hentai_covers/{fname}"
+    settings = await get_settings()
+    if wasabi_configured(settings):
+        content_type = f"image/{ext.lstrip('.').replace('jpg', 'jpeg')}"
+        url = await wasabi_upload(str(tmp_path), rel, settings, content_type)
+        try:
+            tmp_path.unlink()
+        except Exception:
+            pass
+        if url:
+            rel = url
+    else:
+        _finalize_upload(tmp_path, out_path)
+    await db.hentai_series.update_one({"id": series_id}, {"$set": {"cover_thumbnail": rel}})
+    return {"cover_thumbnail": rel}
+
+
+# ═══ SERIALE TV (mirrors Anime) ═══
+@api.get("/tv-series")
+async def list_tv_series():
+    docs = await db.tv_series.find({"active": True}, {"_id": 0}) \
+        .sort([("sort_order", 1), ("name", 1)]).to_list(200)
+    for d in docs:
+        d["episode_count"] = await db.videos.count_documents({
+            "tv_series_id": d["id"], "status": "ready",
+        })
+    return docs
+
+
+@api.get("/tv-series/all")
+async def list_all_tv_series(admin: dict = Depends(require_admin)):
+    docs = await db.tv_series.find({}, {"_id": 0}) \
+        .sort([("sort_order", 1), ("name", 1)]).to_list(500)
+    for d in docs:
+        d["episode_count"] = await db.videos.count_documents({"tv_series_id": d["id"]})
+    return docs
+
+
+@api.get("/tv-series/{key}")
+async def get_tv_series(key: str):
+    s = await db.tv_series.find_one({"$or": [{"id": key}, {"slug": key}]}, {"_id": 0})
+    if not s:
+        raise HTTPException(404, "Series not found")
+    # Seasons: shown as poster grid on the series detail page.
+    seasons = await db.tv_seasons.find(
+        {"series_id": s["id"], "active": True}, {"_id": 0},
+    ).to_list(200)
+    seasons.sort(key=lambda x: (x.get("position") or 0, x.get("number") or 0))
+    for se in seasons:
+        se["episode_count"] = await db.videos.count_documents({
+            "tv_season_id": se["id"], "status": "ready",
+        })
+    # Episodes: kept for backward compat (older UI) — legacy series with no
+    # seasons will still show episodes here.
+    episodes = await db.videos.find(
+        {"tv_series_id": s["id"], "status": "ready"}, {"_id": 0},
+    ).to_list(500)
+    episodes.sort(key=lambda v: (
+        v.get("tv_series_position") if v.get("tv_series_position") is not None else 10 ** 9,
+        v.get("created_at") or "",
+    ))
+    s["seasons"] = seasons
+    s["episodes"] = episodes
+    s["episode_count"] = len(episodes)
+    return s
+
+
+# ============ TV SEASONS ============
+@api.get("/tv-series/{series_key}/seasons")
+async def list_seasons_of_tv_series(series_key: str):
+    """Public endpoint — returns only active seasons. Admin variant below
+    returns inactive ones too."""
+    s = await db.tv_series.find_one(
+        {"$or": [{"id": series_key}, {"slug": series_key}]}, {"_id": 0}
+    )
+    if not s:
+        raise HTTPException(404, "Series not found")
+    seasons = await db.tv_seasons.find(
+        {"series_id": s["id"], "active": True}, {"_id": 0},
+    ).to_list(200)
+    seasons.sort(key=lambda x: (x.get("position") or 0, x.get("number") or 0))
+    for se in seasons:
+        se["episode_count"] = await db.videos.count_documents({
+            "tv_season_id": se["id"], "status": "ready",
+        })
+    return seasons
+
+
+@api.get("/tv-series/{series_key}/seasons/all")
+async def list_all_seasons_of_tv_series(series_key: str, admin: dict = Depends(require_admin)):
+    s = await db.tv_series.find_one(
+        {"$or": [{"id": series_key}, {"slug": series_key}]}, {"_id": 0}
+    )
+    if not s:
+        raise HTTPException(404, "Series not found")
+    seasons = await db.tv_seasons.find(
+        {"series_id": s["id"]}, {"_id": 0},
+    ).to_list(500)
+    seasons.sort(key=lambda x: (x.get("position") or 0, x.get("number") or 0))
+    for se in seasons:
+        se["episode_count"] = await db.videos.count_documents({"tv_season_id": se["id"]})
+    return seasons
+
+
+@api.post("/tv-series/{series_id}/seasons")
+async def create_tv_season(series_id: str, payload: dict, admin: dict = Depends(require_admin)):
+    series = await db.tv_series.find_one({"id": series_id}, {"_id": 0})
+    if not series:
+        raise HTTPException(404, "Series not found")
+    season_type = (payload.get("season_type") or "season").lower()
+    if season_type not in {"season", "ova", "movie", "special"}:
+        season_type = "season"
+    number = int(payload.get("number") or 1)
+    slug_in = (payload.get("slug") or "").strip()
+    if not slug_in:
+        if season_type == "season":
+            slug_in = f"s{number:02d}"
+        else:
+            slug_in = f"{season_type}-{number}"
+    # Enforce uniqueness within the series
+    if await db.tv_seasons.find_one({"series_id": series_id, "slug": slug_in}):
+        raise HTTPException(400, "A season with this slug already exists in this series")
+    title = (payload.get("title") or "").strip()
+    if not title:
+        title = {
+            "season": f"Sezonul {number}",
+            "ova": f"OVA {number}",
+            "movie": f"Film {number}",
+            "special": f"Special {number}",
+        }.get(season_type, f"Sezonul {number}")
+    pos_existing = await db.tv_seasons.count_documents({"series_id": series_id})
+    se = TVSeason(
+        series_id=series_id,
+        number=number,
+        title=title,
+        slug=slug_in,
+        description=(payload.get("description") or "").strip(),
+        synopsis=(payload.get("synopsis") or "").strip(),
+        cover_thumbnail=(payload.get("cover_thumbnail") or "").strip(),
+        year=payload.get("year") or None,
+        season_type=season_type,
+        position=int(payload.get("position") if payload.get("position") is not None else pos_existing),
+        active=bool(payload.get("active", True)),
+    )
+    await db.tv_seasons.insert_one(se.model_dump())
+    return se.model_dump()
+
+
+@api.get("/tv-seasons/{key}")
+async def get_tv_season(key: str):
+    se = await db.tv_seasons.find_one({"$or": [{"id": key}, {"slug": key}]}, {"_id": 0})
+    if not se:
+        raise HTTPException(404, "Season not found")
+    series = await db.tv_series.find_one({"id": se["series_id"]}, {"_id": 0})
+    episodes = await db.videos.find(
+        {"tv_season_id": se["id"], "status": "ready"}, {"_id": 0},
+    ).to_list(500)
+    episodes.sort(key=lambda v: (
+        v.get("tv_series_position") if v.get("tv_series_position") is not None else 10 ** 9,
+        v.get("created_at") or "",
+    ))
+    se["series"] = {
+        "id": series["id"], "name": series["name"], "slug": series["slug"],
+        "cover_thumbnail": series.get("cover_thumbnail", ""),
+    } if series else None
+    se["episodes"] = episodes
+    se["episode_count"] = len(episodes)
+    return se
+
+
+@api.get("/tv-series/{series_key}/seasons/{season_key}")
+async def get_tv_season_by_pair(series_key: str, season_key: str):
+    """Fetch season by (series_slug|id, season_slug|id) pair — useful for
+    the public /anime/<series>/<season> route so we can 404 fast when the
+    season doesn't belong to the given series."""
+    series = await db.tv_series.find_one(
+        {"$or": [{"id": series_key}, {"slug": series_key}]}, {"_id": 0}
+    )
+    if not series:
+        raise HTTPException(404, "Series not found")
+    se = await db.tv_seasons.find_one(
+        {"series_id": series["id"], "$or": [{"id": season_key}, {"slug": season_key}]},
+        {"_id": 0},
+    )
+    if not se:
+        raise HTTPException(404, "Season not found")
+    episodes = await db.videos.find(
+        {"tv_season_id": se["id"], "status": "ready"}, {"_id": 0},
+    ).to_list(500)
+    episodes.sort(key=lambda v: (
+        v.get("tv_series_position") if v.get("tv_series_position") is not None else 10 ** 9,
+        v.get("created_at") or "",
+    ))
+    se["series"] = {
+        "id": series["id"], "name": series["name"], "slug": series["slug"],
+        "cover_thumbnail": series.get("cover_thumbnail", ""),
+    }
+    se["episodes"] = episodes
+    se["episode_count"] = len(episodes)
+    return se
+
+
+@api.patch("/tv-seasons/{season_id}")
+async def update_tv_season(season_id: str, payload: dict, admin: dict = Depends(require_admin)):
+    se = await db.tv_seasons.find_one({"id": season_id}, {"_id": 0})
+    if not se:
+        raise HTTPException(404, "Season not found")
+    allowed = {
+        "number", "title", "slug", "description", "synopsis",
+        "cover_thumbnail", "year", "season_type", "position", "active",
+    }
+    upd = {k: v for k, v in payload.items() if k in allowed}
+    if not upd:
+        return se
+    if "season_type" in upd:
+        upd["season_type"] = (upd["season_type"] or "season").lower()
+        if upd["season_type"] not in {"season", "ova", "movie", "special"}:
+            upd["season_type"] = "season"
+    if "slug" in upd:
+        upd["slug"] = (upd["slug"] or "").strip()
+        clash = await db.tv_seasons.find_one({
+            "series_id": se["series_id"],
+            "slug": upd["slug"],
+            "id": {"$ne": season_id},
+        })
+        if clash:
+            raise HTTPException(400, "Another season already uses this slug")
+    await db.tv_seasons.update_one({"id": season_id}, {"$set": upd})
+    return await db.tv_seasons.find_one({"id": season_id}, {"_id": 0})
+
+
+@api.delete("/tv-seasons/{season_id}")
+async def delete_tv_season(season_id: str, admin: dict = Depends(require_admin)):
+    ep_count = await db.videos.count_documents({"tv_season_id": season_id})
+    if ep_count > 0:
+        raise HTTPException(
+            400,
+            f"Cannot delete — season still has {ep_count} episode(s). "
+            "Reassign or delete them first.",
+        )
+    await db.tv_seasons.delete_one({"id": season_id})
+    return {"ok": True}
+
+
+@api.post("/tv-seasons/{season_id}/cover")
+async def upload_tv_season_cover(
+    season_id: str,
+    file: UploadFile = File(...),
+    admin: dict = Depends(require_admin),
+):
+    se = await db.tv_seasons.find_one({"id": season_id}, {"_id": 0})
+    if not se:
+        raise HTTPException(404, "Season not found")
+    ext = (Path(file.filename or "img").suffix or ".jpg").lower()
+    if ext not in (".jpg", ".jpeg", ".png", ".webp", ".gif"):
+        raise HTTPException(400, "Only jpg/png/webp/gif images are allowed")
+    fname = f"{season_id}_cover{ext}"
+    out_path = UPLOAD_DIR / "tv_season_covers" / fname
+    tmp_path = _stage_upload_to_tempfile(file.file, suffix=ext)
+    rel = f"tv_season_covers/{fname}"
+    settings = await get_settings()
+    if wasabi_configured(settings):
+        content_type = f"image/{ext.lstrip('.').replace('jpg', 'jpeg')}"
+        url = await wasabi_upload(str(tmp_path), rel, settings, content_type)
+        try:
+            tmp_path.unlink()
+        except Exception:
+            pass
+        if url:
+            rel = url
+    else:
+        _finalize_upload(tmp_path, out_path)
+    await db.tv_seasons.update_one({"id": season_id}, {"$set": {"cover_thumbnail": rel}})
+    return {"cover_thumbnail": rel}
+
+
+@api.post("/tv-series")
+async def create_tv_series(payload: dict, admin: dict = Depends(require_admin)):
+    name = (payload.get("name") or "").strip()
+    if not name:
+        raise HTTPException(400, "name required")
+    slug = (payload.get("slug") or slugify(name)).strip() or slugify(name)
+    if await db.tv_series.find_one({"slug": slug}):
+        raise HTTPException(400, "A series with this slug already exists")
+    s = TVSeries(
+        name=name, slug=slug,
+        description=(payload.get("description") or "").strip(),
+        cover_thumbnail=(payload.get("cover_thumbnail") or "").strip(),
+        tags=[t.strip() for t in (payload.get("tags") or []) if str(t).strip()],
+        active=bool(payload.get("active", True)),
+        sort_order=int(payload.get("sort_order") or 0),
+    )
+    await db.tv_series.insert_one(s.model_dump())
+    return s.model_dump()
+
+
+@api.patch("/tv-series/{series_id}")
+async def update_tv_series(series_id: str, payload: dict, admin: dict = Depends(require_admin)):
+    allowed = {"name", "slug", "description", "cover_thumbnail", "tags", "active", "sort_order"}
+    upd = {k: v for k, v in payload.items() if k in allowed}
+    if not upd:
+        return {"ok": True}
+    if "slug" in upd:
+        upd["slug"] = (upd["slug"] or "").strip()
+        clash = await db.tv_series.find_one({"slug": upd["slug"], "id": {"$ne": series_id}})
+        if clash:
+            raise HTTPException(400, "Another series already uses this slug")
+    await db.tv_series.update_one({"id": series_id}, {"$set": upd})
+    s = await db.tv_series.find_one({"id": series_id}, {"_id": 0})
+    return s
+
+
+@api.delete("/tv-series/{series_id}")
+async def delete_tv_series(series_id: str, admin: dict = Depends(require_admin)):
+    # Clean episodes first (detach from series + all seasons)
+    await db.videos.update_many(
+        {"tv_series_id": series_id},
+        {"$set": {
+            "tv_series_id": None,
+            "tv_series_position": None,
+            "tv_season_id": None,
+            "is_anime": False,
+        }},
+    )
+    # Cascade-delete all seasons belonging to this series
+    await db.tv_seasons.delete_many({"series_id": series_id})
+    await db.tv_series.delete_one({"id": series_id})
+    return {"ok": True}
+
+
+@api.post("/tv-series/{series_id}/cover")
+async def upload_tv_series_cover(
+    series_id: str,
+    file: UploadFile = File(...),
+    admin: dict = Depends(require_admin),
+):
+    series = await db.tv_series.find_one({"id": series_id}, {"_id": 0})
+    if not series:
+        raise HTTPException(404, "Series not found")
+    ext = (Path(file.filename or "img").suffix or ".jpg").lower()
+    if ext not in (".jpg", ".jpeg", ".png", ".webp", ".gif"):
+        raise HTTPException(400, "Only jpg/png/webp/gif images are allowed")
+    fname = f"{series_id}_cover{ext}"
+    out_path = UPLOAD_DIR / "tv_covers" / fname
+    tmp_path = _stage_upload_to_tempfile(file.file, suffix=ext)
+    rel = f"tv_covers/{fname}"
+    settings = await get_settings()
+    if wasabi_configured(settings):
+        content_type = f"image/{ext.lstrip('.').replace('jpg', 'jpeg')}"
+        url = await wasabi_upload(str(tmp_path), rel, settings, content_type)
+        try:
+            tmp_path.unlink()
+        except Exception:
+            pass
+        if url:
+            rel = url
+    else:
+        _finalize_upload(tmp_path, out_path)
+    await db.tv_series.update_one({"id": series_id}, {"$set": {"cover_thumbnail": rel}})
+    return {"cover_thumbnail": rel}
+
+
 # ═══════════════════════════════════════════════════════════════════
 # FILM CATEGORIES (Filme RoSub vertical)
 # ═══════════════════════════════════════════════════════════════════
@@ -1588,6 +2282,9 @@ async def list_videos(
     else:
         # Default (no explicit ask): hide anime from generic listings.
         filt["is_anime"] = {"$ne": True}
+    # Hentai + TV default: hidden from generic listings (same policy as anime).
+    filt["is_hentai"] = {"$ne": True}
+    filt["is_tv"] = {"$ne": True}
     # Filme RoSub — same treatment as anime: hidden by default.
     if is_film_rosub is True:
         filt["is_film_rosub"] = True
@@ -1682,6 +2379,8 @@ async def count_videos(
         filt["is_anime"] = {"$ne": True}
     else:
         filt["is_anime"] = {"$ne": True}
+    filt["is_hentai"] = {"$ne": True}
+    filt["is_tv"] = {"$ne": True}
     if is_film_rosub is True:
         filt["is_film_rosub"] = True
     elif is_film_rosub is False:
@@ -2127,8 +2826,31 @@ async def upload_video_finish(
         if shorts_category not in ("xxx", "drama"):
             shorts_category = "xxx"
         is_anime = bool(payload.get("is_anime", False)) and not is_short
-        # Filme RoSub — full-length, mutually exclusive with shorts + anime.
-        is_film_rosub = bool(payload.get("is_film_rosub", False)) and not is_short and not is_anime
+        # Hentai + TV share the same "series/season" shape as Anime. They
+        # are mutually exclusive with each other AND with anime/shorts/films.
+        is_hentai = bool(payload.get("is_hentai", False)) and not is_short and not is_anime
+        hentai_season_id = payload.get("hentai_season_id") if is_hentai else None
+        hentai_series_id = payload.get("hentai_series_id") if is_hentai else None
+        hentai_series_position = None
+        if is_hentai and hentai_season_id:
+            se = await db.hentai_seasons.find_one({"id": hentai_season_id}, {"_id": 0})
+            if not se:
+                raise HTTPException(400, "hentai_season_id doesn't exist")
+            hentai_series_id = se["series_id"]
+            existing = await db.videos.count_documents({"hentai_season_id": hentai_season_id})
+            hentai_series_position = existing + 1
+        is_tv = bool(payload.get("is_tv", False)) and not is_short and not is_anime and not is_hentai
+        tv_season_id = payload.get("tv_season_id") if is_tv else None
+        tv_series_id = payload.get("tv_series_id") if is_tv else None
+        tv_series_position = None
+        if is_tv and tv_season_id:
+            se = await db.tv_seasons.find_one({"id": tv_season_id}, {"_id": 0})
+            if not se:
+                raise HTTPException(400, "tv_season_id doesn't exist")
+            tv_series_id = se["series_id"]
+            existing = await db.videos.count_documents({"tv_season_id": tv_season_id})
+            tv_series_position = existing + 1
+        is_film_rosub = bool(payload.get("is_film_rosub", False)) and not is_short and not is_anime and not is_hentai and not is_tv
         film_category_ids: List[str] = []
         if is_film_rosub:
             raw_fcids = payload.get("film_category_ids") or []
@@ -2180,6 +2902,14 @@ async def upload_video_finish(
             anime_series_id=anime_series_id,
             anime_season_id=anime_season_id,
             anime_series_position=anime_series_position,
+            is_hentai=is_hentai,
+            hentai_series_id=hentai_series_id,
+            hentai_season_id=hentai_season_id,
+            hentai_series_position=hentai_series_position,
+            is_tv=is_tv,
+            tv_series_id=tv_series_id,
+            tv_season_id=tv_season_id,
+            tv_series_position=tv_series_position,
             is_film_rosub=is_film_rosub,
             film_category_ids=film_category_ids,
             original_filename=state.get("filename") or "",
@@ -2287,6 +3017,16 @@ async def update_video(
             if not se:
                 raise HTTPException(400, "anime_season_id doesn't exist")
             upd["anime_series_id"] = se["series_id"]
+        if "hentai_season_id" in upd and upd["hentai_season_id"]:
+            se = await db.hentai_seasons.find_one({"id": upd["hentai_season_id"]}, {"_id": 0})
+            if not se:
+                raise HTTPException(400, "hentai_season_id doesn't exist")
+            upd["hentai_series_id"] = se["series_id"]
+        if "tv_season_id" in upd and upd["tv_season_id"]:
+            se = await db.tv_seasons.find_one({"id": upd["tv_season_id"]}, {"_id": 0})
+            if not se:
+                raise HTTPException(400, "tv_season_id doesn't exist")
+            upd["tv_series_id"] = se["series_id"]
         # Subtitles update is reorder-only: caller may rearrange existing entries
         # but cannot inject new ones or alter URLs (those go through the dedicated
         # POST endpoint that performs ffmpeg conversion + storage upload).
