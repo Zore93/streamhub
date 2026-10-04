@@ -1,10 +1,13 @@
 """FFmpeg transcoding & thumbnail generation."""
 import asyncio
 import json
+import logging
 import os
 import re
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
+
+logger = logging.getLogger(__name__)
 
 RESOLUTIONS: Dict[str, Tuple[int, int]] = {
     "360p": (640, 360),
@@ -338,30 +341,66 @@ async def transcode_to_resolution(
     target_resolution: str,
 ) -> bool:
     """Transcodes input video to a specific resolution in mp4 (H.264 + AAC).
-    Returns True on success."""
+    Returns True on success.
+
+    Strategy: encode into a /tmp staging file first (large videos + multiple
+    renditions can easily blow past the small UPLOAD_DIR volume on cloud
+    pods — /tmp is usually the bigger overlayfs). We `shutil.move` to the
+    final path on success. This fixes the bug where >5GB sources would
+    silently skip 1080p/1440p/2160p renditions because ffmpeg returned
+    ENOSPC on UPLOAD_DIR.
+    """
     if target_resolution not in RESOLUTIONS:
         return False
     w, h = RESOLUTIONS[target_resolution]
     # scale keeping aspect with -2 then pad? simplest: scale width to w, height adjusted to even
     vf = f"scale='if(gt(a,{w}/{h}),{w},-2)':'if(gt(a,{w}/{h}),-2,{h})'"
     Path(os.path.dirname(output_path)).mkdir(parents=True, exist_ok=True)
-    proc = await asyncio.create_subprocess_exec(
-        "ffmpeg",
-        "-y",
-        "-i", input_path,
-        "-vf", vf,
-        "-c:v", "libx264",
-        "-preset", "veryfast",
-        "-crf", "23",
-        "-c:a", "aac",
-        "-b:a", "128k",
-        "-movflags", "+faststart",
-        output_path,
-        stdout=asyncio.subprocess.DEVNULL,
-        stderr=asyncio.subprocess.PIPE,
+    # Stage ffmpeg output to /tmp so we don't exhaust UPLOAD_DIR mid-encode
+    import tempfile
+    tmp_fd, tmp_name = tempfile.mkstemp(
+        suffix=f"_{target_resolution}.mp4", prefix=f"rend_",
     )
-    _, err = await proc.communicate()
-    return proc.returncode == 0 and os.path.exists(output_path)
+    os.close(tmp_fd)
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "ffmpeg",
+            "-y",
+            "-v", "error",  # drop frame-by-frame progress to avoid PIPE buffer growth
+            "-nostats",
+            "-i", input_path,
+            "-vf", vf,
+            "-c:v", "libx264",
+            "-preset", "veryfast",
+            "-crf", "23",
+            "-c:a", "aac",
+            "-b:a", "128k",
+            "-movflags", "+faststart",
+            tmp_name,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        _, err = await proc.communicate()
+        if proc.returncode != 0 or not os.path.exists(tmp_name) or os.path.getsize(tmp_name) == 0:
+            # Surface the ffmpeg failure so operators can see WHY a rendition
+            # didn't materialise (previously these failures were swallowed and
+            # the video just ended up without the higher-resolution output).
+            tail = (err or b"").decode("utf-8", errors="ignore")[-2000:]
+            logger.warning(
+                "ffmpeg failed for %s → %s (rc=%s). stderr tail:\n%s",
+                target_resolution, output_path, proc.returncode, tail,
+            )
+            try: os.remove(tmp_name)
+            except Exception: pass
+            return False
+        import shutil as _shutil
+        _shutil.move(tmp_name, output_path)
+        return os.path.exists(output_path)
+    except Exception as e:  # noqa: BLE001
+        logger.exception("transcode_to_resolution crashed: %s", e)
+        try: os.remove(tmp_name)
+        except Exception: pass
+        return False
 
 
 def filter_resolutions_for_source(
