@@ -2283,15 +2283,16 @@ async def list_videos(
     else:
         # Default (no explicit ask): hide anime from generic listings.
         filt["is_anime"] = {"$ne": True}
-    # Hentai: include when explicitly requested OR in the Popular/Discover
-    # sections (so hentai episodes appear mixed with normal videos there).
+    # Hentai: include when explicitly requested, when a specific category is
+    # requested (so hentai episodes show up in sidebar category pages), OR in
+    # the Popular/Discover sections (mixed with regular videos).
     # TV default: hidden from generic listings (same policy as anime).
     if is_hentai is True:
         filt["is_hentai"] = True
     elif is_hentai is False:
         filt["is_hentai"] = {"$ne": True}
-    elif section in ("popular", "random"):
-        pass  # allow hentai to appear in Popular/Discover mixes
+    elif section in ("popular", "random") or category_id or category_ids:
+        pass  # allow hentai in Popular/Discover + category listings
     else:
         filt["is_hentai"] = {"$ne": True}
     filt["is_tv"] = {"$ne": True}
@@ -2394,8 +2395,8 @@ async def count_videos(
         filt["is_hentai"] = True
     elif is_hentai is False:
         filt["is_hentai"] = {"$ne": True}
-    elif section in ("popular", "random"):
-        pass  # allow hentai in Popular/Discover counts to match listing
+    elif section in ("popular", "random") or category_id or category_ids:
+        pass  # allow hentai in Popular/Discover + category counts
     else:
         filt["is_hentai"] = {"$ne": True}
     filt["is_tv"] = {"$ne": True}
