@@ -910,7 +910,7 @@ async def list_shorts_series(category: Optional[str] = None):
         else:
             filt["category"] = "drama"
     docs = await db.shorts_series.find(filt, {"_id": 0}) \
-        .sort([("sort_order", 1), ("name", 1)]).to_list(200)
+        .sort([("sort_order", 1), ("name", 1)]).to_list(5000)
     for d in docs:
         d["episode_count"] = await db.videos.count_documents({
             "shorts_series_id": d["id"], "status": "ready",
@@ -929,7 +929,7 @@ async def list_all_shorts_series(category: Optional[str] = None, admin: dict = D
         else:
             filt["category"] = "drama"
     docs = await db.shorts_series.find(filt, {"_id": 0}) \
-        .sort([("sort_order", 1), ("name", 1)]).to_list(500)
+        .sort([("sort_order", 1), ("name", 1)]).to_list(5000)
     for d in docs:
         d["episode_count"] = await db.videos.count_documents({"shorts_series_id": d["id"]})
         d.setdefault("category", "xxx")
@@ -1064,7 +1064,7 @@ async def reorder_shorts_series(series_id: str, payload: dict, admin: dict = Dep
 @api.get("/anime-series")
 async def list_anime_series():
     docs = await db.anime_series.find({"active": True}, {"_id": 0}) \
-        .sort([("sort_order", 1), ("name", 1)]).to_list(200)
+        .sort([("sort_order", 1), ("name", 1)]).to_list(5000)
     for d in docs:
         d["episode_count"] = await db.videos.count_documents({
             "anime_series_id": d["id"], "status": "ready",
@@ -1075,7 +1075,7 @@ async def list_anime_series():
 @api.get("/anime-series/all")
 async def list_all_anime_series(admin: dict = Depends(require_admin)):
     docs = await db.anime_series.find({}, {"_id": 0}) \
-        .sort([("sort_order", 1), ("name", 1)]).to_list(500)
+        .sort([("sort_order", 1), ("name", 1)]).to_list(5000)
     for d in docs:
         d["episode_count"] = await db.videos.count_documents({"anime_series_id": d["id"]})
     return docs
@@ -1409,7 +1409,7 @@ async def upload_anime_series_cover(
 @api.get("/hentai-series")
 async def list_hentai_series():
     docs = await db.hentai_series.find({"active": True}, {"_id": 0}) \
-        .sort([("sort_order", 1), ("name", 1)]).to_list(200)
+        .sort([("sort_order", 1), ("name", 1)]).to_list(5000)
     for d in docs:
         d["episode_count"] = await db.videos.count_documents({
             "hentai_series_id": d["id"], "status": "ready",
@@ -1420,7 +1420,7 @@ async def list_hentai_series():
 @api.get("/hentai-series/all")
 async def list_all_hentai_series(admin: dict = Depends(require_admin)):
     docs = await db.hentai_series.find({}, {"_id": 0}) \
-        .sort([("sort_order", 1), ("name", 1)]).to_list(500)
+        .sort([("sort_order", 1), ("name", 1)]).to_list(5000)
     for d in docs:
         d["episode_count"] = await db.videos.count_documents({"hentai_series_id": d["id"]})
     return docs
@@ -1754,7 +1754,7 @@ async def upload_hentai_series_cover(
 @api.get("/tv-series")
 async def list_tv_series():
     docs = await db.tv_series.find({"active": True}, {"_id": 0}) \
-        .sort([("sort_order", 1), ("name", 1)]).to_list(200)
+        .sort([("sort_order", 1), ("name", 1)]).to_list(5000)
     for d in docs:
         d["episode_count"] = await db.videos.count_documents({
             "tv_series_id": d["id"], "status": "ready",
@@ -1765,7 +1765,7 @@ async def list_tv_series():
 @api.get("/tv-series/all")
 async def list_all_tv_series(admin: dict = Depends(require_admin)):
     docs = await db.tv_series.find({}, {"_id": 0}) \
-        .sort([("sort_order", 1), ("name", 1)]).to_list(500)
+        .sort([("sort_order", 1), ("name", 1)]).to_list(5000)
     for d in docs:
         d["episode_count"] = await db.videos.count_documents({"tv_series_id": d["id"]})
     return docs
