@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import api, { mediaUrl } from "@/lib/api";
 import Pagination from "@/components/Pagination";
@@ -24,6 +24,50 @@ const BAN_OPTIONS = [
   { v: "permanent", l: "Permanent" }, { v: "custom", l: "Custom (days)" },
 ];
 
+const ADMIN_SERIES_PAGE_SIZE = 100;
+
+/** Simple client-side pagination for a loaded admin list.
+ *  Returns the current page's slice + pagination controls state. */
+function useLocalPagination(list, pageSize = ADMIN_SERIES_PAGE_SIZE) {
+  const [page, setPage] = useState(1);
+  const totalPages = Math.max(1, Math.ceil((list?.length || 0) / pageSize));
+  useEffect(() => { if (page > totalPages) setPage(1); }, [totalPages, page]);
+  const pageItems = (list || []).slice((page - 1) * pageSize, page * pageSize);
+  return { pageItems, page, setPage, totalPages };
+}
+
+/** Case-insensitive filter of a series list by its `name` field. */
+function useNameSearch(list) {
+  const [query, setQuery] = useState("");
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return list || [];
+    return (list || []).filter((s) => (s?.name || "").toLowerCase().includes(q));
+  }, [list, query]);
+  return { query, setQuery, filtered };
+}
+
+/** Shadcn Input with magnifier icon used in admin tabs to filter the series list. */
+function AdminSearchBar({ value, onChange, placeholder, testId, resultsCount, totalCount }) {
+  return (
+    <div className="relative" data-testid={`${testId}-wrap`}>
+      <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none" />
+      <Input
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        className="bg-zinc-950 border-zinc-800 pl-10 pr-24 h-10"
+        data-testid={testId}
+      />
+      {value && (
+        <div className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-zinc-500">
+          {resultsCount}/{totalCount}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function Admin() {
   const { user } = useAuth();
   if (!user || user.role !== "admin") return <div className="text-zinc-400">Admin access required.</div>;
@@ -47,6 +91,7 @@ export default function Admin() {
           <TabsTrigger value="frames" data-testid="tab-frames">Cadre Avatar</TabsTrigger>
           <TabsTrigger value="announcements" data-testid="tab-announcements">Announcements</TabsTrigger>
           <TabsTrigger value="chat" data-testid="tab-chat">Live Chat</TabsTrigger>
+          <TabsTrigger value="reports" data-testid="tab-reports">Rapoarte</TabsTrigger>
           <TabsTrigger value="seo" data-testid="tab-seo">SEO</TabsTrigger>
           <TabsTrigger value="settings" data-testid="tab-settings">Settings</TabsTrigger>
         </TabsList>
@@ -65,6 +110,7 @@ export default function Admin() {
         <TabsContent value="frames"><FramesTab /></TabsContent>
         <TabsContent value="announcements"><AnnouncementsTab /></TabsContent>
         <TabsContent value="chat"><ChatModerationTab /></TabsContent>
+        <TabsContent value="reports"><ReportsTab /></TabsContent>
         <TabsContent value="seo"><SEODashboardTab /></TabsContent>
         <TabsContent value="settings"><SettingsTab /></TabsContent>
       </Tabs>
@@ -658,6 +704,8 @@ function ShortsSeriesTab({ category = "xxx" }) {
   const [form, setForm] = useState({ name: "", slug: "", description: "", tags: "", active: true });
   const [coverFile, setCoverFile] = useState(null);
   const [busy, setBusy] = useState(false);
+  const { query, setQuery, filtered } = useNameSearch(list);
+  const { pageItems, page, setPage, totalPages } = useLocalPagination(filtered);
   const load = () => api.get(`/shorts-series/all?category=${category}`).then((r) => setList(r.data));
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [category]);
 
@@ -779,7 +827,17 @@ function ShortsSeriesTab({ category = "xxx" }) {
           </Button>
         </div>
       </div>
-      {list.map((s) => (
+      {list.length > 0 && (
+        <AdminSearchBar
+          value={query}
+          onChange={setQuery}
+          placeholder={`Caută serie ${label} după nume…`}
+          testId={`search-shorts-${category}`}
+          resultsCount={filtered.length}
+          totalCount={list.length}
+        />
+      )}
+      {pageItems.map((s) => (
         <div key={s.id} className="bg-zinc-900 border border-zinc-800 rounded-xl p-4" data-testid={`series-row-${s.id}`}>
           <div className="flex gap-4">
             <div className="w-16 shrink-0">
@@ -845,6 +903,7 @@ function ShortsSeriesTab({ category = "xxx" }) {
           Nu există serii Shorts. Creează prima mai sus.
         </p>
       )}
+      <Pagination currentPage={page} totalPages={totalPages} onPageChange={setPage} />
     </div>
   );
 }
@@ -2479,6 +2538,8 @@ function AnimeSeriesTab() {
   const [coverFile, setCoverFile] = useState(null);
   const [busy, setBusy] = useState(false);
   const [expanded, setExpanded] = useState({}); // seriesId → bool
+  const { query, setQuery, filtered } = useNameSearch(list);
+  const { pageItems, page, setPage, totalPages } = useLocalPagination(filtered);
   const load = () => api.get("/anime-series/all").then((r) => setList(r.data));
   useEffect(() => { load(); }, []);
   const create = async () => {
@@ -2539,7 +2600,17 @@ function AnimeSeriesTab() {
           <Button onClick={create} disabled={busy} className="ml-auto pro-gradient text-white border-0" data-testid="new-anime-btn">{busy ? "Se creează…" : "Adaugă serie Anime"}</Button>
         </div>
       </div>
-      {list.map((s) => (
+      {list.length > 0 && (
+        <AdminSearchBar
+          value={query}
+          onChange={setQuery}
+          placeholder="Caută serie Anime după nume…"
+          testId="search-anime-series"
+          resultsCount={filtered.length}
+          totalCount={list.length}
+        />
+      )}
+      {pageItems.map((s) => (
         <div key={s.id} className="bg-zinc-900 border border-zinc-800 rounded-xl p-4" data-testid={`anime-row-${s.id}`}>
           <div className="flex gap-4">
             {s.cover_thumbnail ? <img src={s.cover_thumbnail} alt="" className="w-16 aspect-[2/3] object-cover rounded border border-zinc-800 shrink-0" /> : <div className="w-16 aspect-[2/3] rounded border border-dashed border-zinc-700 shrink-0" />}
@@ -2563,6 +2634,7 @@ function AnimeSeriesTab() {
         </div>
       ))}
       {list.length === 0 && <p className="text-sm text-zinc-500 text-center py-6">Nu există serii Anime. Creează prima mai sus.</p>}
+      <Pagination currentPage={page} totalPages={totalPages} onPageChange={setPage} />
     </div>
   );
 }
@@ -2720,6 +2792,8 @@ function HentaiSeriesTab() {
   const [coverFile, setCoverFile] = useState(null);
   const [busy, setBusy] = useState(false);
   const [expanded, setExpanded] = useState({}); // seriesId → bool
+  const { query, setQuery, filtered } = useNameSearch(list);
+  const { pageItems, page, setPage, totalPages } = useLocalPagination(filtered);
   const load = () => api.get("/hentai-series/all").then((r) => setList(r.data));
   useEffect(() => { load(); }, []);
   const create = async () => {
@@ -2780,7 +2854,17 @@ function HentaiSeriesTab() {
           <Button onClick={create} disabled={busy} className="ml-auto pro-gradient text-white border-0" data-testid="new-hentai-btn">{busy ? "Se creează…" : "Adaugă serie Hentai RoSub"}</Button>
         </div>
       </div>
-      {list.map((s) => (
+      {list.length > 0 && (
+        <AdminSearchBar
+          value={query}
+          onChange={setQuery}
+          placeholder="Caută serie Hentai RoSub după nume…"
+          testId="search-hentai-series"
+          resultsCount={filtered.length}
+          totalCount={list.length}
+        />
+      )}
+      {pageItems.map((s) => (
         <div key={s.id} className="bg-zinc-900 border border-zinc-800 rounded-xl p-4" data-testid={`hentai-row-${s.id}`}>
           <div className="flex gap-4">
             {s.cover_thumbnail ? <img src={s.cover_thumbnail} alt="" className="w-16 aspect-[2/3] object-cover rounded border border-zinc-800 shrink-0" /> : <div className="w-16 aspect-[2/3] rounded border border-dashed border-zinc-700 shrink-0" />}
@@ -2804,6 +2888,7 @@ function HentaiSeriesTab() {
         </div>
       ))}
       {list.length === 0 && <p className="text-sm text-zinc-500 text-center py-6">Nu există serii Anime. Creează prima mai sus.</p>}
+      <Pagination currentPage={page} totalPages={totalPages} onPageChange={setPage} />
     </div>
   );
 }
@@ -2957,6 +3042,8 @@ function TvSeriesTab() {
   const [coverFile, setCoverFile] = useState(null);
   const [busy, setBusy] = useState(false);
   const [expanded, setExpanded] = useState({}); // seriesId → bool
+  const { query, setQuery, filtered } = useNameSearch(list);
+  const { pageItems, page, setPage, totalPages } = useLocalPagination(filtered);
   const load = () => api.get("/tv-series/all").then((r) => setList(r.data));
   useEffect(() => { load(); }, []);
   const create = async () => {
@@ -3017,7 +3104,17 @@ function TvSeriesTab() {
           <Button onClick={create} disabled={busy} className="ml-auto pro-gradient text-white border-0" data-testid="new-tv-btn">{busy ? "Se creează…" : "Adaugă serie Seriale TV"}</Button>
         </div>
       </div>
-      {list.map((s) => (
+      {list.length > 0 && (
+        <AdminSearchBar
+          value={query}
+          onChange={setQuery}
+          placeholder="Caută Serial TV după nume…"
+          testId="search-tv-series"
+          resultsCount={filtered.length}
+          totalCount={list.length}
+        />
+      )}
+      {pageItems.map((s) => (
         <div key={s.id} className="bg-zinc-900 border border-zinc-800 rounded-xl p-4" data-testid={`tv-row-${s.id}`}>
           <div className="flex gap-4">
             {s.cover_thumbnail ? <img src={s.cover_thumbnail} alt="" className="w-16 aspect-[2/3] object-cover rounded border border-zinc-800 shrink-0" /> : <div className="w-16 aspect-[2/3] rounded border border-dashed border-zinc-700 shrink-0" />}
@@ -3041,6 +3138,7 @@ function TvSeriesTab() {
         </div>
       ))}
       {list.length === 0 && <p className="text-sm text-zinc-500 text-center py-6">Nu există serii Anime. Creează prima mai sus.</p>}
+      <Pagination currentPage={page} totalPages={totalPages} onPageChange={setPage} />
     </div>
   );
 }
@@ -3193,6 +3291,7 @@ function FilmCategoriesTab() {
   const [list, setList] = useState([]);
   const [form, setForm] = useState({ name: "", slug: "", description: "", active: true });
   const [busy, setBusy] = useState(false);
+  const { pageItems, page, setPage, totalPages } = useLocalPagination(list);
   const load = () => api.get("/film-categories/all").then((r) => setList(r.data)).catch(() => setList([]));
   useEffect(() => { load(); }, []);
   const create = async () => {
@@ -3236,7 +3335,7 @@ function FilmCategoriesTab() {
           </Button>
         </div>
       </div>
-      {list.map((c) => (
+      {pageItems.map((c) => (
         <div key={c.id} className="bg-zinc-900 border border-zinc-800 rounded-xl p-3 flex items-center gap-3" data-testid={`filmcat-row-${c.id}`}>
           <div className="flex-1 min-w-0">
             <div className="font-semibold text-zinc-100 truncate">{c.name}</div>
@@ -3257,6 +3356,99 @@ function FilmCategoriesTab() {
         </div>
       ))}
       {list.length === 0 && <p className="text-sm text-zinc-500 text-center py-6">Nu există categorii de filme. Creează prima mai sus.</p>}
+      <Pagination currentPage={page} totalPages={totalPages} onPageChange={setPage} />
+    </div>
+  );
+}
+
+
+// ─── REPORTS TAB ─────────────────────────────────────────────────────────────
+function ReportsTab() {
+  const [list, setList] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const { pageItems, page, setPage, totalPages } = useLocalPagination(list, 50);
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const { data } = await api.get("/admin/reports");
+      setList(data);
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Eroare la încărcare");
+    } finally {
+      setLoading(false);
+    }
+  };
+  useEffect(() => { load(); }, []);
+
+  const del = async (r) => {
+    if (!window.confirm("Ștergi acest raport?")) return;
+    try {
+      await api.delete(`/admin/reports/${r.id}`);
+      setList((prev) => prev.filter((x) => x.id !== r.id));
+      toast.success("Raport șters");
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Eroare");
+    }
+  };
+
+  const fmtDate = (iso) => {
+    try { return new Date(iso).toLocaleString("ro-RO"); } catch { return iso; }
+  };
+
+  return (
+    <div className="mt-6 space-y-3" data-testid="admin-reports">
+      <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4 flex items-center justify-between">
+        <div>
+          <div className="font-semibold text-zinc-100">Rapoarte episoade</div>
+          <div className="text-xs text-zinc-500">{list.length} rapoarte deschise</div>
+        </div>
+        <Button onClick={load} variant="outline" size="sm" className="border-zinc-700" data-testid="reports-refresh">
+          <RefreshCw size={14} className="mr-1" /> Reîncarcă
+        </Button>
+      </div>
+
+      {loading ? (
+        <p className="text-sm text-zinc-500 text-center py-6">Se încarcă…</p>
+      ) : list.length === 0 ? (
+        <p className="text-sm text-zinc-500 text-center py-6" data-testid="reports-empty">Nu există rapoarte momentan.</p>
+      ) : (
+        pageItems.map((r) => (
+          <div key={r.id} className="bg-zinc-900 border border-zinc-800 rounded-xl p-4" data-testid={`report-row-${r.id}`}>
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0 flex-1">
+                <Link
+                  to={`/watch/${r.video_slug || r.video_id}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="font-semibold text-zinc-100 hover:text-rose-300 inline-flex items-center gap-1.5"
+                  data-testid={`report-video-${r.id}`}
+                >
+                  {r.video_title || r.video_id}
+                  <ExternalLink size={12} className="text-zinc-500" />
+                </Link>
+                <div className="text-xs text-zinc-500 mt-0.5">
+                  {fmtDate(r.created_at)}
+                  {r.reporter_username ? ` · @${r.reporter_username}` : " · Guest"}
+                </div>
+                <div className="mt-2 bg-zinc-950 border border-zinc-800 rounded p-3 text-sm text-zinc-200 whitespace-pre-line">
+                  {r.reason}
+                </div>
+              </div>
+              <Button
+                size="sm"
+                variant="destructive"
+                onClick={() => del(r)}
+                data-testid={`report-del-${r.id}`}
+              >
+                <Trash2 size={14} />
+              </Button>
+            </div>
+          </div>
+        ))
+      )}
+
+      <Pagination currentPage={page} totalPages={totalPages} onPageChange={setPage} />
     </div>
   );
 }

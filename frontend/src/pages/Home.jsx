@@ -204,7 +204,7 @@ export default function Home() {
           title={t("home.lastHentaiEpisodes") || "Ultimele episoade hentai adăugate"}
           Icon={Clock}
           videos={hentaiEpisodes}
-          seeMoreTo="/hentai"
+          seeMoreTo="/hentai/all"
           testId="section-hentai-latest"
           seeMoreLabel={seeMore}
         />

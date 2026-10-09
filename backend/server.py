@@ -86,6 +86,8 @@ from models import (
     UserPublic,
     Video,
     VideoRendition,
+    VideoReport,
+    VideoReportCreateReq,
     VideoUpdateReq,
     new_id,
     now_iso,
@@ -3110,6 +3112,50 @@ async def delete_video(video_id: str, user: dict = Depends(require_user)):
                 pass
     await db.videos.delete_one({"id": vid})
     await db.comments.delete_many({"video_id": vid})
+    await db.video_reports.delete_many({"video_id": vid})
+    return {"ok": True}
+
+
+# ============ VIDEO REPORTS ============
+@api.post("/videos/{video_id}/report")
+async def create_video_report(
+    video_id: str,
+    req: VideoReportCreateReq,
+    user: Optional[dict] = Depends(current_user),
+):
+    """Anyone can submit a report. Admin reviews from the Rapoarte tab."""
+    reason = (req.reason or "").strip()
+    if not reason:
+        raise HTTPException(400, "Motivul este obligatoriu")
+    if len(reason) > 2000:
+        reason = reason[:2000]
+    v = await find_video_by_id_or_slug(video_id)
+    if not v:
+        raise HTTPException(404, "Episod inexistent")
+    report = VideoReport(
+        video_id=v["id"],
+        video_title=v.get("title") or "",
+        video_slug=v.get("slug"),
+        reason=reason,
+        reporter_user_id=(user or {}).get("id"),
+        reporter_username=(user or {}).get("username"),
+    )
+    await db.video_reports.insert_one(report.model_dump())
+    return {"ok": True, "id": report.id}
+
+
+@api.get("/admin/reports")
+async def admin_list_reports(admin: dict = Depends(require_admin)):
+    """List all open reports (newest first)."""
+    docs = await db.video_reports.find({}, {"_id": 0}).sort("created_at", -1).to_list(5000)
+    return docs
+
+
+@api.delete("/admin/reports/{report_id}")
+async def admin_delete_report(report_id: str, admin: dict = Depends(require_admin)):
+    r = await db.video_reports.delete_one({"id": report_id})
+    if r.deleted_count == 0:
+        raise HTTPException(404, "Report not found")
     return {"ok": True}
 
 

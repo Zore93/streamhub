@@ -7,11 +7,12 @@ import { categoryLabel } from "@/i18n";
 import { Layout } from "@/layout/Layout";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { Eye, Crown, Lock, Send, Trash2, Loader2, ThumbsUp, Folder, Coins } from "lucide-react";
+import { Eye, Crown, Lock, Send, Trash2, Loader2, ThumbsUp, Folder, Coins, Flag } from "lucide-react";
 import { toast } from "sonner";
 import VideoPlayer from "@/components/VideoPlayer";
 import FramedAvatar from "@/components/FramedAvatar";
 import { Progress } from "@/components/ui/progress";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 
 export default function Watch() {
   const { id } = useParams();
@@ -232,6 +233,26 @@ export default function Watch() {
     setComments(comments.filter((c) => c.id !== cid));
   };
 
+  // Report dialog state
+  const [reportOpen, setReportOpen] = useState(false);
+  const [reportReason, setReportReason] = useState("");
+  const [reportBusy, setReportBusy] = useState(false);
+  const submitReport = async () => {
+    const reason = reportReason.trim();
+    if (!reason) return toast.error(t("report.reasonRequired") || "Scrie motivul");
+    setReportBusy(true);
+    try {
+      await api.post(`/videos/${id}/report`, { reason });
+      toast.success(t("report.sent") || "Raport trimis. Mulțumim!");
+      setReportOpen(false);
+      setReportReason("");
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Eroare");
+    } finally {
+      setReportBusy(false);
+    }
+  };
+
   if (!video) return <Layout><div className="text-zinc-500">{t("page.loading")}</div></Layout>;
 
   const isVipVideo = video.access_tier === "vip";
@@ -378,6 +399,14 @@ export default function Watch() {
             <span>{video.likes?.length || 0}</span>
           </button>
           <span className="text-zinc-500 text-sm flex items-center gap-1.5"><Eye size={14} /> {video.views} {t("video.views")}</span>
+          <button
+            onClick={() => setReportOpen(true)}
+            className="inline-flex items-center gap-1.5 text-sm text-zinc-400 hover:text-rose-400 transition-colors"
+            data-testid="report-btn"
+            type="button"
+          >
+            <Flag size={14} /> {t("report.button") || "Report"}
+          </button>
           {/* Uploader — opens profile in a new tab on Ctrl/Cmd+click; users can also right-click → "open in new tab". */}
           <a
             href={`/profile/${video.uploader_id}`}
@@ -488,6 +517,52 @@ export default function Watch() {
           </div>
         </div>
       </div>
+
+      <Dialog open={reportOpen} onOpenChange={(o) => { if (!reportBusy) setReportOpen(o); }}>
+        <DialogContent className="bg-zinc-950 border-zinc-800 text-zinc-100" data-testid="report-dialog">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-lg">
+              <Flag size={18} className="text-rose-500" />
+              {t("report.title") || "Raportează episodul"}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="text-sm text-zinc-400">
+              <span className="text-zinc-500">{t("report.episode") || "Episod"}: </span>
+              <span className="text-zinc-200 font-medium">{video?.title}</span>
+            </div>
+            <Textarea
+              value={reportReason}
+              onChange={(e) => setReportReason(e.target.value)}
+              placeholder={t("report.placeholder") || "Descrie motivul (link rupt, conținut neadecvat, duplicat, etc.)…"}
+              maxLength={2000}
+              rows={5}
+              className="bg-zinc-900 border-zinc-800"
+              data-testid="report-reason"
+            />
+            <div className="text-xs text-zinc-500 text-right">{reportReason.length}/2000</div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="ghost"
+              onClick={() => setReportOpen(false)}
+              disabled={reportBusy}
+              className="text-zinc-300 hover:bg-zinc-800"
+              data-testid="report-cancel"
+            >
+              {t("common.cancel") || "Anulează"}
+            </Button>
+            <Button
+              onClick={submitReport}
+              disabled={reportBusy || !reportReason.trim()}
+              className="pro-gradient text-white border-0"
+              data-testid="report-submit"
+            >
+              {reportBusy ? (<><Loader2 size={14} className="animate-spin mr-1" /> {t("report.sending") || "Se trimite…"}</>) : (t("report.submit") || "Trimite")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Layout>
   );
 }

@@ -197,6 +197,22 @@ class VideoUpdateReq(BaseModel):
     subtitles: Optional[List[dict]] = None  # allow reordering (set default) only — items must already exist
 
 
+# ============ VIDEO REPORTS ============
+class VideoReport(BaseModel):
+    id: str = Field(default_factory=new_id)
+    video_id: str
+    video_title: str = ""  # denormalized at write time
+    video_slug: Optional[str] = None  # denormalized for admin links
+    reason: str
+    reporter_user_id: Optional[str] = None
+    reporter_username: Optional[str] = None
+    created_at: str = Field(default_factory=now_iso)
+
+
+class VideoReportCreateReq(BaseModel):
+    reason: str
+
+
 # ============ SHORTS SERIES ============
 class ShortsSeries(BaseModel):
     id: str = Field(default_factory=new_id)

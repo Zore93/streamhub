@@ -36,6 +36,8 @@ export default function VideoList({ variant, shortsCategory }) {
       }
       case "anime":
         return { section: "latest", kind: "video", titleKey: "page.anime", Icon: ListVideo, base: "/anime/all", isAnime: true };
+      case "hentai":
+        return { section: "latest", kind: "video", titleKey: "page.hentaiAll", Icon: ListVideo, base: "/hentai/all", isHentai: true };
       default:
         return { section: "latest", kind: "video", titleKey: "page.popular", Icon: Flame, base: "/popular" };
     }
@@ -80,6 +82,9 @@ export default function VideoList({ variant, shortsCategory }) {
     }
     if (cfg.isAnime) {
       p.set("is_anime", "true");
+    }
+    if (cfg.isHentai) {
+      p.set("is_hentai", "true");
     }
     if (showFilterUI) {
       if (debouncedSearch) p.set("q", debouncedSearch);

@@ -64,6 +64,8 @@ function App() {
               <Route path="/anime/series/:slug" element={<AnimeSeriesDetail />} />
               <Route path="/anime/series/:seriesSlug/:seasonSlug" element={<AnimeSeasonDetail />} />
               <Route path="/hentai" element={<VerticalSeriesPage apiBase="/hentai-series" basePath="/hentai" title="Hentai RoSub" testIdPrefix="hentai" seasonFieldKey="hentai_season_id" />} />
+              <Route path="/hentai/all" element={<VideoList variant="hentai" />} />
+              <Route path="/hentai/all/page/:page" element={<VideoList variant="hentai" />} />
               <Route path="/hentai/series/:slug" element={<HentaiSeriesDetail />} />
               <Route path="/hentai/series/:seriesSlug/:seasonSlug" element={<HentaiSeasonDetail />} />
               <Route path="/seriale-tv" element={<VerticalSeriesPage apiBase="/tv-series" basePath="/seriale-tv" title="Seriale TV" testIdPrefix="tv" seasonFieldKey="tv_season_id" />} />
