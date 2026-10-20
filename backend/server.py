@@ -962,7 +962,7 @@ async def create_shorts_series(payload: dict, admin: dict = Depends(require_admi
     name = (payload.get("name") or "").strip()
     if not name:
         raise HTTPException(400, "name required")
-    slug = (payload.get("slug") or slugify(name)).strip() or slugify(name)
+    slug = slugify(payload.get("slug") or name)
     if await db.shorts_series.find_one({"slug": slug}):
         raise HTTPException(400, "A series with this slug already exists")
     cat = (payload.get("category") or "xxx").lower()
@@ -992,7 +992,7 @@ async def update_shorts_series(series_id: str, payload: dict, admin: dict = Depe
         return {"ok": True}
     # If slug changed, ensure uniqueness
     if "slug" in upd:
-        upd["slug"] = (upd["slug"] or "").strip()
+        upd["slug"] = slugify(upd["slug"] or "")
         clash = await db.shorts_series.find_one({"slug": upd["slug"], "id": {"$ne": series_id}})
         if clash:
             raise HTTPException(400, "Another series already uses this slug")
@@ -1158,7 +1158,7 @@ async def create_anime_season(series_id: str, payload: dict, admin: dict = Depen
     if season_type not in {"season", "ova", "movie", "special"}:
         season_type = "season"
     number = int(payload.get("number") or 1)
-    slug_in = (payload.get("slug") or "").strip()
+    slug_in = slugify(payload["slug"]) if (payload.get("slug") or "").strip() else ""
     if not slug_in:
         if season_type == "season":
             slug_in = f"s{number:02d}"
@@ -1264,7 +1264,7 @@ async def update_anime_season(season_id: str, payload: dict, admin: dict = Depen
         if upd["season_type"] not in {"season", "ova", "movie", "special"}:
             upd["season_type"] = "season"
     if "slug" in upd:
-        upd["slug"] = (upd["slug"] or "").strip()
+        upd["slug"] = slugify(upd["slug"] or "")
         clash = await db.anime_seasons.find_one({
             "series_id": se["series_id"],
             "slug": upd["slug"],
@@ -1326,7 +1326,7 @@ async def create_anime_series(payload: dict, admin: dict = Depends(require_admin
     name = (payload.get("name") or "").strip()
     if not name:
         raise HTTPException(400, "name required")
-    slug = (payload.get("slug") or slugify(name)).strip() or slugify(name)
+    slug = slugify(payload.get("slug") or name)
     if await db.anime_series.find_one({"slug": slug}):
         raise HTTPException(400, "A series with this slug already exists")
     s = AnimeSeries(
@@ -1348,7 +1348,7 @@ async def update_anime_series(series_id: str, payload: dict, admin: dict = Depen
     if not upd:
         return {"ok": True}
     if "slug" in upd:
-        upd["slug"] = (upd["slug"] or "").strip()
+        upd["slug"] = slugify(upd["slug"] or "")
         clash = await db.anime_series.find_one({"slug": upd["slug"], "id": {"$ne": series_id}})
         if clash:
             raise HTTPException(400, "Another series already uses this slug")
@@ -1503,7 +1503,7 @@ async def create_hentai_season(series_id: str, payload: dict, admin: dict = Depe
     if season_type not in {"season", "ova", "movie", "special"}:
         season_type = "season"
     number = int(payload.get("number") or 1)
-    slug_in = (payload.get("slug") or "").strip()
+    slug_in = slugify(payload["slug"]) if (payload.get("slug") or "").strip() else ""
     if not slug_in:
         if season_type == "season":
             slug_in = f"s{number:02d}"
@@ -1609,7 +1609,7 @@ async def update_hentai_season(season_id: str, payload: dict, admin: dict = Depe
         if upd["season_type"] not in {"season", "ova", "movie", "special"}:
             upd["season_type"] = "season"
     if "slug" in upd:
-        upd["slug"] = (upd["slug"] or "").strip()
+        upd["slug"] = slugify(upd["slug"] or "")
         clash = await db.hentai_seasons.find_one({
             "series_id": se["series_id"],
             "slug": upd["slug"],
@@ -1671,7 +1671,7 @@ async def create_hentai_series(payload: dict, admin: dict = Depends(require_admi
     name = (payload.get("name") or "").strip()
     if not name:
         raise HTTPException(400, "name required")
-    slug = (payload.get("slug") or slugify(name)).strip() or slugify(name)
+    slug = slugify(payload.get("slug") or name)
     if await db.hentai_series.find_one({"slug": slug}):
         raise HTTPException(400, "A series with this slug already exists")
     s = HentaiSeries(
@@ -1693,7 +1693,7 @@ async def update_hentai_series(series_id: str, payload: dict, admin: dict = Depe
     if not upd:
         return {"ok": True}
     if "slug" in upd:
-        upd["slug"] = (upd["slug"] or "").strip()
+        upd["slug"] = slugify(upd["slug"] or "")
         clash = await db.hentai_series.find_one({"slug": upd["slug"], "id": {"$ne": series_id}})
         if clash:
             raise HTTPException(400, "Another series already uses this slug")
@@ -1848,7 +1848,7 @@ async def create_tv_season(series_id: str, payload: dict, admin: dict = Depends(
     if season_type not in {"season", "ova", "movie", "special"}:
         season_type = "season"
     number = int(payload.get("number") or 1)
-    slug_in = (payload.get("slug") or "").strip()
+    slug_in = slugify(payload["slug"]) if (payload.get("slug") or "").strip() else ""
     if not slug_in:
         if season_type == "season":
             slug_in = f"s{number:02d}"
@@ -1954,7 +1954,7 @@ async def update_tv_season(season_id: str, payload: dict, admin: dict = Depends(
         if upd["season_type"] not in {"season", "ova", "movie", "special"}:
             upd["season_type"] = "season"
     if "slug" in upd:
-        upd["slug"] = (upd["slug"] or "").strip()
+        upd["slug"] = slugify(upd["slug"] or "")
         clash = await db.tv_seasons.find_one({
             "series_id": se["series_id"],
             "slug": upd["slug"],
@@ -2016,7 +2016,7 @@ async def create_tv_series(payload: dict, admin: dict = Depends(require_admin)):
     name = (payload.get("name") or "").strip()
     if not name:
         raise HTTPException(400, "name required")
-    slug = (payload.get("slug") or slugify(name)).strip() or slugify(name)
+    slug = slugify(payload.get("slug") or name)
     if await db.tv_series.find_one({"slug": slug}):
         raise HTTPException(400, "A series with this slug already exists")
     s = TVSeries(
@@ -2038,7 +2038,7 @@ async def update_tv_series(series_id: str, payload: dict, admin: dict = Depends(
     if not upd:
         return {"ok": True}
     if "slug" in upd:
-        upd["slug"] = (upd["slug"] or "").strip()
+        upd["slug"] = slugify(upd["slug"] or "")
         clash = await db.tv_series.find_one({"slug": upd["slug"], "id": {"$ne": series_id}})
         if clash:
             raise HTTPException(400, "Another series already uses this slug")
@@ -2171,7 +2171,7 @@ async def update_film_category(cat_id: str, payload: dict, admin: dict = Depends
     allowed = {"name", "slug", "description", "active", "position"}
     upd = {k: v for k, v in payload.items() if k in allowed}
     if "slug" in upd:
-        upd["slug"] = (upd["slug"] or "").strip().lower()
+        upd["slug"] = slugify(upd["slug"] or "").lower()
         clash = await db.film_categories.find_one({"slug": upd["slug"], "id": {"$ne": cat_id}})
         if clash:
             raise HTTPException(400, "Another category already uses this slug")
@@ -4134,6 +4134,28 @@ async def admin_github_set_remote_with_token(
     return {"ok": True, "remote_url": display_url, "branch": branch}
 
 
+_SAFE_SLUG_RE = re.compile(r"^[a-z0-9-]+$")
+
+
+async def _fix_unsafe_series_slugs():
+    """Re-slugify series/season slugs containing URL-unsafe chars (?, !, spaces…)."""
+    for coll, scope in [("shorts_series", None), ("anime_series", None), ("hentai_series", None),
+                        ("tv_series", None), ("anime_seasons", "series_id"),
+                        ("hentai_seasons", "series_id"), ("tv_seasons", "series_id")]:
+        async for d in db[coll].find({"slug": {"$not": _SAFE_SLUG_RE}}, {"_id": 0, "id": 1, "slug": 1, "name": 1, "series_id": 1}):
+            base = slugify(d.get("slug") or d.get("name") or "")
+            cand, n = base, 2
+            while True:
+                q = {"slug": cand, "id": {"$ne": d["id"]}}
+                if scope:
+                    q[scope] = d.get(scope)
+                if not await db[coll].find_one(q):
+                    break
+                cand, n = f"{base}-{n}", n + 1
+            await db[coll].update_one({"id": d["id"]}, {"$set": {"slug": cand}})
+            logger.info(f"[startup] {coll} slug fixed: {d.get('slug')!r} -> {cand!r}")
+
+
 # ============ STARTUP ============
 @app.on_event("startup")
 async def startup():
@@ -4150,6 +4172,10 @@ async def startup():
     else:
         logger.error("[startup] Mongo never became reachable — failing fast")
         raise RuntimeError("MongoDB unreachable after 60 s")
+    try:
+        await _fix_unsafe_series_slugs()
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"[startup] slug fix failed: {e}")
     # Ensure settings exist
     try:
         s = await get_settings()

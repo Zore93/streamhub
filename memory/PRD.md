@@ -138,6 +138,8 @@ Build a full-stack video-sharing platform inspired by hentairosub.ro with:
 - Reports: `POST/GET/DELETE /api/reports`, "Raportează" button + modal on Watch, "Rapoarte" tab in Admin.
 - Public series pages (`/hentai`, `/seriale-tv`, `/anime`, `/shorts`, `/drama-shorts`): 25 series/page numbered pagination (reset on search). Verified via screenshot (30 temp series seeded then removed).
 
+- Fix (Jun 2026): series/season slugs with "?", "!", spaces broke public links ("Această serie nu există"). Now `slugify()` is applied on create/patch for all series+seasons, and startup `_fix_unsafe_series_slugs()` auto-cleans existing unsafe slugs (unique per collection / per series for seasons).
+
 ## Backlog
 - P0: Split `server.py` (~6600 lines) into routers.
 - P1: Backfill `uploader_id` on legacy videos.

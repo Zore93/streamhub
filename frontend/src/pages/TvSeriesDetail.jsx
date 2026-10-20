@@ -58,7 +58,7 @@ export default function TvSeriesDetail() {
         )}
         <div className="flex-1 min-w-0">
           <div className="inline-flex items-center gap-2 text-xs uppercase tracking-widest text-rose-400 mb-2">
-            <Tv size={12} /> Serial Anime
+            <Tv size={12} /> Serial TV
           </div>
           <h1 className="text-3xl sm:text-4xl font-bold font-heading text-zinc-50 mb-2" data-testid="anime-series-title">{series.name}</h1>
           {series.description && (
@@ -178,7 +178,7 @@ export default function TvSeriesDetail() {
           data-testid="anime-series-empty"
         >
           Nu există încă sezoane sau episoade. Un admin poate adăuga sezoane
-          din Panou Admin → Serii Anime.
+          din Panou Admin → Seriale TV.
         </p>
       )}
     </div>
