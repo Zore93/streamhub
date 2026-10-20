@@ -2,7 +2,10 @@ import React, { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { Smartphone, Film, Search } from "lucide-react";
 import api from "@/lib/api";
+import Pagination from "@/components/Pagination";
 import { useT } from "@/contexts/LanguageContext";
+
+const PAGE_SIZE = 25;
 
 /**
  * Shorts landing page — Netflix-style poster grid of shorts series.
@@ -14,11 +17,16 @@ export default function Shorts({ category = "xxx" }) {
   const [series, setSeries] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
+  const [page, setPage] = useState(1);
   const isDrama = category === "drama";
   const heading = isDrama ? "Drama Shorts" : "XXX Shorts";
   const listAllPath = isDrama ? "/drama-shorts/all" : "/shorts/all";
   const seriesPathBase = isDrama ? "/drama-shorts/series" : "/shorts/series";
   const filteredSeries = useFilteredSeries(series, search);
+  const totalPages = Math.max(1, Math.ceil(filteredSeries.length / PAGE_SIZE));
+  const pageItems = filteredSeries.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  useEffect(() => { if (page > totalPages) setPage(1); }, [totalPages, page]);
+  useEffect(() => { setPage(1); }, [search, category]);
 
   useEffect(() => {
     setLoading(true);
@@ -27,6 +35,11 @@ export default function Shorts({ category = "xxx" }) {
       .catch(() => {})
       .finally(() => setLoading(false));
   }, [category]);
+
+  const handlePageChange = (p) => {
+    setPage(p);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
 
   return (
     <div data-testid={`page-shorts-${category}`}>
@@ -73,9 +86,12 @@ export default function Shorts({ category = "xxx" }) {
       )}
 
       {!loading && filteredSeries.length > 0 && (
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3 sm:gap-4">
-          {filteredSeries.map((s) => <SeriesPoster key={s.id} s={s} basePath={seriesPathBase} />)}
-        </div>
+        <>
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3 sm:gap-4">
+            {pageItems.map((s) => <SeriesPoster key={s.id} s={s} basePath={seriesPathBase} />)}
+          </div>
+          <Pagination currentPage={page} totalPages={totalPages} onPageChange={handlePageChange} />
+        </>
       )}
     </div>
   );

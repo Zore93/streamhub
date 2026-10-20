@@ -130,6 +130,19 @@ Build a full-stack video-sharing platform inspired by hentairosub.ro with:
 - **Also fixed**: accidental removal of `@api.get("/videos")` decorator restored (regression from earlier edit).
 - Tests: `/app/backend/tests/test_iteration24_filme_rosub.py` — **27/27 PASS**.
 
+## Iteration 25 — Admin/public pagination + Reports (Jun 2026)
+- Home: "Ultimele episoade hentai adăugate" replaces "Ultimele Încărcări"; removed "Videoclipuri" tab and "Toate Episoadele" sidebar link. Hentai episodes included in Populare/Descoperă/Categorii.
+- Series dropdown limits raised 200 → 5000 (Edit Video).
+- Admin series tabs (Anime, Hentai, Shorts, TV, Categorii): 100/page pagination + search by name.
+- Hentai "Vezi mai multe" → `/hentai/all`.
+- Reports: `POST/GET/DELETE /api/reports`, "Raportează" button + modal on Watch, "Rapoarte" tab in Admin.
+- Public series pages (`/hentai`, `/seriale-tv`, `/anime`, `/shorts`, `/drama-shorts`): 25 series/page numbered pagination (reset on search). Verified via screenshot (30 temp series seeded then removed).
+
+## Backlog
+- P0: Split `server.py` (~6600 lines) into routers.
+- P1: Backfill `uploader_id` on legacy videos.
+- P2: Home vertical tab in URL (`?v=`); drag-and-drop episode reorder in Admin.
+
 ## Iteration 23 — Anime Seasons layer (Feb 2026)
 - **Goal**: multi-season structure for Anime (Option 2 from Chat), no migration needed.
 - **Model**: NEW `AnimeSeason { id, series_id, number, title, slug, description, synopsis, cover_thumbnail, year, season_type (season|ova|movie|special), position, active }`. Video gains `anime_season_id` (denormalised `anime_series_id` remains — derived from season on write).

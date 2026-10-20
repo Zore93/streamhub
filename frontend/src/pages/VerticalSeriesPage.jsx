@@ -2,6 +2,9 @@ import React, { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { Film, Tv, Search } from "lucide-react";
 import api from "@/lib/api";
+import Pagination from "@/components/Pagination";
+
+const PAGE_SIZE = 25;
 
 /**
  * Generic grid of "series posters" for a vertical (hentai, tv, …).
@@ -20,6 +23,7 @@ export default function VerticalSeriesPage({
   const [series, setSeries] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
+  const [page, setPage] = useState(1);
 
   useEffect(() => {
     setLoading(true);
@@ -37,6 +41,18 @@ export default function VerticalSeriesPage({
       (s.tags || []).some((t) => (t || "").toLowerCase().includes(q))
     );
   }, [search, series]);
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const pageItems = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  // Reset to page 1 whenever the search filter narrows the list past current page
+  useEffect(() => { if (page > totalPages) setPage(1); }, [totalPages, page]);
+  // Reset to page 1 when the search text changes
+  useEffect(() => { setPage(1); }, [search]);
+
+  const handlePageChange = (p) => {
+    setPage(p);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
 
   return (
     <div data-testid={`page-${testIdPrefix}`}>
@@ -68,28 +84,31 @@ export default function VerticalSeriesPage({
         </p>
       )}
       {!loading && filtered.length > 0 && (
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3 sm:gap-4" data-testid={`${testIdPrefix}-grid`}>
-          {filtered.map((s) => (
-            <Link key={s.id} to={`${basePath}/series/${s.slug || s.id}`} className="group block" data-testid={`${testIdPrefix}-poster-${s.slug || s.id}`}>
-              <div className="relative aspect-[2/3] rounded-lg overflow-hidden bg-zinc-900 border border-zinc-800 group-hover:border-zinc-600 transition-colors">
-                {s.cover_thumbnail ? (
-                  <img src={s.cover_thumbnail} alt={s.name} loading="lazy" className="w-full h-full object-cover transition-transform group-hover:scale-105" />
-                ) : (
-                  <div className="w-full h-full flex items-center justify-center text-zinc-700"><Film size={40} /></div>
-                )}
-                {s.episode_count > 0 && (
-                  <div className="absolute top-1.5 right-1.5 bg-black/70 backdrop-blur-sm text-zinc-100 text-[11px] font-semibold px-1.5 py-0.5 rounded">
-                    {s.episode_count} ep
-                  </div>
-                )}
-              </div>
-              <div className="mt-2">
-                <div className="text-sm font-semibold text-zinc-100 line-clamp-1">{s.name}</div>
-                {s.tags?.length > 0 && <div className="text-[11px] text-zinc-500 line-clamp-1 mt-0.5">{s.tags.slice(0, 3).join(" · ")}</div>}
-              </div>
-            </Link>
-          ))}
-        </div>
+        <>
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3 sm:gap-4" data-testid={`${testIdPrefix}-grid`}>
+            {pageItems.map((s) => (
+              <Link key={s.id} to={`${basePath}/series/${s.slug || s.id}`} className="group block" data-testid={`${testIdPrefix}-poster-${s.slug || s.id}`}>
+                <div className="relative aspect-[2/3] rounded-lg overflow-hidden bg-zinc-900 border border-zinc-800 group-hover:border-zinc-600 transition-colors">
+                  {s.cover_thumbnail ? (
+                    <img src={s.cover_thumbnail} alt={s.name} loading="lazy" className="w-full h-full object-cover transition-transform group-hover:scale-105" />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center text-zinc-700"><Film size={40} /></div>
+                  )}
+                  {s.episode_count > 0 && (
+                    <div className="absolute top-1.5 right-1.5 bg-black/70 backdrop-blur-sm text-zinc-100 text-[11px] font-semibold px-1.5 py-0.5 rounded">
+                      {s.episode_count} ep
+                    </div>
+                  )}
+                </div>
+                <div className="mt-2">
+                  <div className="text-sm font-semibold text-zinc-100 line-clamp-1">{s.name}</div>
+                  {s.tags?.length > 0 && <div className="text-[11px] text-zinc-500 line-clamp-1 mt-0.5">{s.tags.slice(0, 3).join(" · ")}</div>}
+                </div>
+              </Link>
+            ))}
+          </div>
+          <Pagination currentPage={page} totalPages={totalPages} onPageChange={handlePageChange} />
+        </>
       )}
     </div>
   );
