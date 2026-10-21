@@ -136,7 +136,7 @@ Build a full-stack video-sharing platform inspired by hentairosub.ro with:
 - Admin series tabs (Anime, Hentai, Shorts, TV, Categorii): 100/page pagination + search by name.
 - Hentai "Vezi mai multe" → `/hentai/all`.
 - Reports: `POST/GET/DELETE /api/reports`, "Raportează" button + modal on Watch, "Rapoarte" tab in Admin.
-- Public series pages (`/hentai`, `/seriale-tv`, `/anime`, `/shorts`, `/drama-shorts`): 25 series/page numbered pagination (reset on search). Verified via screenshot (30 temp series seeded then removed).
+- Public series pages (`/hentai`, `/seriale-tv`, `/anime`, `/shorts`, `/drama-shorts`): pagination REMOVED at user request — all series on a single page (search still filters).
 
 - Fix (Jun 2026): series/season slugs with "?", "!", spaces broke public links ("Această serie nu există"). Now `slugify()` is applied on create/patch for all series+seasons, and startup `_fix_unsafe_series_slugs()` auto-cleans existing unsafe slugs (unique per collection / per series for seasons).
 

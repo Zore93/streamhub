@@ -2,9 +2,6 @@ import React, { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { Film, Tv, Search } from "lucide-react";
 import api from "@/lib/api";
-import Pagination from "@/components/Pagination";
-
-const PAGE_SIZE = 25;
 
 /** /anime — poster grid of anime series (long-form). Now with inline
  *  search over series names so users can quickly jump to a title in a
@@ -13,7 +10,6 @@ export default function Anime() {
   const [series, setSeries] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
-  const [page, setPage] = useState(1);
 
   useEffect(() => {
     api.get("/anime-series").then((r) => setSeries(r.data)).catch(() => {}).finally(() => setLoading(false));
@@ -27,15 +23,6 @@ export default function Anime() {
       (s.tags || []).some((t) => (t || "").toLowerCase().includes(q))
     );
   }, [search, series]);
-
-  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
-  const pageItems = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
-  useEffect(() => { if (page > totalPages) setPage(1); }, [totalPages, page]);
-  useEffect(() => { setPage(1); }, [search]);
-  const handlePageChange = (p) => {
-    setPage(p);
-    window.scrollTo({ top: 0, behavior: "smooth" });
-  };
 
   return (
     <div data-testid="page-anime">
@@ -71,7 +58,7 @@ export default function Anime() {
       )}
       {!loading && filtered.length > 0 && (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3 sm:gap-4" data-testid="anime-grid">
-          {pageItems.map((s) => (
+          {filtered.map((s) => (
             <Link key={s.id} to={`/anime/series/${s.slug || s.id}`} className="group block" data-testid={`anime-poster-${s.slug || s.id}`}>
               <div className="relative aspect-[2/3] rounded-lg overflow-hidden bg-zinc-900 border border-zinc-800 group-hover:border-zinc-600 transition-colors">
                 {s.cover_thumbnail ? (
@@ -91,11 +78,6 @@ export default function Anime() {
               </div>
             </Link>
           ))}
-        </div>
-      )}
-      {!loading && totalPages > 1 && (
-        <div className="mt-8" data-testid="anime-pagination">
-          <Pagination currentPage={page} totalPages={totalPages} onPageChange={handlePageChange} />
         </div>
       )}
     </div>
