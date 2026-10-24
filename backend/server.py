@@ -625,7 +625,7 @@ async def process_video(video_id: str, src_path: str):
             for i, res in enumerate(target_resolutions):
                 out_rel = f"videos/{video_id}_{res}.mp4"
                 out_path = UPLOAD_DIR / out_rel
-                ok = await transcode_to_resolution(src_path, str(out_path), res)
+                ok = await transcode_to_resolution(src_path, str(out_path), res, settings.get("encode_profile") or "original")
                 if ok:
                     w, h = RESOLUTIONS[res]
                     final_url = out_rel

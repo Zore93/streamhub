@@ -360,6 +360,7 @@ class AppSettings(BaseModel):
     # FFmpeg
     ffmpeg_concurrency: int = 2
     enabled_resolutions: List[str] = ["360p", "720p", "1080p"]
+    encode_profile: str = "original"  # original | balanced | strong | max
     # Upload
     max_upload_size_mb: int = 1024
     allow_user_uploads: bool = True

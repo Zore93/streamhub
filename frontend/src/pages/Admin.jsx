@@ -19,6 +19,35 @@ import {
 } from "lucide-react";
 
 const RES_OPTIONS = ["360p", "720p", "1080p", "2048p", "4096p"];
+
+const ENCODE_PROFILES = [
+  { id: "original", name: "Calitate originală", size: "1080p: max ~3.6 GB/oră", quality: "Vizual identică cu originalul. Nicio diferență observabilă." },
+  { id: "balanced", name: "Echilibrat", size: "1080p: max ~2.2 GB/oră", quality: "Aproape identică. Diferențe minime doar la comparație cadru cu cadru." },
+  { id: "strong", name: "Puternic", size: "1080p: max ~1.6 GB/oră", quality: "Foarte bună. Ușoare pierderi de detaliu în scenele cu multă mișcare." },
+  { id: "max", name: "Maxim", size: "1080p: max ~1.1 GB/oră", quality: "Bună. Pierdere vizibilă de detalii fine și ușoare artefacte în mișcare." },
+];
+
+function EncodeProfilePicker({ value, onChange }) {
+  return (
+    <div data-testid="encode-profile-picker">
+      <Label className="mb-1 block">Compresie video (FFmpeg)</Label>
+      <p className="text-xs text-zinc-500 mb-3">Se aplică doar videoclipurilor urcate după salvare. Mărimile sunt limite maxime; de obicei fișierele ies mai mici. Fișierul nu iese niciodată mai bun decât originalul.</p>
+      <div className="grid sm:grid-cols-2 gap-2">
+        {ENCODE_PROFILES.map((p) => (
+          <button key={p.id} type="button" onClick={() => onChange(p.id)} data-testid={`encode-profile-${p.id}`}
+            className={`text-left p-3 rounded-md border transition-colors ${value === p.id ? "bg-rose-500/10 border-rose-500" : "bg-zinc-950 border-zinc-800 hover:border-zinc-600"}`}>
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-sm font-semibold text-zinc-100">{p.name}</span>
+              <span className="text-[11px] text-zinc-400">{p.size}</span>
+            </div>
+            <p className="text-xs text-zinc-400 mt-1">{p.quality}</p>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 const BAN_OPTIONS = [
   { v: "1day", l: "1 Day" }, { v: "1week", l: "1 Week" }, { v: "1month", l: "1 Month" },
   { v: "permanent", l: "Permanent" }, { v: "custom", l: "Custom (days)" },
@@ -1354,6 +1383,7 @@ function SettingsTab() {
             ))}
           </div>
         </div>
+        <EncodeProfilePicker value={s.encode_profile || "original"} onChange={(v) => upd("encode_profile", v)} />
       </Section>
       <Section title="Storage">
         <Field label="Backend">

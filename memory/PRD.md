@@ -139,6 +139,7 @@ Build a full-stack video-sharing platform inspired by hentairosub.ro with:
 - Public series pages (`/hentai`, `/seriale-tv`, `/anime`, `/shorts`, `/drama-shorts`): pagination REMOVED at user request — all series on a single page (search still filters).
 
 - Fix (Jun 2026): series/season slugs with "?", "!", spaces broke public links ("Această serie nu există"). Now `slugify()` is applied on create/patch for all series+seasons, and startup `_fix_unsafe_series_slugs()` auto-cleans existing unsafe slugs (unique per collection / per series for seasons).
+- Compresie video (Jun 2026): `transcoder.ENCODE_PROFILES` (original crf20 / balanced crf23 / strong crf25 / max crf27) + per-height maxrate caps, preset slow, H.264 high. Setting `encode_profile` (default "original") selectable in Admin → Setări (EncodeProfilePicker cu descrieri de calitate). Test: sursă 58.5MB → 14.8/10.1/7.1/5.1 MB.
 
 ## Backlog
 - P0: Split `server.py` (~6600 lines) into routers.

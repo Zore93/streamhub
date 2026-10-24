@@ -335,10 +335,21 @@ async def generate_thumbnails(
     return paths
 
 
+# crf + max video bitrate (kbps) per output height + audio bitrate
+ENCODE_PROFILES: Dict[str, dict] = {
+    "original": {"crf": 20, "caps": {360: 1200, 720: 4000, 1080: 8000, 1152: 9000, 2160: 20000}, "audio": "160k"},
+    "balanced": {"crf": 23, "caps": {360: 900, 720: 2800, 1080: 5000, 1152: 6000, 2160: 14000}, "audio": "128k"},
+    "strong": {"crf": 25, "caps": {360: 700, 720: 2000, 1080: 3500, 1152: 4200, 2160: 10000}, "audio": "128k"},
+    "max": {"crf": 27, "caps": {360: 500, 720: 1400, 1080: 2500, 1152: 3000, 2160: 7000}, "audio": "96k"},
+}
+DEFAULT_ENCODE_PROFILE = "original"
+
+
 async def transcode_to_resolution(
     input_path: str,
     output_path: str,
     target_resolution: str,
+    profile: str = DEFAULT_ENCODE_PROFILE,
 ) -> bool:
     """Transcodes input video to a specific resolution in mp4 (H.264 + AAC).
     Returns True on success.
@@ -353,6 +364,8 @@ async def transcode_to_resolution(
     if target_resolution not in RESOLUTIONS:
         return False
     w, h = RESOLUTIONS[target_resolution]
+    prof = ENCODE_PROFILES.get(profile) or ENCODE_PROFILES[DEFAULT_ENCODE_PROFILE]
+    cap = prof["caps"].get(h, 5000)
     # scale keeping aspect with -2 then pad? simplest: scale width to w, height adjusted to even
     vf = f"scale='if(gt(a,{w}/{h}),{w},-2)':'if(gt(a,{w}/{h}),-2,{h})'"
     Path(os.path.dirname(output_path)).mkdir(parents=True, exist_ok=True)
@@ -371,10 +384,14 @@ async def transcode_to_resolution(
             "-i", input_path,
             "-vf", vf,
             "-c:v", "libx264",
-            "-preset", "veryfast",
-            "-crf", "23",
+            "-preset", "slow",
+            "-crf", str(prof["crf"]),
+            "-maxrate", f"{cap}k",
+            "-bufsize", f"{cap * 2}k",
+            "-profile:v", "high",
+            "-pix_fmt", "yuv420p",
             "-c:a", "aac",
-            "-b:a", "128k",
+            "-b:a", prof["audio"],
             "-movflags", "+faststart",
             tmp_name,
             stdout=asyncio.subprocess.DEVNULL,
