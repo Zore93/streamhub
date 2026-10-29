@@ -95,6 +95,7 @@ class VideoRendition(BaseModel):
     url: str
     width: int = 0
     height: int = 0
+    file_size_bytes: int = 0  # final transcoded file size — fuels per-res Storage stats
 
 
 class Subtitle(BaseModel):

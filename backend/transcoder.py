@@ -5,7 +5,7 @@ import logging
 import os
 import re
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Awaitable, Callable, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -378,16 +378,20 @@ async def transcode_to_resolution(
     output_path: str,
     target_resolution: str,
     profile: str = DEFAULT_ENCODE_PROFILE,
+    duration_sec: float = 0.0,
+    on_progress: Optional[Callable[[float, float], Awaitable[None]]] = None,
 ) -> bool:
     """Transcodes input video to a specific resolution in mp4 (H.264 + AAC).
     Returns True on success.
 
+    If `duration_sec` and `on_progress` are provided, ffmpeg's `-progress pipe:1`
+    stream is parsed and the async callback is invoked ~every ~1s with
+    (percent_done, eta_seconds) so callers can surface live progress to the UI.
+
     Strategy: encode into a /tmp staging file first (large videos + multiple
     renditions can easily blow past the small UPLOAD_DIR volume on cloud
     pods — /tmp is usually the bigger overlayfs). We `shutil.move` to the
-    final path on success. This fixes the bug where >5GB sources would
-    silently skip 1080p/1440p/2160p renditions because ffmpeg returned
-    ENOSPC on UPLOAD_DIR.
+    final path on success.
     """
     if target_resolution not in RESOLUTIONS:
         return False
@@ -396,23 +400,23 @@ async def transcode_to_resolution(
     cap = prof["caps"].get(h, 5000)
     preset = prof.get("preset", "slow")
     logger.info(
-        "transcode_to_resolution: → %s (%dx%d) profile=%s preset=%s crf=%d maxrate=%dk",
-        target_resolution, w, h, profile, preset, prof["crf"], cap,
+        "transcode_to_resolution: → %s (%dx%d) profile=%s preset=%s crf=%d maxrate=%dk dur=%.1fs",
+        target_resolution, w, h, profile, preset, prof["crf"], cap, duration_sec,
     )
-    # scale keeping aspect with -2 then pad? simplest: scale width to w, height adjusted to even
     vf = f"scale='if(gt(a,{w}/{h}),{w},-2)':'if(gt(a,{w}/{h}),-2,{h})'"
     Path(os.path.dirname(output_path)).mkdir(parents=True, exist_ok=True)
-    # Stage ffmpeg output to /tmp so we don't exhaust UPLOAD_DIR mid-encode
     import tempfile
     tmp_fd, tmp_name = tempfile.mkstemp(
         suffix=f"_{target_resolution}.mp4", prefix=f"rend_",
     )
     os.close(tmp_fd)
     try:
+        # When we want live progress we pipe the key=value stream to stdout.
+        progress_arg = ["-progress", "pipe:1"] if (on_progress and duration_sec > 0) else []
         proc = await asyncio.create_subprocess_exec(
             "ffmpeg",
             "-y",
-            "-v", "error",  # drop frame-by-frame progress to avoid PIPE buffer growth
+            "-v", "error",
             "-nostats",
             "-i", input_path,
             "-vf", vf,
@@ -426,15 +430,69 @@ async def transcode_to_resolution(
             "-c:a", "aac",
             "-b:a", prof["audio"],
             "-movflags", "+faststart",
+            *progress_arg,
             tmp_name,
-            stdout=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE if progress_arg else asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.PIPE,
         )
+
+        # Read progress stream concurrently with waiting for ffmpeg to finish.
+        async def _drain_progress():
+            if not progress_arg or proc.stdout is None:
+                return
+            start_ts = asyncio.get_event_loop().time()
+            last_report = 0.0
+            out_time_us = 0  # last reported encode position in microseconds
+            try:
+                while True:
+                    line = await proc.stdout.readline()
+                    if not line:
+                        break
+                    s = line.decode(errors="ignore").strip()
+                    if s.startswith("out_time_us=") or s.startswith("out_time_ms="):
+                        try:
+                            v = int(s.split("=", 1)[1])
+                            # ffmpeg historically mis-labels "out_time_ms" as microseconds
+                            out_time_us = v
+                        except Exception:
+                            pass
+                    elif s.startswith("out_time="):
+                        # HH:MM:SS.mmm fallback
+                        try:
+                            hh, mm, rest = s.split("=", 1)[1].split(":")
+                            ss = float(rest)
+                            out_time_us = int((int(hh) * 3600 + int(mm) * 60 + ss) * 1_000_000)
+                        except Exception:
+                            pass
+                    elif s.startswith("progress="):
+                        pass  # emitted periodically; use as a flush trigger below
+                    else:
+                        continue
+                    now = asyncio.get_event_loop().time()
+                    if now - last_report < 1.0:
+                        continue
+                    last_report = now
+                    secs_done = out_time_us / 1_000_000.0
+                    pct = max(0.0, min(100.0, (secs_done / duration_sec) * 100.0))
+                    elapsed = now - start_ts
+                    speed = (secs_done / elapsed) if elapsed > 0.1 else 0.0
+                    eta = ((duration_sec - secs_done) / speed) if speed > 0.01 else 0.0
+                    try:
+                        await on_progress(pct, max(0.0, eta))
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+        drain_task = asyncio.create_task(_drain_progress())
         _, err = await proc.communicate()
+        drain_task.cancel()
+        try:
+            await drain_task
+        except Exception:
+            pass
+
         if proc.returncode != 0 or not os.path.exists(tmp_name) or os.path.getsize(tmp_name) == 0:
-            # Surface the ffmpeg failure so operators can see WHY a rendition
-            # didn't materialise (previously these failures were swallowed and
-            # the video just ended up without the higher-resolution output).
             tail = (err or b"").decode("utf-8", errors="ignore")[-2000:]
             logger.warning(
                 "ffmpeg failed for %s → %s (rc=%s). stderr tail:\n%s",
@@ -445,6 +503,12 @@ async def transcode_to_resolution(
             return False
         import shutil as _shutil
         _shutil.move(tmp_name, output_path)
+        # Final 100% ping so the UI isn't stuck at e.g. 97%.
+        if on_progress:
+            try:
+                await on_progress(100.0, 0.0)
+            except Exception:
+                pass
         return os.path.exists(output_path)
     except Exception as e:  # noqa: BLE001
         logger.exception("transcode_to_resolution crashed: %s", e)
@@ -489,7 +553,11 @@ async def extract_preview_clip(src_path: str, out_path: str, duration_sec: int =
     """
     out = Path(out_path)
     out.parent.mkdir(parents=True, exist_ok=True)
-    # ---- Fast path: stream-copy -----------------------------------
+    # ---- Fast path: stream-copy VIDEO, re-encode AUDIO to AAC ------
+    # Audio must be re-encoded even in the fast path: many sources use codecs
+    # MP4 cannot carry (AC3, DTS, Opus in MKV, FLAC, PCM, etc.) and `-c:a copy`
+    # into .mp4 silently drops them → the preview ends up muted. AAC @ 128k is
+    # universally compatible and still fast because video is still copied.
     try:
         proc = await asyncio.create_subprocess_exec(
             "ffmpeg",
@@ -500,7 +568,9 @@ async def extract_preview_clip(src_path: str, out_path: str, duration_sec: int =
             "-map", "0:v:0",
             "-map", "0:a:0?",   # audio optional
             "-c:v", "copy",
-            "-c:a", "copy",
+            "-c:a", "aac",
+            "-b:a", "128k",
+            "-ac", "2",
             "-movflags", "+faststart",
             str(out),
             stdout=asyncio.subprocess.DEVNULL,

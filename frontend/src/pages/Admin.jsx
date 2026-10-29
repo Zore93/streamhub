@@ -439,7 +439,7 @@ function VideosTab() {
               {v.synopsis && <><span>·</span><span className="text-violet-300 inline-flex items-center gap-0.5"><Sparkles size={10} /> sinopsis</span></>}
             </div>
             {v.status === "processing" && (
-              <EncodingProgressBar progress={v.progress} videoId={v.id} />
+              <EncodingProgressBar progress={v.progress} progressDetail={v.progress_detail} videoId={v.id} />
             )}
           </div>
           <Link to={`/edit-video/${v.id}`}>
@@ -3505,17 +3505,50 @@ function ReportsTab() {
 
 
 // ─────────── Live encoding progress bar used in VideosTab ────────────
-function EncodingProgressBar({ progress, videoId }) {
-  const pct = Math.max(0, Math.min(100, parseInt(progress, 10) || 0));
+function EncodingProgressBar({ progress, progressDetail, videoId }) {
+  const overallPct = Math.max(0, Math.min(100, parseInt(progress, 10) || 0));
+  const detail = progressDetail || {};
+  const curRes = detail.current_rendition || "";
+  const curPct = Math.max(0, Math.min(100, Number(detail.current_pct) || 0));
+  const etaSec = Math.max(0, parseInt(detail.current_eta_sec, 10) || 0);
+  const idx = Number(detail.rendition_index) || 0;
+  const tot = Number(detail.total_renditions) || 1;
+  const fmtEta = (s) => {
+    if (!s || s <= 0) return "";
+    if (s < 60) return `~${Math.ceil(s)}s`;
+    const m = Math.floor(s / 60);
+    const sec = Math.round(s - m * 60);
+    return `~${m}m ${sec}s`;
+  };
   return (
-    <div className="mt-2 flex items-center gap-2" data-testid={`encoding-progress-${videoId}`}>
-      <div className="flex-1 h-2 bg-zinc-800 rounded-full overflow-hidden">
-        <div
-          className="h-full bg-gradient-to-r from-rose-500 via-orange-500 to-amber-400 transition-all duration-500"
-          style={{ width: `${pct}%` }}
-        />
+    <div className="mt-2 space-y-1.5" data-testid={`encoding-progress-${videoId}`}>
+      {/* ── Current rendition (resets between rendition handoffs) ── */}
+      {curRes && (
+        <div className="flex items-center gap-2">
+          <div className="flex-1 h-2 bg-zinc-800 rounded-full overflow-hidden" title={`Encodare ${curRes}`}>
+            <div
+              className="h-full bg-gradient-to-r from-amber-400 to-rose-500 transition-all duration-500"
+              style={{ width: `${curPct}%` }}
+            />
+          </div>
+          <span className="text-[10px] text-amber-300 font-mono whitespace-nowrap min-w-[90px] text-right">
+            {curRes} · {curPct.toFixed(1)}%
+            {etaSec > 0 && <span className="text-zinc-500"> · {fmtEta(etaSec)}</span>}
+          </span>
+        </div>
+      )}
+      {/* ── Combined / overall progress across all renditions ── */}
+      <div className="flex items-center gap-2">
+        <div className="flex-1 h-2 bg-zinc-800 rounded-full overflow-hidden" title="Progres total">
+          <div
+            className="h-full bg-gradient-to-r from-emerald-500 via-rose-500 to-fuchsia-500 transition-all duration-500"
+            style={{ width: `${overallPct}%` }}
+          />
+        </div>
+        <span className="text-[10px] text-zinc-300 font-mono whitespace-nowrap min-w-[90px] text-right">
+          Total · {overallPct}%{tot > 1 ? ` · ${Math.min(idx + 1, tot)}/${tot}` : ""}
+        </span>
       </div>
-      <span className="text-[11px] text-amber-300 font-mono w-10 text-right">{pct}%</span>
     </div>
   );
 }
@@ -3547,7 +3580,16 @@ function StorageTab() {
   const [skip, setSkip] = useState(0);
   const [q, setQ] = useState("");
   const [debouncedQ, setDebouncedQ] = useState("");
+  const [expanded, setExpanded] = useState(() => new Set());  // ids with per-res rows open
   const PAGE = 50;
+
+  const toggleExpand = (id) => {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
 
   useEffect(() => {
     const id = setTimeout(() => setDebouncedQ(q.trim()), 350);
@@ -3648,6 +3690,7 @@ function StorageTab() {
           <table className="w-full text-sm" data-testid="storage-table">
             <thead className="text-xs text-zinc-500 uppercase">
               <tr className="border-b border-zinc-800">
+                <th className="text-left py-2 px-2 w-8"></th>
                 <th className="text-left py-2 px-2">Titlu</th>
                 <th className="text-left py-2 px-2 hidden md:table-cell">Profil</th>
                 <th className="text-right py-2 px-2">Original</th>
@@ -3657,23 +3700,85 @@ function StorageTab() {
               </tr>
             </thead>
             <tbody>
-              {items.map((v) => (
-                <tr key={v.id} className="border-b border-zinc-800/50 hover:bg-zinc-950/50" data-testid={`storage-row-${v.id}`}>
-                  <td className="py-2 px-2">
-                    <Link to={`/watch/${v.slug || v.id}`} target="_blank" rel="noopener noreferrer" className="text-zinc-200 hover:text-rose-400 line-clamp-1 max-w-md">
-                      {v.title}
-                    </Link>
-                    <div className="text-xs text-zinc-500">@{v.uploader_username || "?"}</div>
-                  </td>
-                  <td className="py-2 px-2 hidden md:table-cell text-zinc-400 text-xs">{PROFILE_LABELS[v.encode_profile] || v.encode_profile || "—"}</td>
-                  <td className="py-2 px-2 text-right text-zinc-300 whitespace-nowrap">{formatBytes(v.original_size_bytes)}</td>
-                  <td className="py-2 px-2 text-right text-zinc-300 whitespace-nowrap">{formatBytes(v.compressed_size_bytes)}</td>
-                  <td className="py-2 px-2 text-right text-emerald-400 font-semibold whitespace-nowrap">{formatBytes(v.saved_bytes)}</td>
-                  <td className="py-2 px-2 text-right text-emerald-400 whitespace-nowrap">{v.saved_pct}%</td>
-                </tr>
-              ))}
+              {items.map((v) => {
+                const isOpen = expanded.has(v.id);
+                const rends = v.renditions || [];
+                return (
+                  <React.Fragment key={v.id}>
+                    <tr
+                      className="border-b border-zinc-800/50 hover:bg-zinc-950/50 cursor-pointer"
+                      data-testid={`storage-row-${v.id}`}
+                      onClick={() => toggleExpand(v.id)}
+                    >
+                      <td className="py-2 px-2 text-zinc-400">
+                        <span className={`inline-block transition-transform ${isOpen ? "rotate-90" : ""}`}>▸</span>
+                      </td>
+                      <td className="py-2 px-2">
+                        <Link
+                          to={`/watch/${v.slug || v.id}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-zinc-200 hover:text-rose-400 line-clamp-1 max-w-md"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          {v.title}
+                        </Link>
+                        <div className="text-xs text-zinc-500">
+                          @{v.uploader_username || "?"}
+                          {rends.length > 0 && <span> · {rends.length} rezolu{rends.length === 1 ? "ție" : "ții"}</span>}
+                        </div>
+                      </td>
+                      <td className="py-2 px-2 hidden md:table-cell text-zinc-400 text-xs">{PROFILE_LABELS[v.encode_profile] || v.encode_profile || "—"}</td>
+                      <td className="py-2 px-2 text-right text-zinc-300 whitespace-nowrap">{formatBytes(v.original_size_bytes)}</td>
+                      <td className="py-2 px-2 text-right text-zinc-300 whitespace-nowrap">{formatBytes(v.compressed_size_bytes)}</td>
+                      <td className="py-2 px-2 text-right text-emerald-400 font-semibold whitespace-nowrap">{formatBytes(v.saved_bytes)}</td>
+                      <td className="py-2 px-2 text-right text-emerald-400 whitespace-nowrap">{v.saved_pct}%</td>
+                    </tr>
+                    {isOpen && rends.length > 0 && (
+                      <tr className="bg-zinc-950/40 border-b border-zinc-800/50" data-testid={`storage-row-detail-${v.id}`}>
+                        <td colSpan={7} className="py-3 px-6">
+                          <div className="space-y-1.5">
+                            <div className="text-[11px] uppercase tracking-wider text-zinc-500 mb-1">Economie per rezoluție</div>
+                            {rends.map((r) => {
+                              const rSize = Number(r.file_size_bytes) || 0;
+                              const rSaved = Number(r.saved_bytes) || 0;
+                              const rPct = Number(r.saved_pct) || 0;
+                              return (
+                                <div
+                                  key={r.resolution}
+                                  className="grid grid-cols-12 gap-2 items-center text-xs py-1 border-b border-zinc-800/40 last:border-b-0"
+                                  data-testid={`storage-rend-${v.id}-${r.resolution}`}
+                                >
+                                  <div className="col-span-2 font-mono font-semibold text-amber-300 uppercase">{r.resolution}</div>
+                                  <div className="col-span-3 text-zinc-400">
+                                    Original: <span className="text-zinc-200">{formatBytes(v.original_size_bytes)}</span>
+                                  </div>
+                                  <div className="col-span-3 text-zinc-400">
+                                    După Encodare: <span className="text-zinc-200">{formatBytes(rSize)}</span>
+                                  </div>
+                                  <div className="col-span-3 text-zinc-400">
+                                    Economisire: <span className="text-emerald-400 font-semibold">{formatBytes(rSaved)}</span>
+                                  </div>
+                                  <div className="col-span-1 text-right text-emerald-400 font-semibold">{rPct}%</div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                    {isOpen && rends.length === 0 && (
+                      <tr className="bg-zinc-950/40 border-b border-zinc-800/50">
+                        <td colSpan={7} className="py-3 px-6 text-xs text-zinc-500 italic">
+                          Nu există date per rezoluție pentru acest videoclip (încărcat înainte de implementarea feature-ului).
+                        </td>
+                      </tr>
+                    )}
+                  </React.Fragment>
+                );
+              })}
               {items.length === 0 && !loading && (
-                <tr><td colSpan={6} className="text-center py-6 text-zinc-500">Niciun videoclip comprimat încă.</td></tr>
+                <tr><td colSpan={7} className="text-center py-6 text-zinc-500">Niciun videoclip comprimat încă.</td></tr>
               )}
             </tbody>
           </table>

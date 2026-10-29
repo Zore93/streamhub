@@ -667,11 +667,50 @@ async def process_video(video_id: str, src_path: str):
             for i, res in enumerate(target_resolutions):
                 out_rel = f"videos/{video_id}_{res}.mp4"
                 out_path = UPLOAD_DIR / out_rel
-                ok = await transcode_to_resolution(src_path, str(out_path), res, chosen_profile)
+
+                # Mark which rendition we're on + reset its sub-progress to 0,
+                # and bootstrap the combined/overall progress for the UI.
+                base_overall = 30 + int(65 * i / total)
+                await db.videos.update_one(
+                    {"id": video_id},
+                    {"$set": {
+                        "progress": base_overall,
+                        "progress_detail": {
+                            "current_rendition": res,
+                            "current_pct": 0,
+                            "current_eta_sec": 0,
+                            "rendition_index": i,
+                            "total_renditions": total,
+                        },
+                    }},
+                )
+                await _publish_status(video_id)
+
+                # Live FFmpeg progress callback — throttled in the transcoder.
+                async def _on_rend_progress(pct: float, eta: float, _res=res, _i=i):
+                    overall = 30 + int(65 * (_i + pct / 100.0) / total)
+                    await db.videos.update_one(
+                        {"id": video_id},
+                        {"$set": {
+                            "progress": overall,
+                            "progress_detail": {
+                                "current_rendition": _res,
+                                "current_pct": round(pct, 1),
+                                "current_eta_sec": int(eta),
+                                "rendition_index": _i,
+                                "total_renditions": total,
+                            },
+                        }},
+                    )
+
+                ok = await transcode_to_resolution(
+                    src_path, str(out_path), res, chosen_profile,
+                    duration_sec=float(duration or 0),
+                    on_progress=_on_rend_progress,
+                )
                 if ok:
                     w, h = RESOLUTIONS[res]
                     final_url = out_rel
-                    # Record size BEFORE we potentially delete the local file
                     try:
                         rend_size = os.path.getsize(out_path)
                     except Exception:
@@ -693,7 +732,8 @@ async def process_video(video_id: str, src_path: str):
                                 pass
                     renditions.append(
                         VideoRendition(
-                            resolution=res, url=final_url, width=w, height=h
+                            resolution=res, url=final_url, width=w, height=h,
+                            file_size_bytes=rend_size,
                         ).model_dump()
                     )
                 else:
@@ -702,13 +742,20 @@ async def process_video(video_id: str, src_path: str):
                         video_id, res,
                     )
                 progress = 30 + int(65 * (i + 1) / total)
-                # As soon as the FIRST rendition completes, mark the video "ready"
-                # so the watch page can start playing while the rest transcode.
                 upd = {
                     "renditions": renditions,
                     "progress": progress,
                     "compressed_size_bytes": compressed_total,
                     "encode_profile": chosen_profile,
+                    # Clear the sub-progress on rendition boundary so the UI
+                    # resets the per-rendition bar.
+                    "progress_detail": {
+                        "current_rendition": "",
+                        "current_pct": 0,
+                        "current_eta_sec": 0,
+                        "rendition_index": i + 1,
+                        "total_renditions": total,
+                    },
                 }
                 if renditions and i == 0:
                     upd["status"] = "ready"
@@ -3826,6 +3873,9 @@ async def admin_storage_stats(
                 "_id": 0, "id": 1, "title": 1, "slug": 1, "uploader_username": 1,
                 "original_size_bytes": 1, "compressed_size_bytes": 1,
                 "encode_profile": 1, "created_at": 1,
+                # Needed for the per-resolution expand row in the Admin → Storage
+                # table: resolution label + final file size per rendition.
+                "renditions": 1,
             },
         )
         .sort("original_size_bytes", -1)
@@ -3839,6 +3889,18 @@ async def admin_storage_stats(
         c = int(r.get("compressed_size_bytes") or 0)
         s = max(0, o - c)
         p = round(100.0 * s / o, 2) if o > 0 else 0.0
+        # Slim down renditions to only what the UI needs.
+        rends_slim = []
+        for rend in (r.get("renditions") or []):
+            rs = int(rend.get("file_size_bytes") or 0)
+            rp = round(100.0 * (o - rs) / o, 2) if (o > 0 and rs > 0) else 0.0
+            rends_slim.append({
+                "resolution": rend.get("resolution"),
+                "file_size_bytes": rs,
+                "saved_bytes": max(0, o - rs) if rs > 0 else 0,
+                "saved_pct": rp,
+            })
+        r["renditions"] = rends_slim
         items.append({**r, "saved_bytes": s, "saved_pct": p})
 
     return {
