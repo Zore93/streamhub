@@ -27,7 +27,7 @@ export default function LeftSidebar({ mobileOpen = false, onClose }) {
     { to: "/", label: t("nav.home"), Icon: HomeIcon, testid: "nav-home" },
     { to: "/top", label: "Top 10 Săptămânal", Icon: Crown, testid: "nav-top-weekly" },
     { to: "/trending", label: "Trending acum", Icon: TrendingUp, testid: "nav-trending" },
-    { to: "/party-rooms", label: "Party Rooms", Icon: Users, testid: "nav-party-rooms" },
+    { to: "/party-rooms", label: "Camere de vizionare", Icon: Users, testid: "nav-party-rooms" },
     { to: "/popular", label: t("nav.popular"), Icon: Flame, testid: "nav-popular" },
     { to: "/discover", label: t("nav.discover"), Icon: Shuffle, testid: "nav-discover" },
     { to: "/shorts", label: t("nav.shorts"), Icon: Smartphone, testid: "nav-shorts" },

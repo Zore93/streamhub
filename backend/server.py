@@ -7092,6 +7092,23 @@ class _PartyRoom:
         self.code = code
         self.members: Dict[str, WebSocket] = {}  # member_id -> ws
         self.names: Dict[str, str] = {}  # member_id -> display name
+        # Host state for synchronized playback. The host is the authoritative
+        # driver: only their play/pause/seek events are broadcast; everyone
+        # else is a viewer. The first member to connect becomes host (or the
+        # party.host_user_id match if that user is online).
+        self.host_member_id: Optional[str] = None
+        # Last known play-state so new joiners can catch up to the host's
+        # position. {action: "play"|"pause", t: <sec>, ts: <monotonic>}
+        self.play_state: Dict = {"action": "pause", "t": 0.0, "ts": 0.0}
+    async def send_to(self, mid: str, msg: dict):
+        ws = self.members.get(mid)
+        if not ws:
+            return
+        try:
+            await ws.send_json(msg)
+        except Exception:
+            self.members.pop(mid, None)
+            self.names.pop(mid, None)
     async def broadcast(self, msg: dict, skip: Optional[str] = None):
         dead = []
         for mid, ws in self.members.items():
@@ -7104,6 +7121,15 @@ class _PartyRoom:
         for mid in dead:
             self.members.pop(mid, None)
             self.names.pop(mid, None)
+    def extrapolate_t(self) -> float:
+        """If currently playing, project the host's current playback time
+        from the last recorded state so late joiners don't jump to a stale
+        position. If paused, just return the stored timestamp."""
+        import time as _t
+        if (self.play_state or {}).get("action") == "play":
+            elapsed = max(0.0, _t.monotonic() - float(self.play_state.get("ts", 0.0)))
+            return float(self.play_state.get("t", 0.0)) + elapsed
+        return float((self.play_state or {}).get("t", 0.0))
 
 _PARTY_ROOMS: Dict[str, _PartyRoom] = {}
 
@@ -7112,13 +7138,11 @@ _PARTY_ROOMS: Dict[str, _PartyRoom] = {}
 async def party_ws(websocket: WebSocket, code: str):
     code = code.upper()
     await websocket.accept()
-    # confirm the room exists & is active (reject nicely otherwise)
     p = await db.watch_parties.find_one({"code": code, "active": True})
     if not p:
         await websocket.send_json({"type": "error", "message": "Party not found or expired"})
         await websocket.close()
         return
-    # 10-member cap
     room = _PARTY_ROOMS.setdefault(code, _PartyRoom(code))
     if len(room.members) >= 10:
         await websocket.send_json({"type": "error", "message": "Room full (max 10)"})
@@ -7128,9 +7152,16 @@ async def party_ws(websocket: WebSocket, code: str):
     room.members[member_id] = websocket
     name = f"Guest-{member_id[:4]}"
     room.names[member_id] = name
+    # Decide if this member becomes host. First-come = host, unless the party
+    # has an explicit host_user_id and that user later connects (we'd need
+    # auth over the websocket for that — out of scope right now).
+    if room.host_member_id is None:
+        room.host_member_id = member_id
 
     async def _members_list():
-        return list(room.names.values())
+        host_name = room.names.get(room.host_member_id, "") if room.host_member_id else ""
+        return [{"name": n, "is_host": mid == room.host_member_id}
+                for mid, n in room.names.items()]
 
     try:
         while True:
@@ -7140,15 +7171,40 @@ async def party_ws(websocket: WebSocket, code: str):
                 incoming_name = (msg.get("name") or "").strip()[:40] or name
                 room.names[member_id] = incoming_name
                 name = incoming_name
+                is_host = member_id == room.host_member_id
+                # Tell this client whether they're host + the live host state
+                # so late joiners catch up to the host's current timestamp.
+                catchup_t = room.extrapolate_t()
+                await websocket.send_json({
+                    "type": "you",
+                    "member_id": member_id,
+                    "is_host": is_host,
+                })
+                await websocket.send_json({
+                    "type": "sync",
+                    "action": (room.play_state or {}).get("action", "pause"),
+                    "t": catchup_t,
+                    "by": room.names.get(room.host_member_id, ""),
+                    "catchup": True,
+                })
                 await db.watch_parties.update_one(
-                    {"code": code}, {"$set": {"last_activity_at": now_iso(),
-                                               "member_count": len(room.members)}},
+                    {"code": code},
+                    {"$set": {"last_activity_at": now_iso(),
+                              "member_count": len(room.members)}},
                 )
                 await room.broadcast({"type": "members", "list": await _members_list()})
             elif kind == "sync":
+                # Only the HOST can drive playback. Non-host sync events are
+                # silently ignored so a mischievous viewer can't desync the
+                # room by hitting play/pause/seek on their player.
+                if member_id != room.host_member_id:
+                    continue
                 action = msg.get("action")
                 t_val = float(msg.get("t") or 0)
                 if action in ("play", "pause", "seek"):
+                    import time as _t
+                    room.play_state = {"action": action if action != "seek" else (room.play_state or {}).get("action", "pause"),
+                                        "t": t_val, "ts": _t.monotonic()}
                     await room.broadcast(
                         {"type": "sync", "action": action, "t": t_val, "by": name},
                         skip=member_id,
@@ -7168,6 +7224,10 @@ async def party_ws(websocket: WebSocket, code: str):
     finally:
         room.members.pop(member_id, None)
         room.names.pop(member_id, None)
+        # If the host left, hand off to the next member in order (if any)
+        # so the room keeps functioning. Otherwise clear host.
+        if room.host_member_id == member_id:
+            room.host_member_id = next(iter(room.members.keys()), None)
         try:
             await room.broadcast({"type": "members", "list": await _members_list()})
         except Exception:
@@ -7177,8 +7237,6 @@ async def party_ws(websocket: WebSocket, code: str):
             _PARTY_ROOMS.pop(code, None)
         try:
             upd = {"last_activity_at": now_iso(), "member_count": len(room.members)}
-            # Last member left → close the party permanently so it drops from
-            # the public /parties listing immediately.
             if is_empty:
                 upd["active"] = False
             await db.watch_parties.update_one({"code": code}, {"$set": upd})

@@ -36,15 +36,15 @@ export default function PartyRooms() {
   return (
     <Layout>
       <SiteHead
-        title="Party Rooms — Vizionează cu prietenii"
-        description="Lista camerelor publice de Watch Party active acum. Alătură-te și urmărește împreună cu alții în timp real."
+        title="Camere de vizionare — Alătură-te și vezi cu prietenii"
+        description="Lista camerelor publice de vizionare în grup active acum. Alătură-te și urmărește împreună cu alții în timp real."
       />
       <div className="max-w-5xl" data-testid="party-rooms-page">
         <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
           <div>
             <h1 className="text-3xl sm:text-4xl font-bold mb-1 flex items-center gap-2">
               <Users className="text-fuchsia-400" size={28} />
-              Party Rooms
+              Camere de vizionare
             </h1>
             <p className="text-zinc-400 text-sm">
               Camere publice active chiar acum. Intră și vezi împreună cu alții.
