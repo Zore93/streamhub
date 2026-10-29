@@ -200,6 +200,28 @@ export default function Watch() {
     };
   }, [id, video?.status, video?.renditions?.length, resolution]);
 
+  // Polling fallback — the status WebSocket is the primary mechanism, but if
+  // it drops silently (ingress glitch) OR the user lands on the page after
+  // encoding already finished but with a stale cached response, we poll
+  // `GET /videos/:id` every 5 s while the page still thinks the video isn't
+  // playable. Stops the moment we have renditions + status=ready.
+  useEffect(() => {
+    if (!video) return;
+    const hasPlayable = (video.renditions || []).length > 0;
+    if (video.status === "ready" && hasPlayable) return;
+    if (video.status === "failed") return;
+    const timer = setInterval(async () => {
+      try {
+        const { data: fresh } = await api.get(`/videos/${id}`);
+        setVideo((prev) => (prev ? { ...prev, ...fresh } : fresh));
+        const r = fresh?.renditions || [];
+        if (r.length && !resolution) setResolution(r[r.length - 1].resolution);
+        if (fresh?.status === "ready" && r.length) clearInterval(timer);
+      } catch (_e) { /* ignore */ }
+    }, 5000);
+    return () => clearInterval(timer);
+  }, [id, video?.status, video?.renditions?.length, resolution]);
+
   const currentRendition = video?.renditions?.find((r) => r.resolution === resolution) || video?.renditions?.[0];
 
   // Watch party: open a dialog to pick public/private + guest name, then
@@ -329,7 +351,10 @@ export default function Watch() {
             <div className="absolute inset-0 flex flex-col items-center justify-center bg-zinc-950 text-center px-6" data-testid="processing-view">
               <Loader2 size={42} className="text-rose-500 mb-4 animate-spin" />
               <p className="text-zinc-200 max-w-md">{t("player.processing")}</p>
-              {video.progress != null && (
+              {/* Rich progress bar / percentage shown ONLY to admins. Regular
+                  viewers get the plain "please wait" message above and the
+                  page refetches automatically — see the polling effect below. */}
+              {user?.role === "admin" && video.progress != null && (
                 <div className="w-64 mt-5">
                   <Progress value={video.progress} className="h-2" />
                   <div className="text-xs text-zinc-500 mt-2">{video.progress}%</div>

@@ -3815,17 +3815,36 @@ async def admin_storage_stats(
     - by_profile: breakdown per `encode_profile`
     - items: paginated per-video rows (title, original, compressed, saved %)
     """
+    # ---------- aggregate totals ---------------------------------------
+    # We now include videos that haven't yet gotten their compressed_size_bytes
+    # stamped (older videos pre-dating that field) — we fall back to summing
+    # `renditions.file_size_bytes` on the fly inside the pipeline.
     base_filt = {
         "status": "ready",
         "original_size_bytes": {"$gt": 0},
-        "compressed_size_bytes": {"$gt": 0},
     }
     totals_agg = await db.videos.aggregate([
         {"$match": base_filt},
+        {"$addFields": {
+            "comp_total": {
+                "$cond": [
+                    {"$gt": [{"$ifNull": ["$compressed_size_bytes", 0]}, 0]},
+                    "$compressed_size_bytes",
+                    {"$sum": {
+                        "$map": {
+                            "input": {"$ifNull": ["$renditions", []]},
+                            "as": "r",
+                            "in": {"$ifNull": ["$$r.file_size_bytes", 0]},
+                        }
+                    }},
+                ]
+            }
+        }},
+        {"$match": {"comp_total": {"$gt": 0}}},
         {"$group": {
             "_id": None,
             "orig": {"$sum": "$original_size_bytes"},
-            "comp": {"$sum": "$compressed_size_bytes"},
+            "comp": {"$sum": "$comp_total"},
             "count": {"$sum": 1},
         }},
     ]).to_list(1)
@@ -3837,10 +3856,26 @@ async def admin_storage_stats(
 
     by_profile_agg = await db.videos.aggregate([
         {"$match": base_filt},
+        {"$addFields": {
+            "comp_total": {
+                "$cond": [
+                    {"$gt": [{"$ifNull": ["$compressed_size_bytes", 0]}, 0]},
+                    "$compressed_size_bytes",
+                    {"$sum": {
+                        "$map": {
+                            "input": {"$ifNull": ["$renditions", []]},
+                            "as": "r",
+                            "in": {"$ifNull": ["$$r.file_size_bytes", 0]},
+                        }
+                    }},
+                ]
+            }
+        }},
+        {"$match": {"comp_total": {"$gt": 0}}},
         {"$group": {
             "_id": {"$ifNull": ["$encode_profile", "unknown"]},
             "orig": {"$sum": "$original_size_bytes"},
-            "comp": {"$sum": "$compressed_size_bytes"},
+            "comp": {"$sum": "$comp_total"},
             "count": {"$sum": 1},
         }},
         {"$sort": {"orig": -1}},
@@ -3886,21 +3921,31 @@ async def admin_storage_stats(
     items = []
     for r in rows:
         o = int(r.get("original_size_bytes") or 0)
-        c = int(r.get("compressed_size_bytes") or 0)
+        stored = int(r.get("compressed_size_bytes") or 0)
+        rends_raw = r.get("renditions") or []
+        rends_sum = sum(int((rend or {}).get("file_size_bytes") or 0) for rend in rends_raw)
+        # Prefer the stamped stored value; fall back to summing per-rendition
+        # sizes so older videos (encoded before we started persisting both
+        # fields) still show up with real numbers.
+        c = stored if stored > 0 else rends_sum
+        if c <= 0:
+            # Nothing to show for this video at all → skip it.
+            continue
         s = max(0, o - c)
         p = round(100.0 * s / o, 2) if o > 0 else 0.0
         # Slim down renditions to only what the UI needs.
         rends_slim = []
-        for rend in (r.get("renditions") or []):
-            rs = int(rend.get("file_size_bytes") or 0)
+        for rend in rends_raw:
+            rs = int((rend or {}).get("file_size_bytes") or 0)
             rp = round(100.0 * (o - rs) / o, 2) if (o > 0 and rs > 0) else 0.0
             rends_slim.append({
-                "resolution": rend.get("resolution"),
+                "resolution": (rend or {}).get("resolution"),
                 "file_size_bytes": rs,
                 "saved_bytes": max(0, o - rs) if rs > 0 else 0,
                 "saved_pct": rp,
             })
         r["renditions"] = rends_slim
+        r["compressed_size_bytes"] = c  # expose fallback-computed value too
         items.append({**r, "saved_bytes": s, "saved_pct": p})
 
     return {
