@@ -92,8 +92,10 @@ export default function ShortsSeriesDetail({ category = "xxx" }) {
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-2 sm:gap-4" data-testid="series-episodes-grid">
           {episodes.map((v, i) => (
             <div key={v.id} className="relative">
-              <div className="absolute top-2 left-2 z-10 bg-black/70 backdrop-blur-sm text-white text-[11px] font-bold px-1.5 py-0.5 rounded">
-                Ep {i + 1}
+              <div className="absolute inset-0 z-10 flex items-center justify-center pointer-events-none">
+                <div className="bg-black/60 backdrop-blur-sm text-white text-xl sm:text-2xl font-black px-3 py-1 rounded-md border border-white/20 drop-shadow-[0_2px_8px_rgba(0,0,0,0.9)]">
+                  Ep {i + 1}
+                </div>
               </div>
               <VideoCard v={v} vertical />
             </div>

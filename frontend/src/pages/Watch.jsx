@@ -7,7 +7,7 @@ import { categoryLabel } from "@/i18n";
 import { Layout } from "@/layout/Layout";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { Eye, Crown, Lock, Send, Trash2, Loader2, ThumbsUp, Folder, Coins, Flag } from "lucide-react";
+import { Eye, Crown, Lock, Send, Trash2, Loader2, ThumbsUp, Folder, Coins, Flag, Subtitles } from "lucide-react";
 import { toast } from "sonner";
 import VideoPlayer from "@/components/VideoPlayer";
 import FramedAvatar from "@/components/FramedAvatar";
@@ -429,6 +429,35 @@ export default function Watch() {
             </a>
           )}
         </div>
+
+        {/* ─── Subtitle (CC) selection hint — shown only when the video
+             actually has one or more subtitle tracks. Brand accent chenar. */}
+        {(video.subtitles || []).length > 0 && (
+          <div
+            className="relative bg-gradient-to-br from-rose-500/10 via-orange-500/5 to-amber-500/10 border border-rose-500/40 rounded-lg px-4 py-3 mb-4 shadow-[0_0_24px_rgba(244,63,94,0.08)]"
+            data-testid="cc-instructions"
+          >
+            <div className="absolute left-0 top-0 bottom-0 w-1 bg-gradient-to-b from-rose-500 to-amber-400 rounded-l-lg" />
+            <div className="pl-2 space-y-1.5">
+              <p className="text-sm text-zinc-100 leading-snug flex flex-wrap items-center gap-x-1">
+                <span className="text-rose-300 font-semibold tracking-wide">[RO]</span>
+                <span>Pentru a selecta subtitrarea dorită la videoclip, vă rugăm să apăsați pe butonul</span>
+                <span className="inline-flex items-center justify-center w-7 h-7 mx-0.5 bg-black/80 border border-rose-500/60 rounded text-rose-200 align-middle" aria-label="buton subtitrări">
+                  <Subtitles size={16} />
+                </span>
+                <span>din partea dreapta jos a videoclipului.</span>
+              </p>
+              <p className="text-sm text-zinc-300 leading-snug flex flex-wrap items-center gap-x-1">
+                <span className="text-amber-300 font-semibold tracking-wide">[EN]</span>
+                <span>To choose the subtitles for this video, please click the</span>
+                <span className="inline-flex items-center justify-center w-7 h-7 mx-0.5 bg-black/80 border border-amber-500/60 rounded text-amber-200 align-middle" aria-label="subtitle button">
+                  <Subtitles size={16} />
+                </span>
+                <span>button at the bottom-right of the player.</span>
+              </p>
+            </div>
+          </div>
+        )}
 
         {video.description && (
           <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-4 mb-6 text-zinc-300 whitespace-pre-line">{video.description}</div>

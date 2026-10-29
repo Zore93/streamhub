@@ -44,28 +44,50 @@ async def probe_video(path: str) -> Dict:
         info = json.loads(stdout.decode())
         streams = info.get("streams", [])
         fmt = info.get("format", {})
-        # Pick the FIRST video stream for width/height
-        video_stream: Dict = next(
-            (s for s in streams if s.get("codec_type") == "video"), {}
+        # Pick the LARGEST video stream (by pixel count) for width/height.
+        # Many MKV / MP4 containers embed cover-art as a tiny attached picture
+        # stream flagged as codec_type="video" — that used to make us encode
+        # 1080p sources at only 320x320 (or whatever the thumbnail was).
+        # Re-query width/height per video stream because the initial projection
+        # didn't include them.
+        proc2 = await asyncio.create_subprocess_exec(
+            "ffprobe",
+            "-v", "error",
+            "-select_streams", "v",
+            "-show_entries", "stream=index,width,height,disposition",
+            "-of", "json",
+            path,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
         )
-        # We had to add codec_type to the projection but `stream=width,height`
-        # was the original selector — re-query for it cheaply now.
-        if not video_stream.get("width"):
-            proc2 = await asyncio.create_subprocess_exec(
-                "ffprobe",
-                "-v", "error",
-                "-select_streams", "v:0",
-                "-show_entries", "stream=width,height",
-                "-of", "json",
-                path,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            out2, _ = await proc2.communicate()
+        out2, _ = await proc2.communicate()
+        try:
+            vstreams = json.loads(out2.decode()).get("streams", []) or []
+        except Exception:
+            vstreams = []
+        # Prefer streams whose `attached_pic` disposition flag is 0 (i.e. real
+        # video), then pick the biggest one by width*height.
+        def _pixels(s: Dict) -> int:
             try:
-                video_stream = json.loads(out2.decode()).get("streams", [{}])[0]
+                return int(s.get("width", 0) or 0) * int(s.get("height", 0) or 0)
             except Exception:
-                video_stream = {}
+                return 0
+        real_streams = [
+            s for s in vstreams
+            if not (s.get("disposition") or {}).get("attached_pic")
+        ]
+        pool = real_streams or vstreams
+        video_stream: Dict = max(pool, key=_pixels, default={})
+        if _pixels(video_stream) == 0 and vstreams:
+            # last-resort fallback — some ffprobe builds don't fill disposition
+            video_stream = max(vstreams, key=_pixels, default={})
+        logger.info(
+            "probe_video: %s → %d video stream(s), chose index=%s %dx%d (candidates: %s)",
+            Path(path).name, len(vstreams), video_stream.get("index"),
+            int(video_stream.get("width", 0) or 0),
+            int(video_stream.get("height", 0) or 0),
+            [(s.get("index"), s.get("width"), s.get("height")) for s in vstreams],
+        )
         sub_streams: List[Dict] = []
         for s in streams:
             if s.get("codec_type") != "subtitle":
@@ -335,14 +357,20 @@ async def generate_thumbnails(
     return paths
 
 
-# crf + max video bitrate (kbps) per output height + audio bitrate
+# crf + max video bitrate (kbps) per output height + audio bitrate + x264 preset
+# `preset` controls encoding SPEED vs compression:
+#   veryfast  — ~5-8x real-time (fast like it used to be before compression profiles)
+#   fast      — ~3-5x real-time
+#   medium    — ~1-2x real-time (ffmpeg default)
+#   slow      — ~0.5x real-time (best compression)
 ENCODE_PROFILES: Dict[str, dict] = {
-    "original": {"crf": 20, "caps": {360: 1200, 720: 4000, 1080: 8000, 1152: 9000, 2160: 20000}, "audio": "160k"},
-    "balanced": {"crf": 23, "caps": {360: 900, 720: 2800, 1080: 5000, 1152: 6000, 2160: 14000}, "audio": "128k"},
-    "strong": {"crf": 25, "caps": {360: 700, 720: 2000, 1080: 3500, 1152: 4200, 2160: 10000}, "audio": "128k"},
-    "max": {"crf": 27, "caps": {360: 500, 720: 1400, 1080: 2500, 1152: 3000, 2160: 7000}, "audio": "96k"},
+    "default":  {"crf": 23, "preset": "veryfast", "caps": {360: 1000, 720: 3500, 1080: 7000, 1152: 8000, 2160: 18000}, "audio": "128k"},
+    "original": {"crf": 20, "preset": "slow",     "caps": {360: 1200, 720: 4000, 1080: 8000, 1152: 9000, 2160: 20000}, "audio": "160k"},
+    "balanced": {"crf": 23, "preset": "slow",     "caps": {360: 900,  720: 2800, 1080: 5000, 1152: 6000, 2160: 14000}, "audio": "128k"},
+    "strong":   {"crf": 25, "preset": "slow",     "caps": {360: 700,  720: 2000, 1080: 3500, 1152: 4200, 2160: 10000}, "audio": "128k"},
+    "max":      {"crf": 27, "preset": "slow",     "caps": {360: 500,  720: 1400, 1080: 2500, 1152: 3000, 2160: 7000},  "audio": "96k"},
 }
-DEFAULT_ENCODE_PROFILE = "original"
+DEFAULT_ENCODE_PROFILE = "default"
 
 
 async def transcode_to_resolution(
@@ -366,6 +394,11 @@ async def transcode_to_resolution(
     w, h = RESOLUTIONS[target_resolution]
     prof = ENCODE_PROFILES.get(profile) or ENCODE_PROFILES[DEFAULT_ENCODE_PROFILE]
     cap = prof["caps"].get(h, 5000)
+    preset = prof.get("preset", "slow")
+    logger.info(
+        "transcode_to_resolution: → %s (%dx%d) profile=%s preset=%s crf=%d maxrate=%dk",
+        target_resolution, w, h, profile, preset, prof["crf"], cap,
+    )
     # scale keeping aspect with -2 then pad? simplest: scale width to w, height adjusted to even
     vf = f"scale='if(gt(a,{w}/{h}),{w},-2)':'if(gt(a,{w}/{h}),-2,{h})'"
     Path(os.path.dirname(output_path)).mkdir(parents=True, exist_ok=True)
@@ -384,7 +417,7 @@ async def transcode_to_resolution(
             "-i", input_path,
             "-vf", vf,
             "-c:v", "libx264",
-            "-preset", "slow",
+            "-preset", preset,
             "-crf", str(prof["crf"]),
             "-maxrate", f"{cap}k",
             "-bufsize", f"{cap * 2}k",

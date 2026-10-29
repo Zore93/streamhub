@@ -21,7 +21,8 @@ import {
 const RES_OPTIONS = ["360p", "720p", "1080p", "2048p", "4096p"];
 
 const ENCODE_PROFILES = [
-  { id: "original", name: "Calitate originală", size: "1080p: max ~3.6 GB/oră", quality: "Vizual identică cu originalul. Nicio diferență observabilă." },
+  { id: "default",  name: "Default (rapid)", size: "1080p: max ~3.1 GB/oră", quality: "Encodare rapidă, calitate foarte bună. Preset ‘veryfast’ ca înainte." },
+  { id: "original", name: "Calitate originală", size: "1080p: max ~3.6 GB/oră", quality: "Vizual identică cu originalul. Encodare lentă pentru compresie maximă la calitate 1:1." },
   { id: "balanced", name: "Echilibrat", size: "1080p: max ~2.2 GB/oră", quality: "Aproape identică. Diferențe minime doar la comparație cadru cu cadru." },
   { id: "strong", name: "Puternic", size: "1080p: max ~1.6 GB/oră", quality: "Foarte bună. Ușoare pierderi de detaliu în scenele cu multă mișcare." },
   { id: "max", name: "Maxim", size: "1080p: max ~1.1 GB/oră", quality: "Bună. Pierdere vizibilă de detalii fine și ușoare artefacte în mișcare." },
@@ -122,6 +123,7 @@ export default function Admin() {
           <TabsTrigger value="chat" data-testid="tab-chat">Live Chat</TabsTrigger>
           <TabsTrigger value="reports" data-testid="tab-reports">Rapoarte</TabsTrigger>
           <TabsTrigger value="seo" data-testid="tab-seo">SEO</TabsTrigger>
+          <TabsTrigger value="storage" data-testid="tab-storage">Storage</TabsTrigger>
           <TabsTrigger value="settings" data-testid="tab-settings">Settings</TabsTrigger>
         </TabsList>
         <TabsContent value="dashboard"><Dashboard /></TabsContent>
@@ -141,6 +143,7 @@ export default function Admin() {
         <TabsContent value="chat"><ChatModerationTab /></TabsContent>
         <TabsContent value="reports"><ReportsTab /></TabsContent>
         <TabsContent value="seo"><SEODashboardTab /></TabsContent>
+        <TabsContent value="storage"><StorageTab /></TabsContent>
         <TabsContent value="settings"><SettingsTab /></TabsContent>
       </Tabs>
     </div>
@@ -226,6 +229,18 @@ function VideosTab() {
     load(0, false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filterKey]);
+
+  // Live progress polling: when any processing video is visible, refresh
+  // every 4s so the admin sees the encoding progress bar advance in real time.
+  useEffect(() => {
+    const anyProcessing = items.some((v) => v.status === "processing");
+    if (!anyProcessing) return undefined;
+    const id = setInterval(() => {
+      load(skip, false);
+    }, 4000);
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items, skip]);
 
   const del = async (id) => {
     if (!window.confirm("Delete?")) return;
@@ -423,6 +438,9 @@ function VideosTab() {
               {v.is_short && (<><span>·</span><span className="text-fuchsia-300">SHORT</span></>)}
               {v.synopsis && <><span>·</span><span className="text-violet-300 inline-flex items-center gap-0.5"><Sparkles size={10} /> sinopsis</span></>}
             </div>
+            {v.status === "processing" && (
+              <EncodingProgressBar progress={v.progress} videoId={v.id} />
+            )}
           </div>
           <Link to={`/edit-video/${v.id}`}>
             <Button size="sm" variant="outline" className="border-zinc-700 hover:bg-zinc-800" data-testid={`edit-vid-${v.id}`}>
@@ -1383,7 +1401,7 @@ function SettingsTab() {
             ))}
           </div>
         </div>
-        <EncodeProfilePicker value={s.encode_profile || "original"} onChange={(v) => upd("encode_profile", v)} />
+        <EncodeProfilePicker value={s.encode_profile || "default"} onChange={(v) => upd("encode_profile", v)} />
       </Section>
       <Section title="Storage">
         <Field label="Backend">
@@ -3483,3 +3501,191 @@ function ReportsTab() {
   );
 }
 
+
+
+
+// ─────────── Live encoding progress bar used in VideosTab ────────────
+function EncodingProgressBar({ progress, videoId }) {
+  const pct = Math.max(0, Math.min(100, parseInt(progress, 10) || 0));
+  return (
+    <div className="mt-2 flex items-center gap-2" data-testid={`encoding-progress-${videoId}`}>
+      <div className="flex-1 h-2 bg-zinc-800 rounded-full overflow-hidden">
+        <div
+          className="h-full bg-gradient-to-r from-rose-500 via-orange-500 to-amber-400 transition-all duration-500"
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+      <span className="text-[11px] text-amber-300 font-mono w-10 text-right">{pct}%</span>
+    </div>
+  );
+}
+
+
+// ─────────────────── Storage / Compression stats tab ──────────────────
+function formatBytes(n) {
+  n = Number(n) || 0;
+  if (n <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let i = 0;
+  while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
+  return `${n.toFixed(n >= 10 ? 1 : 2)} ${units[i]}`;
+}
+
+const PROFILE_LABELS = {
+  default: "Default (rapid)",
+  original: "Calitate originală",
+  balanced: "Echilibrat",
+  strong: "Puternic",
+  max: "Maxim",
+  unknown: "Necunoscut",
+  "": "Necunoscut",
+};
+
+function StorageTab() {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [skip, setSkip] = useState(0);
+  const [q, setQ] = useState("");
+  const [debouncedQ, setDebouncedQ] = useState("");
+  const PAGE = 50;
+
+  useEffect(() => {
+    const id = setTimeout(() => setDebouncedQ(q.trim()), 350);
+    return () => clearTimeout(id);
+  }, [q]);
+
+  const load = async (nextSkip = 0) => {
+    setLoading(true);
+    try {
+      const p = new URLSearchParams({ skip: String(nextSkip), limit: String(PAGE) });
+      if (debouncedQ) p.set("q", debouncedQ);
+      const { data: r } = await api.get(`/admin/storage-stats?${p.toString()}`);
+      setData(r);
+      setSkip(nextSkip);
+    } finally { setLoading(false); }
+  };
+
+  useEffect(() => { load(0); /* eslint-disable-next-line */ }, [debouncedQ]);
+
+  if (!data) return <div className="text-zinc-500 py-6">Se încarcă statisticile de spațiu…</div>;
+
+  const t = data.totals || {};
+  const items = data.items || [];
+  const byProf = data.by_profile || [];
+  const itemTotal = data.item_total || 0;
+  const totalPages = Math.max(1, Math.ceil(itemTotal / PAGE));
+  const currentPage = Math.floor(skip / PAGE) + 1;
+
+  return (
+    <div className="mt-6 space-y-6" data-testid="admin-storage">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-4" data-testid="storage-total-count">
+          <div className="text-xs text-zinc-500 uppercase tracking-wide">Videoclipuri</div>
+          <div className="text-2xl font-bold text-zinc-100 mt-1">{t.video_count || 0}</div>
+        </div>
+        <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-4" data-testid="storage-total-original">
+          <div className="text-xs text-zinc-500 uppercase tracking-wide">Original</div>
+          <div className="text-2xl font-bold text-zinc-100 mt-1">{formatBytes(t.original_size_bytes)}</div>
+        </div>
+        <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-4" data-testid="storage-total-compressed">
+          <div className="text-xs text-zinc-500 uppercase tracking-wide">După compresie</div>
+          <div className="text-2xl font-bold text-zinc-100 mt-1">{formatBytes(t.compressed_size_bytes)}</div>
+        </div>
+        <div className="bg-gradient-to-br from-emerald-500/20 via-zinc-900 to-emerald-500/5 border border-emerald-500/40 rounded-lg p-4" data-testid="storage-total-saved">
+          <div className="text-xs text-emerald-300 uppercase tracking-wide">Economisit</div>
+          <div className="text-2xl font-bold text-emerald-300 mt-1">
+            {formatBytes(t.saved_bytes)}
+            <span className="text-sm font-normal text-emerald-400/80 ml-2">({t.saved_pct || 0}%)</span>
+          </div>
+        </div>
+      </div>
+
+      {byProf.length > 0 && (
+        <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-4">
+          <h3 className="text-sm font-semibold text-zinc-200 mb-3">Pe profil de compresie</h3>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm" data-testid="storage-by-profile">
+              <thead className="text-xs text-zinc-500 uppercase">
+                <tr className="border-b border-zinc-800">
+                  <th className="text-left py-2 px-2">Profil</th>
+                  <th className="text-right py-2 px-2">Nr. videoclipuri</th>
+                  <th className="text-right py-2 px-2">Original</th>
+                  <th className="text-right py-2 px-2">Compresat</th>
+                  <th className="text-right py-2 px-2">Economisit</th>
+                  <th className="text-right py-2 px-2">%</th>
+                </tr>
+              </thead>
+              <tbody>
+                {byProf.map((row) => (
+                  <tr key={row.profile} className="border-b border-zinc-800/50">
+                    <td className="py-2 px-2 text-zinc-200">{PROFILE_LABELS[row.profile] || row.profile}</td>
+                    <td className="py-2 px-2 text-right text-zinc-300">{row.count}</td>
+                    <td className="py-2 px-2 text-right text-zinc-300">{formatBytes(row.original_size_bytes)}</td>
+                    <td className="py-2 px-2 text-right text-zinc-300">{formatBytes(row.compressed_size_bytes)}</td>
+                    <td className="py-2 px-2 text-right text-emerald-400 font-semibold">{formatBytes(row.saved_bytes)}</td>
+                    <td className="py-2 px-2 text-right text-emerald-400">{row.saved_pct}%</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-4">
+        <div className="flex flex-wrap items-center gap-3 mb-3">
+          <h3 className="text-sm font-semibold text-zinc-200">Detaliu pe videoclip</h3>
+          <div className="text-xs text-zinc-500">{itemTotal} videoclipuri cu date de compresie</div>
+          <Input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Caută după titlu…"
+            className="bg-zinc-950 border-zinc-800 max-w-xs ml-auto"
+            data-testid="storage-search"
+          />
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm" data-testid="storage-table">
+            <thead className="text-xs text-zinc-500 uppercase">
+              <tr className="border-b border-zinc-800">
+                <th className="text-left py-2 px-2">Titlu</th>
+                <th className="text-left py-2 px-2 hidden md:table-cell">Profil</th>
+                <th className="text-right py-2 px-2">Original</th>
+                <th className="text-right py-2 px-2">Compresat</th>
+                <th className="text-right py-2 px-2">Economisit</th>
+                <th className="text-right py-2 px-2">%</th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((v) => (
+                <tr key={v.id} className="border-b border-zinc-800/50 hover:bg-zinc-950/50" data-testid={`storage-row-${v.id}`}>
+                  <td className="py-2 px-2">
+                    <Link to={`/watch/${v.slug || v.id}`} target="_blank" rel="noopener noreferrer" className="text-zinc-200 hover:text-rose-400 line-clamp-1 max-w-md">
+                      {v.title}
+                    </Link>
+                    <div className="text-xs text-zinc-500">@{v.uploader_username || "?"}</div>
+                  </td>
+                  <td className="py-2 px-2 hidden md:table-cell text-zinc-400 text-xs">{PROFILE_LABELS[v.encode_profile] || v.encode_profile || "—"}</td>
+                  <td className="py-2 px-2 text-right text-zinc-300 whitespace-nowrap">{formatBytes(v.original_size_bytes)}</td>
+                  <td className="py-2 px-2 text-right text-zinc-300 whitespace-nowrap">{formatBytes(v.compressed_size_bytes)}</td>
+                  <td className="py-2 px-2 text-right text-emerald-400 font-semibold whitespace-nowrap">{formatBytes(v.saved_bytes)}</td>
+                  <td className="py-2 px-2 text-right text-emerald-400 whitespace-nowrap">{v.saved_pct}%</td>
+                </tr>
+              ))}
+              {items.length === 0 && !loading && (
+                <tr><td colSpan={6} className="text-center py-6 text-zinc-500">Niciun videoclip comprimat încă.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+        <div className="mt-4">
+          <Pagination
+            currentPage={currentPage}
+            totalPages={totalPages}
+            onPageChange={(page) => load(Math.max(0, (page - 1) * PAGE))}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}

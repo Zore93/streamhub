@@ -620,15 +620,31 @@ async def process_video(video_id: str, src_path: str):
             # Decide which resolutions
             enabled = settings.get("enabled_resolutions", ["360p", "720p", "1080p"])
             target_resolutions = filter_resolutions_for_source(src_h or 1080, enabled)
+            chosen_profile = settings.get("encode_profile") or "default"
+            logger.info(
+                "process_video: id=%s src=%dx%d (dur=%.1fs) → enabled=%s → chosen=%s · profile=%s",
+                video_id, src_w, src_h, duration, enabled, target_resolutions, chosen_profile,
+            )
             renditions: List[dict] = []
             total = max(len(target_resolutions), 1)
+            compressed_total = 0
             for i, res in enumerate(target_resolutions):
                 out_rel = f"videos/{video_id}_{res}.mp4"
                 out_path = UPLOAD_DIR / out_rel
-                ok = await transcode_to_resolution(src_path, str(out_path), res, settings.get("encode_profile") or "original")
+                ok = await transcode_to_resolution(src_path, str(out_path), res, chosen_profile)
                 if ok:
                     w, h = RESOLUTIONS[res]
                     final_url = out_rel
+                    # Record size BEFORE we potentially delete the local file
+                    try:
+                        rend_size = os.path.getsize(out_path)
+                    except Exception:
+                        rend_size = 0
+                    compressed_total += rend_size
+                    logger.info(
+                        "process_video: id=%s rendition %s → %d bytes (%.1f MB)",
+                        video_id, res, rend_size, rend_size / (1024 * 1024),
+                    )
                     if use_wasabi:
                         uploaded = await wasabi_upload(
                             str(out_path), out_rel, settings, "video/mp4"
@@ -644,10 +660,20 @@ async def process_video(video_id: str, src_path: str):
                             resolution=res, url=final_url, width=w, height=h
                         ).model_dump()
                     )
+                else:
+                    logger.warning(
+                        "process_video: id=%s rendition %s FAILED (see transcoder stderr tail above)",
+                        video_id, res,
+                    )
                 progress = 30 + int(65 * (i + 1) / total)
                 # As soon as the FIRST rendition completes, mark the video "ready"
                 # so the watch page can start playing while the rest transcode.
-                upd = {"renditions": renditions, "progress": progress}
+                upd = {
+                    "renditions": renditions,
+                    "progress": progress,
+                    "compressed_size_bytes": compressed_total,
+                    "encode_profile": chosen_profile,
+                }
                 if renditions and i == 0:
                     upd["status"] = "ready"
                 await db.videos.update_one({"id": video_id}, {"$set": upd})
@@ -3653,6 +3679,110 @@ async def admin_list_videos(
     )
     items = await cur.to_list(limit)
     return {"items": items, "total": total, "skip": skip, "limit": limit}
+
+@api.get("/admin/storage-stats")
+async def admin_storage_stats(
+    skip: int = 0,
+    limit: int = 50,
+    q: Optional[str] = None,
+    admin: dict = Depends(require_admin),
+):
+    """Aggregated compression / storage savings across all transcoded videos.
+
+    Returns:
+    - totals: aggregate original_size, compressed_size, saved bytes, saved %
+    - by_profile: breakdown per `encode_profile`
+    - items: paginated per-video rows (title, original, compressed, saved %)
+    """
+    base_filt = {
+        "status": "ready",
+        "original_size_bytes": {"$gt": 0},
+        "compressed_size_bytes": {"$gt": 0},
+    }
+    totals_agg = await db.videos.aggregate([
+        {"$match": base_filt},
+        {"$group": {
+            "_id": None,
+            "orig": {"$sum": "$original_size_bytes"},
+            "comp": {"$sum": "$compressed_size_bytes"},
+            "count": {"$sum": 1},
+        }},
+    ]).to_list(1)
+    tot_orig = int(totals_agg[0]["orig"]) if totals_agg else 0
+    tot_comp = int(totals_agg[0]["comp"]) if totals_agg else 0
+    tot_count = int(totals_agg[0]["count"]) if totals_agg else 0
+    saved = max(0, tot_orig - tot_comp)
+    saved_pct = round(100.0 * saved / tot_orig, 2) if tot_orig > 0 else 0.0
+
+    by_profile_agg = await db.videos.aggregate([
+        {"$match": base_filt},
+        {"$group": {
+            "_id": {"$ifNull": ["$encode_profile", "unknown"]},
+            "orig": {"$sum": "$original_size_bytes"},
+            "comp": {"$sum": "$compressed_size_bytes"},
+            "count": {"$sum": 1},
+        }},
+        {"$sort": {"orig": -1}},
+    ]).to_list(50)
+    by_profile = []
+    for row in by_profile_agg:
+        o = int(row["orig"] or 0); c = int(row["comp"] or 0)
+        s = max(0, o - c)
+        p = round(100.0 * s / o, 2) if o > 0 else 0.0
+        by_profile.append({
+            "profile": row["_id"] or "unknown",
+            "count": int(row["count"] or 0),
+            "original_size_bytes": o,
+            "compressed_size_bytes": c,
+            "saved_bytes": s,
+            "saved_pct": p,
+        })
+
+    filt = dict(base_filt)
+    if q and q.strip():
+        import re as _re
+        rex = _re.escape(q.strip())
+        filt["title"] = {"$regex": rex, "$options": "i"}
+    item_total = await db.videos.count_documents(filt)
+    limit = max(1, min(limit, 200))
+    cur = (
+        db.videos.find(
+            filt,
+            {
+                "_id": 0, "id": 1, "title": 1, "slug": 1, "uploader_username": 1,
+                "original_size_bytes": 1, "compressed_size_bytes": 1,
+                "encode_profile": 1, "created_at": 1,
+            },
+        )
+        .sort("original_size_bytes", -1)
+        .skip(max(0, skip))
+        .limit(limit)
+    )
+    rows = await cur.to_list(limit)
+    items = []
+    for r in rows:
+        o = int(r.get("original_size_bytes") or 0)
+        c = int(r.get("compressed_size_bytes") or 0)
+        s = max(0, o - c)
+        p = round(100.0 * s / o, 2) if o > 0 else 0.0
+        items.append({**r, "saved_bytes": s, "saved_pct": p})
+
+    return {
+        "totals": {
+            "video_count": tot_count,
+            "original_size_bytes": tot_orig,
+            "compressed_size_bytes": tot_comp,
+            "saved_bytes": saved,
+            "saved_pct": saved_pct,
+        },
+        "by_profile": by_profile,
+        "items": items,
+        "item_total": item_total,
+        "skip": skip,
+        "limit": limit,
+    }
+
+
 
 
 @api.get("/admin/videos/legacy-stats")

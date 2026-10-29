@@ -124,6 +124,10 @@ class Video(BaseModel):
     original_size_bytes: int = 0
     original_width: int = 0
     original_height: int = 0
+    # Sum of all transcoded rendition file sizes — used by Admin → Storage to
+    # show how much space the compression saved vs the original upload.
+    compressed_size_bytes: int = 0
+    encode_profile: str = ""  # which profile was used at transcode time
     status: str = "processing"  # processing | ready | failed
     progress: int = 0
     error: Optional[str] = None
@@ -360,7 +364,7 @@ class AppSettings(BaseModel):
     # FFmpeg
     ffmpeg_concurrency: int = 2
     enabled_resolutions: List[str] = ["360p", "720p", "1080p"]
-    encode_profile: str = "original"  # original | balanced | strong | max
+    encode_profile: str = "default"  # default | original | balanced | strong | max
     # Upload
     max_upload_size_mb: int = 1024
     allow_user_uploads: bool = True

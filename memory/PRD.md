@@ -1,3 +1,22 @@
+## Iteration 27 — Storage stats, live encoding progress, CC hint, episode number centered, 1080p encoding fix (Feb 2026)
+- **Backend `transcoder.probe_video` bug fix**: Previously used the FIRST video stream, which may be an attached-picture (MKV cover art) with tiny dimensions — the main video stream was ignored, so 1080p sources could be probed as e.g. 320×320 and only output 720p. New logic picks the LARGEST video stream (by pixel count) while preferring streams whose `disposition.attached_pic` flag is 0. Added detailed logging with full candidate list.
+- **Backend `transcoder.ENCODE_PROFILES`**: Added `"default"` profile (preset `veryfast`, CRF 23) and made it the new DEFAULT. Matches the original fast encoding behaviour before per-profile compression was introduced. Existing profiles (`original`, `balanced`, `strong`, `max`) all pinned to preset `slow` for best compression.
+- **Backend `transcoder.transcode_to_resolution`**: `preset` now comes from the profile dict instead of being hard-coded to `slow`. Added info log line emitted at the start of each rendition with chosen res, crf, maxrate, preset.
+- **Backend `process_video`**: Added per-rendition size tracking into `compressed_size_bytes` on the `Video` doc, plus stamps `encode_profile` used at transcode time. New info logs: source WxH, enabled resolutions, chosen resolutions, size of each rendition in MB. Failed renditions now log explicitly instead of being silently skipped.
+- **Backend `models.Video`**: Added `compressed_size_bytes: int` and `encode_profile: str`.
+- **Backend `models.AppSettings`**: Default `encode_profile` is now `"default"` (was `"original"`).
+- **Backend new endpoint `GET /api/admin/storage-stats`**: Returns aggregated totals (video count, original bytes, compressed bytes, saved bytes, saved %), a per-profile breakdown, and a paginated per-video table. Only counts videos with `status=ready` AND both size fields populated.
+- **Frontend `Admin.jsx` → Storage tab (new)**: Totals cards + per-profile breakdown table + per-video paginated table with search; uses a shared `formatBytes` helper and friendly profile labels (`PROFILE_LABELS`).
+- **Frontend `Admin.jsx` → Videos tab**: Each processing video now shows a live `EncodingProgressBar` (gradient rose→amber bar + percent). While any processing video is visible the list auto-refreshes every 4s.
+- **Frontend `Admin.jsx` → Settings → Compresie video**: Added "Default (rapid)" as the first profile option (preset `veryfast` like before compression profiles existed). Settings now default `encode_profile` to `"default"`.
+- **Frontend `Watch.jsx`**: New brand-accent chenar below the Like / Report row shown ONLY when the video has at least one subtitle track. Contains RO + EN instructions with an inline `Subtitles` (CC) icon replacing the literal "CC" text, matching the icon in the player bar. Rose→amber gradient border with left ribbon.
+- **Frontend episode thumbnails (7 pages)**: `Ep X` badge moved from `top-left corner` to **centered over the thumbnail** (bigger font, bordered pill with backdrop-blur) on `HentaiSeriesDetail`, `HentaiSeasonDetail`, `AnimeSeriesDetail`, `AnimeSeasonDetail`, `TvSeriesDetail`, `TvSeasonDetail`, `ShortsSeriesDetail`. Uses `pointer-events-none` so clicks still reach the underlying `VideoCard`.
+
+### Important operator note (1080p encoding)
+During investigation we found the admin's `enabled_resolutions` setting was `["360p", "720p"]` — this would ALSO cap 1080p sources at 720p regardless of any probe fix. If the admin wants 1080p outputs they must check `1080p` in Admin → Settings → Enabled resolutions.
+
+
+
 ## Iteration 26 — Home redesigned around Hentai + sidebar cleanup (Feb 2026)
 - **Home page**: Removed "Ultimele Încărcări" (generic latest) section and replaced it with "Ultimele episoade hentai adăugate" (last 12 hentai videos from `/videos?section=latest&kind=video&is_hentai=true`). New section lives inside the `showHentai` gate, so it shows on "Toate" tab and "Hentai RoSub" tab.
 - **Home tabs**: Removed "Videoclipuri" tab (no longer meaningful since generic latest section was dropped). Also removed `latest`/`popular`/`showVideos` state in `Home.jsx`.
