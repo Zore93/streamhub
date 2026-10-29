@@ -128,6 +128,13 @@ class Video(BaseModel):
     # show how much space the compression saved vs the original upload.
     compressed_size_bytes: int = 0
     encode_profile: str = ""  # which profile was used at transcode time
+    # ─── 15s/30s preview clip for non-paying users on PRO/VIP videos ────
+    # Generated at upload-time by FFmpeg. XXX Shorts get 15s, everything
+    # else gets 30s. We expose the preview even for free videos so the
+    # client can show "subscribe to continue" overlays if we ever gate
+    # more content later.
+    preview_url: Optional[str] = None
+    preview_duration: int = 0  # seconds
     status: str = "processing"  # processing | ready | failed
     progress: int = 0
     error: Optional[str] = None
@@ -567,3 +574,48 @@ class FilmCategory(BaseModel):
     active: bool = True
     position: int = 0
     created_at: str = Field(default_factory=now_iso)
+
+
+
+# ============ Timeline Emoji Reactions ============
+# Applied only to Anime / Seriale TV / Filme videos (NOT shorts, NOT hentai).
+# Shown as floating emoji bubbles while the user watches, plus density marks
+# on the seek bar. Set is a FIXED list of 10 emojis.
+REACTION_EMOJIS = ["😂", "🔥", "💔", "😱", "🥰", "👏", "🤔", "😭", "💀", "🙌"]
+
+
+class VideoReaction(BaseModel):
+    id: str = Field(default_factory=new_id)
+    video_id: str
+    user_id: str
+    emoji: str  # must be one of REACTION_EMOJIS
+    timestamp_sec: float  # position in the video, 0 → duration
+    created_at: str = Field(default_factory=now_iso)
+
+
+# ============ Watch Party rooms ============
+# Open to anyone (even logged-out users via a short-lived guest_name). A room
+# locks to one video_id at creation time. Up to 10 simultaneous users; the
+# host (first user to connect) drives play/pause/seek, chat is free-form.
+class WatchParty(BaseModel):
+    id: str = Field(default_factory=new_id)
+    code: str  # short, URL-friendly, unique
+    video_id: str
+    host_user_id: Optional[str] = None  # None for guest-created rooms
+    host_name: str = ""
+    created_at: str = Field(default_factory=now_iso)
+    last_activity_at: str = Field(default_factory=now_iso)
+    active: bool = True
+    member_count: int = 0  # updated by the websocket layer
+
+
+# ============ Weekly view counts ============
+# One row per (video_id, iso_week) pair, incremented on every /view hit. Used
+# by /top-weekly and /trending pages. Historic weeks remain queryable for SEO.
+class VideoViewsWeekly(BaseModel):
+    id: str = Field(default_factory=new_id)
+    video_id: str
+    iso_week: str  # e.g. "2026-W05"
+    week_start: str  # ISO date of the Monday
+    views: int = 0
+    updated_at: str = Field(default_factory=now_iso)

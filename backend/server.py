@@ -96,6 +96,7 @@ from chat import hub as chat_hub, video_status_hub
 from transcoder import (
     RESOLUTIONS,
     extract_embedded_subtitles,
+    extract_preview_clip,
     filter_resolutions_for_source,
     generate_thumbnails,
     probe_video,
@@ -576,6 +577,41 @@ async def process_video(video_id: str, src_path: str):
                 },
             )
             await _publish_status(video_id)
+            # ----- Preview clip (15s for XXX shorts, 30s otherwise) ---------
+            # XXX shorts are usually ~60s so a 30s preview would be too much;
+            # 15s keeps the paywall meaningful. Everything else gets 30s.
+            try:
+                is_xxx_short = bool(cur_doc.get("is_short")) and (cur_doc.get("shorts_category") or "xxx") == "xxx"
+                preview_dur = 15 if is_xxx_short else 30
+                # If the source is shorter than the preview, cap at duration-1.
+                if duration > 0:
+                    preview_dur = max(5, min(preview_dur, int(duration) - 1 or 5))
+                prev_rel = f"videos/{video_id}_preview{preview_dur}.mp4"
+                prev_path = UPLOAD_DIR / prev_rel
+                prev_ok = await extract_preview_clip(src_path, str(prev_path), preview_dur)
+                if prev_ok:
+                    prev_final_url = prev_rel
+                    if use_wasabi:
+                        up = await wasabi_upload(str(prev_path), prev_rel, settings, "video/mp4")
+                        if up:
+                            prev_final_url = up
+                            try:
+                                os.remove(prev_path)
+                            except Exception:
+                                pass
+                    await db.videos.update_one(
+                        {"id": video_id},
+                        {"$set": {
+                            "preview_url": prev_final_url,
+                            "preview_duration": preview_dur,
+                        }},
+                    )
+                    logger.info(
+                        "process_video: id=%s preview OK (%ds) → %s",
+                        video_id, preview_dur, prev_final_url,
+                    )
+            except Exception as prev_err:  # noqa: BLE001
+                logger.warning("process_video: id=%s preview extraction FAILED: %s", video_id, prev_err)
             # ----- Auto-extract embedded text subtitles (MKV / MP4 / MOV) ----
             try:
                 sub_dir = UPLOAD_DIR / "subtitles"
@@ -2470,6 +2506,9 @@ async def get_video(video_id: str, request: Request, user: Optional[dict] = Depe
         allowed = is_vip if tier == "vip" else (is_pro or is_vip)
         if not allowed:
             v["locked"] = True
+            v["locked_tier"] = tier  # "pro" | "vip" — tells frontend where to redirect
+            # Keep preview_url (if present) and preview_duration so the client
+            # can play the 15s/30s teaser before showing the paywall overlay.
             v["renditions"] = []
             v["subtitles"] = []
             return v
@@ -2501,6 +2540,41 @@ async def add_view(video_id: str):
     if not vid:
         raise HTTPException(404, "Not found")
     await db.videos.update_one({"id": vid}, {"$inc": {"views": 1}})
+    # Also track per-week + per-day (last-48h trending) buckets so that
+    # /top-weekly and /trending can rank independently of lifetime views.
+    try:
+        now = datetime.now(timezone.utc)
+        iso_year, iso_week, _ = now.isocalendar()
+        week_key = f"{iso_year}-W{iso_week:02d}"
+        monday = now - timedelta(days=now.weekday())
+        week_start = monday.date().isoformat()
+        await db.video_views_weekly.update_one(
+            {"video_id": vid, "iso_week": week_key},
+            {
+                "$inc": {"views": 1},
+                "$setOnInsert": {
+                    "id": new_id(), "video_id": vid, "iso_week": week_key,
+                    "week_start": week_start,
+                },
+                "$set": {"updated_at": now_iso()},
+            },
+            upsert=True,
+        )
+        # Daily bucket for the Trending page (48h rolling window).
+        day_key = now.date().isoformat()
+        await db.video_views_daily.update_one(
+            {"video_id": vid, "day": day_key},
+            {
+                "$inc": {"views": 1},
+                "$setOnInsert": {
+                    "id": new_id(), "video_id": vid, "day": day_key,
+                },
+                "$set": {"updated_at": now_iso()},
+            },
+            upsert=True,
+        )
+    except Exception as _wkerr:  # noqa: BLE001
+        logger.warning("weekly/daily view bucket update failed: %s", _wkerr)
     return {"ok": True}
 
 
@@ -6667,6 +6741,455 @@ async def secure_media(rel_path: str, exp: int, sig: str):
     if not full.exists() or not str(full.resolve()).startswith(str(UPLOAD_DIR.resolve())):
         raise HTTPException(404, "Not found")
     return FileResponse(str(full))
+
+
+# ============ TIMELINE EMOJI REACTIONS ============
+# Available only for videos that are Anime, Seriale TV, or Filme — not shorts,
+# not hentai. Each reaction is {video_id, emoji, timestamp_sec}; the frontend
+# shows floating bubbles during playback at the right second.
+
+def _reactions_enabled_for(v: dict) -> bool:
+    if not v:
+        return False
+    if v.get("is_short"):
+        return False
+    if v.get("is_hentai"):
+        return False
+    # Anime, TV series, Filme RoSub are all eligible. Plain uncategorised
+    # standard videos: allow (keeps the feature discoverable).
+    return True
+
+
+@api.get("/videos/{video_id}/reactions")
+async def list_reactions(video_id: str):
+    """Return reactions ordered by timestamp for the given video.
+
+    Public endpoint — anyone can see what others reacted with.
+    """
+    vid = await resolve_video_id(video_id)
+    if not vid:
+        raise HTTPException(404, "Not found")
+    cur = db.video_reactions.find(
+        {"video_id": vid},
+        {"_id": 0, "id": 1, "emoji": 1, "timestamp_sec": 1, "user_id": 1, "created_at": 1},
+    ).sort("timestamp_sec", 1).limit(2000)
+    items = await cur.to_list(2000)
+    return {"items": items, "count": len(items)}
+
+
+@api.post("/videos/{video_id}/reactions")
+async def add_reaction(video_id: str, payload: dict, user: dict = Depends(require_user)):
+    """Post a new emoji reaction at a specific timestamp. Rate-limited to
+    30 reactions per video per user per hour to prevent spam.
+    """
+    from models import REACTION_EMOJIS, VideoReaction
+    emoji = (payload or {}).get("emoji", "")
+    ts_raw = (payload or {}).get("timestamp_sec", 0)
+    try:
+        ts = float(ts_raw)
+    except Exception:
+        raise HTTPException(400, "timestamp_sec must be a number")
+    if emoji not in REACTION_EMOJIS:
+        raise HTTPException(400, "Invalid emoji")
+    v = await find_video_by_id_or_slug(video_id)
+    if not v:
+        raise HTTPException(404, "Not found")
+    if not _reactions_enabled_for(v):
+        raise HTTPException(400, "Reactions disabled for this content type")
+    ts = max(0.0, min(ts, float(v.get("duration_sec") or 0) or ts))
+    # Rate-limit: 30 reactions / video / user / hour
+    an_hour_ago = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+    recent = await db.video_reactions.count_documents({
+        "video_id": v["id"], "user_id": user["id"], "created_at": {"$gte": an_hour_ago},
+    })
+    if recent >= 30:
+        raise HTTPException(429, "Too many reactions — try again later")
+    r = VideoReaction(
+        video_id=v["id"], user_id=user["id"], emoji=emoji, timestamp_sec=ts,
+    ).model_dump()
+    await db.video_reactions.insert_one(r)
+    r.pop("_id", None)
+    return r
+
+
+# ============ WEEKLY TOP / TRENDING ============
+# Both endpoints return paginated video rows filtered by vertical. Trending
+# uses a rolling 48h daily-bucket window; Weekly Top uses the current ISO
+# week. Verticals mapped from the single `vertical` query param to the
+# underlying Mongo filter.
+
+_VERTICAL_FILTERS = {
+    "hentai": {"is_hentai": True},
+    "anime": {"is_anime": True},
+    "filme": {"is_film_rosub": True},
+    "seriale": {"is_tv": True},
+    "drama": {"is_short": True, "shorts_category": "drama"},
+    "xxx": {"is_short": True, "shorts_category": "xxx"},
+}
+
+
+def _iso_week_key(dt: Optional[datetime] = None) -> str:
+    d = dt or datetime.now(timezone.utc)
+    y, w, _ = d.isocalendar()
+    return f"{y}-W{w:02d}"
+
+
+def _week_bounds(iso_week: str):
+    """Return (monday, next_monday) for an ISO week key like '2026-W05'."""
+    try:
+        year_s, week_s = iso_week.split("-W")
+        year = int(year_s); week = int(week_s)
+        # Monday of that ISO week:
+        monday = datetime.fromisocalendar(year, week, 1).replace(tzinfo=timezone.utc)
+        return monday, monday + timedelta(days=7)
+    except Exception:
+        return None, None
+
+
+@api.get("/top-weekly")
+async def top_weekly(
+    vertical: str = "hentai",
+    week: Optional[str] = None,
+    limit: int = 10,
+):
+    """Top N videos of a given ISO week within a vertical."""
+    vfilter = _VERTICAL_FILTERS.get(vertical)
+    if vfilter is None:
+        raise HTTPException(400, "Unknown vertical")
+    wk = week or _iso_week_key()
+    limit = max(1, min(limit, 50))
+    agg = db.video_views_weekly.aggregate([
+        {"$match": {"iso_week": wk}},
+        {"$sort": {"views": -1}},
+        {"$limit": 500},
+        {"$lookup": {
+            "from": "videos", "localField": "video_id", "foreignField": "id", "as": "v",
+        }},
+        {"$unwind": "$v"},
+        {"$match": {"v.status": "ready", **{f"v.{k}": v for k, v in vfilter.items()}}},
+        {"$limit": limit},
+        {"$project": {
+            "_id": 0, "weekly_views": "$views", "iso_week": 1,
+            "id": "$v.id", "slug": "$v.slug", "title": "$v.title",
+            "thumbnail_url": "$v.thumbnail_url", "duration_sec": "$v.duration_sec",
+            "access_tier": "$v.access_tier", "views": "$v.views",
+            "likes": {"$size": {"$ifNull": ["$v.likes", []]}},
+            "uploader_username": "$v.uploader_username",
+            "is_hentai": "$v.is_hentai", "is_anime": "$v.is_anime",
+            "is_tv": "$v.is_tv", "is_film_rosub": "$v.is_film_rosub",
+            "is_short": "$v.is_short", "shorts_category": "$v.shorts_category",
+            "created_at": "$v.created_at",
+        }},
+    ])
+    items = await agg.to_list(limit)
+    return {"vertical": vertical, "iso_week": wk, "items": items, "count": len(items)}
+
+
+@api.get("/trending")
+async def trending(vertical: str = "hentai", limit: int = 20):
+    """Trending in the rolling last 48h (today + yesterday daily buckets)."""
+    vfilter = _VERTICAL_FILTERS.get(vertical)
+    if vfilter is None:
+        raise HTTPException(400, "Unknown vertical")
+    limit = max(1, min(limit, 50))
+    today = datetime.now(timezone.utc).date()
+    y_days = [today.isoformat(), (today - timedelta(days=1)).isoformat()]
+    agg = db.video_views_daily.aggregate([
+        {"$match": {"day": {"$in": y_days}}},
+        {"$group": {"_id": "$video_id", "window_views": {"$sum": "$views"}}},
+        {"$sort": {"window_views": -1}},
+        {"$limit": 500},
+        {"$lookup": {
+            "from": "videos", "localField": "_id", "foreignField": "id", "as": "v",
+        }},
+        {"$unwind": "$v"},
+        {"$match": {"v.status": "ready", **{f"v.{k}": v for k, v in vfilter.items()}}},
+        {"$limit": limit},
+        {"$project": {
+            "_id": 0, "window_views": 1,
+            "id": "$v.id", "slug": "$v.slug", "title": "$v.title",
+            "thumbnail_url": "$v.thumbnail_url", "duration_sec": "$v.duration_sec",
+            "access_tier": "$v.access_tier", "views": "$v.views",
+            "likes": {"$size": {"$ifNull": ["$v.likes", []]}},
+            "uploader_username": "$v.uploader_username",
+            "is_hentai": "$v.is_hentai", "is_anime": "$v.is_anime",
+            "is_tv": "$v.is_tv", "is_film_rosub": "$v.is_film_rosub",
+            "is_short": "$v.is_short", "shorts_category": "$v.shorts_category",
+            "created_at": "$v.created_at",
+        }},
+    ])
+    items = await agg.to_list(limit)
+    return {"vertical": vertical, "window": "48h", "items": items, "count": len(items)}
+
+
+# ============ WATCH PARTY ============
+# Open to anyone — logged-out guests pass a guest_name on create. One room per
+# video_id · code, codes expire after 6h of inactivity. Live sync is on the
+# WebSocket at /api/party/{code}/ws.
+
+def _gen_party_code() -> str:
+    import string
+    alphabet = string.ascii_uppercase + string.digits
+    # 6 char — plenty of room (~2.1b) for concurrent rooms
+    return "".join(random.choices(alphabet, k=6))
+
+
+@api.post("/parties")
+async def create_party(payload: dict, user: Optional[dict] = Depends(current_user)):
+    """Create a watch party for a video. Guests allowed."""
+    from models import WatchParty
+    video_id = (payload or {}).get("video_id") or ""
+    guest_name = ((payload or {}).get("guest_name") or "Guest").strip()[:40] or "Guest"
+    v = await find_video_by_id_or_slug(video_id)
+    if not v:
+        raise HTTPException(404, "Video not found")
+    # unique code (retry on collision)
+    code = ""
+    for _ in range(5):
+        candidate = _gen_party_code()
+        existing = await db.watch_parties.find_one({"code": candidate, "active": True})
+        if not existing:
+            code = candidate
+            break
+    if not code:
+        raise HTTPException(500, "Could not allocate party code — try again")
+    host_name = (user.get("username") if user else guest_name) or "Guest"
+    party = WatchParty(
+        code=code, video_id=v["id"],
+        host_user_id=user["id"] if user else None,
+        host_name=host_name,
+    ).model_dump()
+    await db.watch_parties.insert_one(party)
+    party.pop("_id", None)
+    return party
+
+
+@api.get("/parties/{code}")
+async def get_party(code: str):
+    p = await db.watch_parties.find_one({"code": code.upper(), "active": True}, {"_id": 0})
+    if not p:
+        raise HTTPException(404, "Party not found")
+    # also return the video so the client can bootstrap the player
+    v = await db.videos.find_one(
+        {"id": p["video_id"]},
+        {"_id": 0, "id": 1, "slug": 1, "title": 1, "thumbnail_url": 1,
+         "renditions": 1, "subtitles": 1, "duration_sec": 1, "access_tier": 1},
+    )
+    return {"party": p, "video": v}
+
+
+# ─── WebSocket for watch party sync + chat ────────────────────────
+# Message protocol (JSON):
+#   client → server: {type: "join", name, user_id?}
+#                    {type: "sync", action: "play"|"pause"|"seek", t: <sec>}
+#                    {type: "chat", text: <string>}
+#   server → client: {type: "members", list: [names]}
+#                    {type: "sync", action, t, by: <name>}
+#                    {type: "chat", name, text, ts}
+#                    {type: "error", message}
+#
+# A single room-rooms dict in memory is fine for a single-pod deploy; we don't
+# persist chat history.
+from fastapi import WebSocket, WebSocketDisconnect as _WSDc  # local alias — WebSocket already imported above
+
+class _PartyRoom:
+    def __init__(self, code: str):
+        self.code = code
+        self.members: Dict[str, WebSocket] = {}  # member_id -> ws
+        self.names: Dict[str, str] = {}  # member_id -> display name
+    async def broadcast(self, msg: dict, skip: Optional[str] = None):
+        dead = []
+        for mid, ws in self.members.items():
+            if mid == skip:
+                continue
+            try:
+                await ws.send_json(msg)
+            except Exception:
+                dead.append(mid)
+        for mid in dead:
+            self.members.pop(mid, None)
+            self.names.pop(mid, None)
+
+_PARTY_ROOMS: Dict[str, _PartyRoom] = {}
+
+
+@api.websocket("/parties/{code}/ws")
+async def party_ws(websocket: WebSocket, code: str):
+    code = code.upper()
+    await websocket.accept()
+    # confirm the room exists & is active (reject nicely otherwise)
+    p = await db.watch_parties.find_one({"code": code, "active": True})
+    if not p:
+        await websocket.send_json({"type": "error", "message": "Party not found or expired"})
+        await websocket.close()
+        return
+    # 10-member cap
+    room = _PARTY_ROOMS.setdefault(code, _PartyRoom(code))
+    if len(room.members) >= 10:
+        await websocket.send_json({"type": "error", "message": "Room full (max 10)"})
+        await websocket.close()
+        return
+    member_id = new_id()
+    room.members[member_id] = websocket
+    name = f"Guest-{member_id[:4]}"
+    room.names[member_id] = name
+
+    async def _members_list():
+        return list(room.names.values())
+
+    try:
+        while True:
+            msg = await websocket.receive_json()
+            kind = (msg or {}).get("type", "")
+            if kind == "join":
+                incoming_name = (msg.get("name") or "").strip()[:40] or name
+                room.names[member_id] = incoming_name
+                name = incoming_name
+                await db.watch_parties.update_one(
+                    {"code": code}, {"$set": {"last_activity_at": now_iso(),
+                                               "member_count": len(room.members)}},
+                )
+                await room.broadcast({"type": "members", "list": await _members_list()})
+            elif kind == "sync":
+                action = msg.get("action")
+                t_val = float(msg.get("t") or 0)
+                if action in ("play", "pause", "seek"):
+                    await room.broadcast(
+                        {"type": "sync", "action": action, "t": t_val, "by": name},
+                        skip=member_id,
+                    )
+            elif kind == "chat":
+                text = (msg.get("text") or "").strip()[:500]
+                if text:
+                    await room.broadcast({
+                        "type": "chat", "name": name, "text": text, "ts": now_iso(),
+                    })
+            elif kind == "ping":
+                await websocket.send_json({"type": "pong"})
+    except _WSDc:
+        pass
+    except Exception as e:  # noqa: BLE001
+        logger.warning("party_ws error: %s", e)
+    finally:
+        room.members.pop(member_id, None)
+        room.names.pop(member_id, None)
+        try:
+            await room.broadcast({"type": "members", "list": await _members_list()})
+        except Exception:
+            pass
+        if not room.members:
+            _PARTY_ROOMS.pop(code, None)
+        try:
+            await db.watch_parties.update_one(
+                {"code": code},
+                {"$set": {"last_activity_at": now_iso(),
+                          "member_count": len(room.members)}},
+            )
+        except Exception:
+            pass
+
+
+# ============ SUBSCRIPTION EXPIRY EMAILS (cron) ============
+# Called daily by .emergent/crons.yml. Finds users whose pro_until or
+# vip_until is 3 days away or expiring today, and sends them a reminder.
+# We stamp `pro_exp_notified_*` fields on the user so each phase emails once.
+
+import secrets as _secrets  # avoid colliding with any later `secrets` name
+
+
+async def _send_expiry_mail(settings: dict, email: str, tier: str, phase: str, when_iso: str):
+    """phase ∈ {'3d', 'today', 'expired'}; tier ∈ {'pro','vip'}."""
+    from mailer import _send, _build
+    pretty_when = when_iso[:10]
+    link = ("/vip" if tier == "vip" else "/pro")
+    base = (settings.get("site_base_url") or "").rstrip("/")
+    full_link = f"{base}{link}" if base else link
+    if phase == "3d":
+        subject = f"⏰ Abonamentul tău {tier.upper()} expiră în 3 zile"
+        body = (
+            f"Salut!\n\n"
+            f"Abonamentul tău {tier.upper()} va expira pe {pretty_when}.\n"
+            f"Reînnoiește acum ca să nu pierzi accesul: {full_link}\n\n"
+            f"— StreamHub"
+        )
+    elif phase == "today":
+        subject = f"⚠️ Abonamentul tău {tier.upper()} expiră astăzi"
+        body = (
+            f"Salut!\n\n"
+            f"Abonamentul tău {tier.upper()} expiră astăzi ({pretty_when}).\n"
+            f"Reînnoiește acum: {full_link}\n\n"
+            f"— StreamHub"
+        )
+    else:  # expired
+        subject = f"Abonamentul tău {tier.upper()} a expirat"
+        body = (
+            f"Salut!\n\n"
+            f"Abonamentul tău {tier.upper()} a expirat.\n"
+            f"Vrem să te vedem înapoi — reactivează oricând: {full_link}\n\n"
+            f"— StreamHub"
+        )
+    msg = _build(settings, email, subject, body)
+    await _send(settings, msg)
+
+
+async def _run_subscription_expiry_cron():
+    """Scan users and dispatch expiry emails for both PRO and VIP tiers."""
+    settings = await get_settings()
+    if not settings.get("smtp_host"):
+        logger.info("expiry cron: SMTP not configured, skipping")
+        return {"sent": 0, "skipped": "no_smtp"}
+    now = datetime.now(timezone.utc)
+    today = now.date()
+    sent = 0
+    for tier, field, notified_3d, notified_td, notified_exp in [
+        ("pro", "pro_until", "pro_exp_notified_3d", "pro_exp_notified_today", "pro_exp_notified_expired"),
+        ("vip", "vip_until", "vip_exp_notified_3d", "vip_exp_notified_today", "vip_exp_notified_expired"),
+    ]:
+        cur = db.users.find({field: {"$ne": None}}, {"_id": 0})
+        async for u in cur:
+            raw = u.get(field)
+            if not raw:
+                continue
+            try:
+                exp_dt = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+            except Exception:
+                continue
+            exp_date = exp_dt.date()
+            days_until = (exp_date - today).days
+            email = u.get("email")
+            if not email:
+                continue
+            try:
+                if days_until == 3 and not u.get(notified_3d):
+                    await _send_expiry_mail(settings, email, tier, "3d", raw)
+                    await db.users.update_one({"id": u["id"]}, {"$set": {notified_3d: now_iso()}})
+                    sent += 1
+                elif days_until == 0 and not u.get(notified_td):
+                    await _send_expiry_mail(settings, email, tier, "today", raw)
+                    await db.users.update_one({"id": u["id"]}, {"$set": {notified_td: now_iso()}})
+                    sent += 1
+                elif days_until < 0 and not u.get(notified_exp):
+                    await _send_expiry_mail(settings, email, tier, "expired", raw)
+                    await db.users.update_one({"id": u["id"]}, {"$set": {notified_exp: now_iso()}})
+                    sent += 1
+            except Exception as mail_err:  # noqa: BLE001
+                logger.warning("expiry mail failed for %s (%s): %s", email, tier, mail_err)
+    logger.info("expiry cron: sent %d emails", sent)
+    return {"sent": sent}
+
+
+@api.post("/cron/subscription-expiry")
+async def cron_subscription_expiry(request: Request, background: BackgroundTasks):
+    # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
+    secret = os.environ.get("WEBHOOK_CRON_SECRET") or ""
+    auth = request.headers.get("authorization", "")
+    expected = f"Bearer {secret}"
+    if not secret or not hmac.compare_digest(auth, expected):
+        raise HTTPException(401, "Unauthorized")
+    background.add_task(_run_subscription_expiry_cron)
+    return {"ok": True, "queued": True}
+
+
 
 
 app.include_router(api)

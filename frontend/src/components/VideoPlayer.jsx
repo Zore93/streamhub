@@ -1,6 +1,6 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState, useCallback } from "react";
 import { Play, Pause, Volume2, VolumeX, Maximize, Minimize, Subtitles, Settings, Download } from "lucide-react";
-import { mediaUrl } from "@/lib/api";
+import api, { mediaUrl } from "@/lib/api";
 import {
   DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem,
   DropdownMenuLabel, DropdownMenuSeparator,
@@ -10,7 +10,7 @@ import {
  * Custom video player with rearrangeable controls so that the order along the
  * bottom bar is:  play · time · scrubber │ volume · CC · resolution · download · fullscreen
  */
-export default function VideoPlayer({ video, currentRendition, resolution, setResolution, allowDownload, onEnded, children, autoPlay }) {
+export default function VideoPlayer({ video, currentRendition, resolution, setResolution, allowDownload, onEnded, children, autoPlay, enableReactions = false }) {
   const ref = useRef(null);
   const wrapRef = useRef(null);
   const hideTimerRef = useRef(null);
@@ -25,6 +25,77 @@ export default function VideoPlayer({ video, currentRendition, resolution, setRe
   // while the video is playing.  Any mousemove / mouseenter / pause shows them
   // again.  Works in fullscreen too because we listen on the wrap element.
   const [controlsVisible, setControlsVisible] = useState(true);
+
+  // ─── Timeline emoji reactions ──────────────────────────────────────
+  // Fixed set — must match REACTION_EMOJIS in backend/models.py.
+  const REACTION_EMOJIS = ["😂", "🔥", "💔", "😱", "🥰", "👏", "🤔", "😭", "💀", "🙌"];
+  const [reactions, setReactions] = useState([]);         // all reactions for this video
+  const [floating, setFloating] = useState([]);           // currently-flying bubbles
+  const seenRef = useRef(new Set());                      // reactions already floated (id)
+  // Load reactions once when enabled & video id known.
+  useEffect(() => {
+    if (!enableReactions || !video?.id) return;
+    let alive = true;
+    api.get(`/videos/${video.id}/reactions`)
+      .then((r) => { if (alive) setReactions(r.data.items || []); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [enableReactions, video?.id]);
+
+  // Trigger a floating bubble + clean it up after the animation.
+  const spawnFloat = useCallback((emoji) => {
+    const id = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const left = 60 + Math.random() * 25; // 60-85% from left (right side of player)
+    setFloating((prev) => [...prev.slice(-25), { id, emoji, left }]);
+    setTimeout(() => {
+      setFloating((prev) => prev.filter((f) => f.id !== id));
+    }, 3600);
+  }, []);
+
+  // Whenever `time` advances past a reaction's timestamp, float its emoji.
+  useEffect(() => {
+    if (!enableReactions || !reactions.length) return;
+    const t = time;
+    // Window: ±0.6s around current time. Mark as seen to avoid duplicates.
+    for (const r of reactions) {
+      if (seenRef.current.has(r.id)) continue;
+      if (Math.abs((r.timestamp_sec || 0) - t) <= 0.6) {
+        seenRef.current.add(r.id);
+        spawnFloat(r.emoji);
+      }
+    }
+    // When the user seeks backward, allow previously-seen reactions to replay.
+    // Prune seen entries whose timestamp is > t + 1.2s (so a scrub-back resets).
+    if (seenRef.current.size > reactions.length / 2) {
+      const toKeep = new Set();
+      for (const r of reactions) {
+        if (seenRef.current.has(r.id) && (r.timestamp_sec || 0) <= t + 1.2) {
+          toKeep.add(r.id);
+        }
+      }
+      seenRef.current = toKeep;
+    }
+  }, [time, reactions, enableReactions, spawnFloat]);
+
+  // POST a new reaction at current playback time.
+  const postReaction = useCallback(async (emoji) => {
+    if (!enableReactions || !video?.id) return;
+    const ts = ref.current ? ref.current.currentTime || 0 : 0;
+    // Optimistic: show it immediately
+    spawnFloat(emoji);
+    try {
+      const { data } = await api.post(`/videos/${video.id}/reactions`, {
+        emoji, timestamp_sec: ts,
+      });
+      // Add to list so OTHER viewers (if we re-render) also see it on seek-back
+      if (data?.id) {
+        seenRef.current.add(data.id);
+        setReactions((prev) => [...prev, data]);
+      }
+    } catch (err) {
+      // 401 → user not logged in; 429 → rate limited; keep bubble (optimistic UX)
+    }
+  }, [enableReactions, video?.id, spawnFloat]);
 
   const showControls = () => {
     setControlsVisible(true);
@@ -392,6 +463,44 @@ export default function VideoPlayer({ video, currentRendition, resolution, setRe
           Rendered inside the wrap so they remain visible in fullscreen mode. */}
       {children}
 
+      {/* ─── Timeline reaction UI ──────────────────────────────────── */}
+      {enableReactions && (
+        <>
+          {/* Floating bubbles that drift up & fade on the right side */}
+          <div className="absolute inset-0 pointer-events-none z-20 overflow-hidden" data-testid="reaction-bubbles">
+            {floating.map((f) => (
+              <div
+                key={f.id}
+                className="absolute bottom-24 text-3xl sm:text-4xl animate-reaction-float drop-shadow-[0_2px_6px_rgba(0,0,0,0.8)]"
+                style={{ left: `${f.left}%` }}
+              >
+                {f.emoji}
+              </div>
+            ))}
+          </div>
+          {/* Emoji picker bar — top-right of the player, autohides with controls */}
+          <div
+            className={`absolute top-3 right-3 z-30 flex items-center gap-1 bg-black/60 backdrop-blur-sm border border-zinc-700/60 rounded-full px-2 py-1 transition-opacity duration-300 ${
+              controlsVisible ? "opacity-100" : "opacity-0 pointer-events-none"
+            }`}
+            data-testid="reaction-picker"
+          >
+            {REACTION_EMOJIS.map((em) => (
+              <button
+                key={em}
+                type="button"
+                onClick={() => postReaction(em)}
+                className="text-lg sm:text-xl leading-none px-1.5 py-0.5 rounded-full hover:bg-white/15 active:scale-125 transition-transform"
+                data-testid={`reaction-emoji-${em}`}
+                title={`Reactionează cu ${em}`}
+              >
+                {em}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+
       {/* Bottom control bar — auto-hides after 2.5 s of inactivity while playing */}
       <div
         className={`absolute bottom-0 left-0 right-0 px-3 pt-10 pb-3 bg-gradient-to-t from-black/85 via-black/40 to-transparent transition-opacity duration-300 z-30 ${
@@ -399,12 +508,30 @@ export default function VideoPlayer({ video, currentRendition, resolution, setRe
         }`}
       >
         {/* Scrubber */}
-        <input
-          type="range" min="0" max={duration || 0} step="0.1" value={time}
-          onChange={seek}
-          className="w-full accent-rose-500 cursor-pointer"
-          data-testid="player-scrubber"
-        />
+        <div className="relative">
+          <input
+            type="range" min="0" max={duration || 0} step="0.1" value={time}
+            onChange={seek}
+            className="w-full accent-rose-500 cursor-pointer"
+            data-testid="player-scrubber"
+          />
+          {/* Reaction density markers on the seek bar */}
+          {enableReactions && reactions.length > 0 && duration > 0 && (
+            <div className="absolute left-0 right-0 top-1/2 -translate-y-1/2 h-2 pointer-events-none" data-testid="reaction-markers">
+              {reactions.map((r) => {
+                const pct = Math.max(0, Math.min(100, (r.timestamp_sec / duration) * 100));
+                return (
+                  <div
+                    key={r.id}
+                    className="absolute w-1 h-2 bg-rose-400/90 rounded-sm shadow-[0_0_4px_rgba(244,63,94,0.9)]"
+                    style={{ left: `${pct}%`, transform: "translateX(-50%)" }}
+                    title={`${r.emoji} @ ${Math.round(r.timestamp_sec)}s`}
+                  />
+                );
+              })}
+            </div>
+          )}
+        </div>
         <div className="flex items-center gap-2 mt-2 text-zinc-100 text-sm">
           <button onClick={togglePlay} className="hover:text-rose-400 p-1" data-testid="player-play">
             {playing ? <Pause size={20} /> : <Play size={20} fill="currentColor" />}

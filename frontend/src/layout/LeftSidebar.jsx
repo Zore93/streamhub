@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import {
   Folder, Home as HomeIcon, Flame, Shuffle, Smartphone,
-  Film, Heart, Tv2,
+  Film, Heart, Tv2, Crown, TrendingUp,
   Upload as UploadIcon, Shield, Mail, X, Languages,
 } from "lucide-react";
 import api, { mediaUrl } from "@/lib/api";
@@ -25,6 +25,8 @@ export default function LeftSidebar({ mobileOpen = false, onClose }) {
 
   const navItems = [
     { to: "/", label: t("nav.home"), Icon: HomeIcon, testid: "nav-home" },
+    { to: "/top", label: "Top 10 Săptămânal", Icon: Crown, testid: "nav-top-weekly" },
+    { to: "/trending", label: "Trending acum", Icon: TrendingUp, testid: "nav-trending" },
     { to: "/popular", label: t("nav.popular"), Icon: Flame, testid: "nav-popular" },
     { to: "/discover", label: t("nav.discover"), Icon: Shuffle, testid: "nav-discover" },
     { to: "/shorts", label: t("nav.shorts"), Icon: Smartphone, testid: "nav-shorts" },

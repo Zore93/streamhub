@@ -7,7 +7,7 @@ import { categoryLabel } from "@/i18n";
 import { Layout } from "@/layout/Layout";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { Eye, Crown, Lock, Send, Trash2, Loader2, ThumbsUp, Folder, Coins, Flag, Subtitles } from "lucide-react";
+import { Eye, Crown, Lock, Send, Trash2, Loader2, ThumbsUp, Folder, Coins, Flag, Subtitles, Users } from "lucide-react";
 import { toast } from "sonner";
 import VideoPlayer from "@/components/VideoPlayer";
 import FramedAvatar from "@/components/FramedAvatar";
@@ -202,6 +202,20 @@ export default function Watch() {
 
   const currentRendition = video?.renditions?.find((r) => r.resolution === resolution) || video?.renditions?.[0];
 
+  // Watch party: create a new room for the current video and navigate.
+  const createParty = async () => {
+    if (!video) return;
+    try {
+      const guestName = user?.username || "Guest";
+      const { data } = await api.post("/parties", { video_id: video.id, guest_name: guestName });
+      if (data?.code) {
+        navigate(`/party/${data.code}`);
+      }
+    } catch (_e) {
+      toast.error("Nu am putut crea camera. Încearcă din nou.");
+    }
+  };
+
   const submitComment = async (e) => {
     e.preventDefault();
     if (!comment.trim()) return;
@@ -263,12 +277,17 @@ export default function Watch() {
   const isLocked = video.locked === true;
   const hasPlayable = (video.renditions || []).length > 0;
   const isProcessing = !isLocked && (!hasPlayable || video.status === "processing");
+  // Non-paying users on PRO/VIP videos see a short preview + paywall overlay.
+  const hasPreview = isLocked && !!video.preview_url;
+  const lockedTier = video.locked_tier || (video.access_tier === "vip" ? "vip" : "pro");
 
   return (
     <Layout recommendations={recs}>
       <div data-testid="watch-page">
         <div className="aspect-video bg-black rounded-lg overflow-hidden relative">
-          {isLocked ? (
+          {hasPreview ? (
+            <PreviewPlayer video={video} lockedTier={lockedTier} />
+          ) : isLocked ? (
             <div className="absolute inset-0 flex flex-col items-center justify-center bg-zinc-950 text-center px-6" data-testid="locked-view">
               <Lock size={48} className={isVipVideo ? "vip-gradient-text mb-3" : "text-rose-500 mb-3"} />
               <h3 className="text-xl font-semibold mb-1">
@@ -309,6 +328,7 @@ export default function Watch() {
               allowDownload={allowDownload}
               onEnded={startAutoplay}
               autoPlay={autoPlayOnLoad}
+              enableReactions={!video.is_short && !video.is_hentai}
             >
               {nextInSeries && autoplayCountdown !== null && (
                 <div
@@ -406,6 +426,15 @@ export default function Watch() {
             type="button"
           >
             <Flag size={14} /> {t("report.button") || "Report"}
+          </button>
+          <button
+            onClick={createParty}
+            className="inline-flex items-center gap-1.5 text-sm text-zinc-400 hover:text-fuchsia-400 transition-colors"
+            data-testid="party-btn"
+            type="button"
+            title="Vizionează sincron cu prietenii"
+          >
+            <Users size={14} /> Watch Party
           </button>
           {/* Uploader — opens profile in a new tab on Ctrl/Cmd+click; users can also right-click → "open in new tab". */}
           <a
@@ -593,5 +622,103 @@ export default function Watch() {
         </DialogContent>
       </Dialog>
     </Layout>
+  );
+}
+
+
+
+/* ─────────── Preview playback for locked PRO/VIP videos ───────────
+ * Non-paying users still get to watch the first 15s (XXX shorts) or 30s
+ * (everything else) of a locked video. When the preview ends we fade in
+ * the paywall overlay with a CTA button pointing to the correct upsell
+ * page (/pro for PRO videos, /vip for VIP). The user can replay the
+ * teaser freely but cannot scrub past it (we clamp currentTime).
+ */
+function PreviewPlayer({ video, lockedTier }) {
+  const vRef = React.useRef(null);
+  const [ended, setEnded] = React.useState(false);
+  const dur = Number(video.preview_duration) || 15;
+
+  // Guard: user tries to seek past the preview → snap back and show overlay.
+  const onTimeUpdate = () => {
+    const el = vRef.current;
+    if (!el) return;
+    if (el.currentTime >= dur) {
+      el.pause();
+      el.currentTime = dur;
+      setEnded(true);
+    }
+  };
+
+  const onEnded = () => setEnded(true);
+
+  const replay = () => {
+    const el = vRef.current;
+    if (!el) return;
+    el.currentTime = 0;
+    setEnded(false);
+    el.play().catch(() => {});
+  };
+
+  const isVip = lockedTier === "vip";
+
+  return (
+    <div className="absolute inset-0" data-testid="preview-player">
+      <video
+        ref={vRef}
+        src={mediaUrl(video.preview_url)}
+        className="w-full h-full object-contain bg-black"
+        controls
+        controlsList="nodownload noplaybackrate"
+        disablePictureInPicture
+        onTimeUpdate={onTimeUpdate}
+        onEnded={onEnded}
+        onContextMenu={(e) => e.preventDefault()}
+      />
+      {/* Badge: shows during preview playback */}
+      {!ended && (
+        <div
+          className="absolute top-3 left-3 bg-black/70 backdrop-blur-sm text-rose-200 text-[11px] font-bold px-2 py-1 rounded border border-rose-500/40 pointer-events-none"
+          data-testid="preview-badge"
+        >
+          PREVIEW · {dur}s
+        </div>
+      )}
+      {/* Paywall overlay — shows when preview ends. */}
+      {ended && (
+        <div
+          className="absolute inset-0 flex flex-col items-center justify-center text-center px-6 bg-gradient-to-br from-black/95 via-black/90 to-rose-950/80 backdrop-blur-sm"
+          data-testid="preview-paywall"
+        >
+          <Lock size={44} className={isVip ? "vip-gradient-text mb-3" : "text-rose-500 mb-3"} />
+          <h3 className="text-2xl font-bold text-white mb-1">
+            {isVip ? "Vrei să vezi tot episodul?" : "Vrei să vezi tot episodul?"}
+          </h3>
+          <p className="text-zinc-300 max-w-md mb-5 text-sm">
+            {isVip
+              ? "Acest episod este exclusiv VIP. Deblochează toate episoadele VIP cu un abonament lunar."
+              : "Acest episod este rezervat membrilor PRO. Deblochează instant toate episoadele PRO."}
+          </p>
+          <div className="flex gap-3">
+            <Button
+              variant="outline"
+              className="border-zinc-600 text-zinc-200 hover:bg-zinc-800"
+              onClick={replay}
+              data-testid="preview-replay"
+            >
+              Redă din nou
+            </Button>
+            <Link to={isVip ? "/vip" : "/pro"} data-testid="preview-cta">
+              <Button className={isVip ? "vip-gradient text-black font-bold border-0" : "pro-gradient text-white border-0"}>
+                {isVip ? (<><Crown size={14} className="mr-1.5" /> Devino VIP</>) : (<><Crown size={14} className="mr-1.5" /> Devino PRO</>)}
+              </Button>
+            </Link>
+          </div>
+          <div className="text-[11px] uppercase tracking-wider text-zinc-500 mt-5">
+            Previzualizare {dur}s · acces complet după abonare
+          </div>
+        </div>
+      )}
+    </div>
   );
 }

@@ -473,3 +473,71 @@ def filter_resolutions_for_source(
         if sorted_enabled:
             out = [sorted_enabled[0]]
     return out
+
+
+
+
+# ============ 15s / 30s PREVIEW CLIPS ============
+# For non-paying users on PRO/VIP videos: we serve a short free preview and
+# then show an upsell overlay. The preview is encoded ONCE at upload with
+# `-c copy` for speed; if the keyframe layout prevents a clean copy we fall
+# back to a tiny re-encode. Max output ~5-20 MB regardless of source size.
+async def extract_preview_clip(src_path: str, out_path: str, duration_sec: int = 30) -> bool:
+    """Extract the first `duration_sec` seconds of the source into `out_path`.
+
+    Fast path: `-c copy` (no re-encode). Fallback path: libx264 at CRF 24.
+    """
+    out = Path(out_path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    # ---- Fast path: stream-copy -----------------------------------
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "ffmpeg",
+            "-y",
+            "-ss", "0",
+            "-i", src_path,
+            "-t", str(duration_sec),
+            "-map", "0:v:0",
+            "-map", "0:a:0?",   # audio optional
+            "-c:v", "copy",
+            "-c:a", "copy",
+            "-movflags", "+faststart",
+            str(out),
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        _, err = await proc.communicate()
+        if proc.returncode == 0 and out.exists() and out.stat().st_size > 1024:
+            logger.info("preview copy OK: %s (%.1f MB)", out.name, out.stat().st_size / 1024 / 1024)
+            return True
+        logger.info("preview copy failed (rc=%s), falling back to re-encode: %s",
+                    proc.returncode, (err or b'')[-200:].decode(errors='replace'))
+    except Exception as e:  # noqa: BLE001
+        logger.warning("preview copy exception, falling back: %s", e)
+    # ---- Fallback: re-encode (always succeeds) --------------------
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "ffmpeg",
+            "-y",
+            "-ss", "0",
+            "-i", src_path,
+            "-t", str(duration_sec),
+            "-vf", "scale='min(1280,iw)':-2",
+            "-c:v", "libx264",
+            "-preset", "veryfast",
+            "-crf", "24",
+            "-c:a", "aac",
+            "-b:a", "128k",
+            "-movflags", "+faststart",
+            str(out),
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        _, err = await proc.communicate()
+        if proc.returncode == 0 and out.exists() and out.stat().st_size > 1024:
+            logger.info("preview re-encode OK: %s (%.1f MB)", out.name, out.stat().st_size / 1024 / 1024)
+            return True
+        logger.warning("preview re-encode FAILED rc=%s: %s", proc.returncode, (err or b'')[-400:].decode(errors='replace'))
+    except Exception as e:  # noqa: BLE001
+        logger.warning("preview re-encode exception: %s", e)
+    return False

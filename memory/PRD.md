@@ -1,3 +1,47 @@
+## Iteration 28 — Preview clips, Weekly Top & Trending, Emoji reactions, Expiration emails, Watch Party (Feb 2026)
+
+### Feature 1 — 15s/30s Preview clips for non-paying users
+- **Transcoder**: new `extract_preview_clip()` function in `transcoder.py` — fast `-c copy` path with libx264 CRF 24 fallback, auto-caps duration if source is shorter.
+- **process_video (server.py)**: generates `_preview15.mp4` for XXX Shorts and `_preview30.mp4` for everything else; uploaded to Wasabi when configured.
+- **Video model**: added `preview_url` + `preview_duration`.
+- **GET /videos/{id}**: locked PRO/VIP videos now return `preview_url` + `locked_tier` (used by frontend to route to /pro vs /vip).
+- **Watch.jsx**: new `PreviewPlayer` sub-component — plays the teaser clip, clamps `currentTime` so seeking past the preview snaps back, shows a brand-accent paywall overlay at end with "Devino PRO/VIP" CTA + "Redă din nou" replay. Free videos play as normal (bypass the preview path entirely).
+
+### Feature 2 — Top 10 Săptămânal + Trending pages (6 verticals, single page with tabs)
+- **New collections**: `video_views_weekly` (iso_week bucket) and `video_views_daily` (day bucket). Both upserted on every `POST /videos/{id}/view`.
+- **New endpoints**: `GET /top-weekly?vertical=&week=&limit=` and `GET /trending?vertical=&limit=` with aggregated views + joined video doc projection.
+- **Verticals mapped**: `hentai, anime, filme, seriale, drama, xxx`.
+- **New pages**: `TopWeekly.jsx` (routes `/top`, `/top/:vertical`, `/top/:vertical/:week`) + `Trending.jsx` (`/trending`, `/trending/:vertical`). Hentai is the default tab. Numbered gold/silver/bronze badges on positions 1–3.
+- **Sidebar**: added "Top 10 Săptămânal" (Crown) and "Trending acum" (TrendingUp) nav links at the top.
+- **SEO**: `SiteHead` on both pages emits dynamic title + description per vertical+week combination; URLs stable so historic weeks remain indexable.
+
+### Feature 3 — Timeline emoji reactions (Anime / Seriale TV / Filme only)
+- **New collection**: `video_reactions` with `{video_id, user_id, emoji, timestamp_sec}`. Fixed 10-emoji set in `models.REACTION_EMOJIS` (`😂 🔥 💔 😱 🥰 👏 🤔 😭 💀 🙌`).
+- **Endpoints**: `GET /videos/{id}/reactions` (public) + `POST /videos/{id}/reactions` (auth, rate-limited 30/hour/video/user).
+- **Backend guard**: `_reactions_enabled_for` rejects shorts and hentai. Frontend also hides picker via `enableReactions={!video.is_short && !video.is_hentai}`.
+- **VideoPlayer**: emoji picker in top-right (fades with controls), reaction markers on the seek bar (rose dots clustered by timestamp), floating-bubble animation (`animate-reaction-float` keyframes in `App.css`) that drifts up on the right side as reactions fire during playback. Local reactions are optimistic; seek-back replays bubbles.
+
+### Feature 4 — Subscription expiration emails
+- **mailer.py** stays unchanged; new helper `_send_expiry_mail(settings, email, tier, phase, when_iso)` in `server.py` renders RO-copy for 3 phases: 3 days before, on expiry day, after expiry.
+- **New endpoint**: `POST /api/cron/subscription-expiry` — HMAC-authed via `WEBHOOK_CRON_SECRET`, enqueues `_run_subscription_expiry_cron` in BackgroundTasks and acks 200 immediately (follows the Emergent cron contract).
+- **Idempotency**: user docs get stamped with `pro_exp_notified_{3d,today,expired}` and `vip_exp_notified_{3d,today,expired}` so each phase mails at most once.
+- **.emergent/crons.yml**: new file — single cron running daily at 09:00 Europe/Bucharest.
+- **backend/.env**: added `WEBHOOK_CRON_SECRET` (strong random 32+ chars).
+
+### Feature 5 — Watch Party (synchronized co-view + chat)
+- **New collection**: `watch_parties` with 6-char uppercase alnum `code`, host info, member count.
+- **Endpoints**: `POST /parties` (anyone, guest-friendly), `GET /parties/{code}` returns party + playable video.
+- **WebSocket**: `/api/parties/{code}/ws` with in-memory `_PARTY_ROOMS` dict. Max 10 members per room. Messages: `join`, `sync {play|pause|seek, t}`, `chat`, `ping`. Host-less — any member can drive playback; `suppress` flag on each client prevents remote-sync echo loops.
+- **New page**: `WatchParty.jsx` — join screen (name picker), native `<video>` with controls, shareable code + copy-link button, 320px chat sidebar with member list.
+- **Watch.jsx**: new "Watch Party" button next to Report, calls `POST /parties` and navigates to `/party/:code`.
+- **Routes**: `/party/:code` added to `App.js`.
+
+### Smoke tests performed
+- Backend: `/trending`, `/top-weekly`, `/parties` CRUD, `/videos/{id}/reactions` GET+POST, cron endpoint auth + valid secret → 200.
+- Frontend: `/top` renders 6 tabs with Hentai default; Watch page shows emoji picker + Watch Party button; sidebar has both new entries.
+
+
+
 ## Iteration 27 — Storage stats, live encoding progress, CC hint, episode number centered, 1080p encoding fix (Feb 2026)
 - **Backend `transcoder.probe_video` bug fix**: Previously used the FIRST video stream, which may be an attached-picture (MKV cover art) with tiny dimensions — the main video stream was ignored, so 1080p sources could be probed as e.g. 320×320 and only output 720p. New logic picks the LARGEST video stream (by pixel count) while preferring streams whose `disposition.attached_pic` flag is 0. Added detailed logging with full candidate list.
 - **Backend `transcoder.ENCODE_PROFILES`**: Added `"default"` profile (preset `veryfast`, CRF 23) and made it the new DEFAULT. Matches the original fast encoding behaviour before per-profile compression was introduced. Existing profiles (`original`, `balanced`, `strong`, `max`) all pinned to preset `slow` for best compression.

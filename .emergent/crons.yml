@@ -1,0 +1,9 @@
+crons:
+  - name: subscription-expiry
+    description: "Checks PRO/VIP subscriptions and emails users 3 days before, on expiry day, and after they expire"
+    cron: "0 9 * * *"
+    timezone: "Europe/Bucharest"
+    endpoint: "{{BASE_URL}}/api/cron/subscription-expiry"
+    method: POST
+    # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
+    enabled: true

@@ -30,6 +30,9 @@ import TvSeriesDetail from "@/pages/TvSeriesDetail";
 import TvSeasonDetail from "@/pages/TvSeasonDetail";
 import FilmeRoSub from "@/pages/FilmeRoSub";
 import ShortsSeriesDetail from "@/pages/ShortsSeriesDetail";
+import TopWeekly from "@/pages/TopWeekly";
+import Trending from "@/pages/Trending";
+import WatchParty from "@/pages/WatchParty";
 import SiteHead from "@/components/SiteHead";
 
 function App() {
@@ -73,6 +76,14 @@ function App() {
               <Route path="/seriale-tv/series/:seriesSlug/:seasonSlug" element={<TvSeasonDetail />} />
               <Route path="/filme-rosub" element={<FilmeRoSub />} />
               <Route path="/filme-rosub/:catSlug" element={<FilmeRoSub />} />
+              {/* ─── Top 10 Săptămânal + Trending (SEO-friendly URLs) ─── */}
+              <Route path="/top" element={<TopWeekly />} />
+              <Route path="/top/:vertical" element={<TopWeekly />} />
+              <Route path="/top/:vertical/:week" element={<TopWeekly />} />
+              <Route path="/trending" element={<Trending />} />
+              <Route path="/trending/:vertical" element={<Trending />} />
+              {/* ─── Watch Party ─── */}
+              <Route path="/party/:code" element={<WatchParty />} />
               <Route path="/shop" element={<Shop />} />
               <Route path="/login" element={<Login />} />
               <Route path="/register" element={<Register />} />
