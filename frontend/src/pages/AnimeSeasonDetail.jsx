@@ -97,10 +97,8 @@ export default function AnimeSeasonDetail() {
         >
           {episodes.map((v, i) => (
             <div key={v.id} className="relative">
-              <div className="absolute inset-0 z-10 flex items-center justify-center pointer-events-none">
-                <div className="bg-black/60 backdrop-blur-sm text-white text-2xl sm:text-3xl font-black px-4 py-1.5 rounded-md border border-white/20 drop-shadow-[0_2px_8px_rgba(0,0,0,0.9)]">
-                  Ep {v.anime_series_position || i + 1}
-                </div>
+              <div className="absolute top-2 left-1/2 -translate-x-1/2 z-10 bg-black/70 backdrop-blur-sm text-white text-[11px] font-bold px-1.5 py-0.5 rounded pointer-events-none">
+                Ep {v.anime_series_position || i + 1}
               </div>
               <VideoCard v={v} />
             </div>
