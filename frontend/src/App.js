@@ -33,6 +33,7 @@ import ShortsSeriesDetail from "@/pages/ShortsSeriesDetail";
 import TopWeekly from "@/pages/TopWeekly";
 import Trending from "@/pages/Trending";
 import WatchParty from "@/pages/WatchParty";
+import PartyRooms from "@/pages/PartyRooms";
 import SiteHead from "@/components/SiteHead";
 
 function App() {
@@ -45,6 +46,9 @@ function App() {
           <Routes>
             {/* Watch page uses its own Layout (with recommendations) */}
             <Route path="/watch/:id" element={<Watch />} />
+            {/* Watch Party uses its own full-width Layout */}
+            <Route path="/party/:code" element={<WatchParty />} />
+            <Route path="/party-rooms" element={<PartyRooms />} />
             {/* All other pages use shared Layout */}
             <Route element={<Layout />}>
               <Route index element={<Home />} />
@@ -83,7 +87,6 @@ function App() {
               <Route path="/trending" element={<Trending />} />
               <Route path="/trending/:vertical" element={<Trending />} />
               {/* ─── Watch Party ─── */}
-              <Route path="/party/:code" element={<WatchParty />} />
               <Route path="/shop" element={<Shop />} />
               <Route path="/login" element={<Login />} />
               <Route path="/register" element={<Register />} />

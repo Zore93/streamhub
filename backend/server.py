@@ -6940,6 +6940,7 @@ async def create_party(payload: dict, user: Optional[dict] = Depends(current_use
     from models import WatchParty
     video_id = (payload or {}).get("video_id") or ""
     guest_name = ((payload or {}).get("guest_name") or "Guest").strip()[:40] or "Guest"
+    is_public = bool((payload or {}).get("is_public", True))
     v = await find_video_by_id_or_slug(video_id)
     if not v:
         raise HTTPException(404, "Video not found")
@@ -6958,10 +6959,42 @@ async def create_party(payload: dict, user: Optional[dict] = Depends(current_use
         code=code, video_id=v["id"],
         host_user_id=user["id"] if user else None,
         host_name=host_name,
+        is_public=is_public,
     ).model_dump()
     await db.watch_parties.insert_one(party)
     party.pop("_id", None)
     return party
+
+
+@api.get("/parties")
+async def list_public_parties(limit: int = 50):
+    """Public, active parties with at least one member, ordered by member count DESC."""
+    limit = max(1, min(limit, 100))
+    cur = (
+        db.watch_parties.find(
+            {"active": True, "is_public": True, "member_count": {"$gt": 0}},
+            {"_id": 0, "code": 1, "video_id": 1, "host_name": 1,
+             "member_count": 1, "created_at": 1},
+        )
+        .sort("member_count", -1)
+        .limit(limit)
+    )
+    rows = await cur.to_list(limit)
+    # join video info in one go
+    vids = {}
+    if rows:
+        ids = list({r["video_id"] for r in rows})
+        async for v in db.videos.find(
+            {"id": {"$in": ids}},
+            {"_id": 0, "id": 1, "slug": 1, "title": 1, "thumbnail_url": 1,
+             "duration_sec": 1, "access_tier": 1, "is_hentai": 1, "is_anime": 1,
+             "is_tv": 1, "is_film_rosub": 1, "is_short": 1},
+        ):
+            vids[v["id"]] = v
+    items = []
+    for r in rows:
+        items.append({**r, "video": vids.get(r["video_id"])})
+    return {"items": items, "count": len(items)}
 
 
 @api.get("/parties/{code}")
@@ -7077,14 +7110,16 @@ async def party_ws(websocket: WebSocket, code: str):
             await room.broadcast({"type": "members", "list": await _members_list()})
         except Exception:
             pass
-        if not room.members:
+        is_empty = not room.members
+        if is_empty:
             _PARTY_ROOMS.pop(code, None)
         try:
-            await db.watch_parties.update_one(
-                {"code": code},
-                {"$set": {"last_activity_at": now_iso(),
-                          "member_count": len(room.members)}},
-            )
+            upd = {"last_activity_at": now_iso(), "member_count": len(room.members)}
+            # Last member left → close the party permanently so it drops from
+            # the public /parties listing immediately.
+            if is_empty:
+                upd["active"] = False
+            await db.watch_parties.update_one({"code": code}, {"$set": upd})
         except Exception:
             pass
 

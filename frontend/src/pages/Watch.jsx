@@ -7,7 +7,7 @@ import { categoryLabel } from "@/i18n";
 import { Layout } from "@/layout/Layout";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { Eye, Crown, Lock, Send, Trash2, Loader2, ThumbsUp, Folder, Coins, Flag, Subtitles, Users } from "lucide-react";
+import { Eye, Crown, Lock, Send, Trash2, Loader2, ThumbsUp, Folder, Coins, Flag, Subtitles, Users, Globe } from "lucide-react";
 import { toast } from "sonner";
 import VideoPlayer from "@/components/VideoPlayer";
 import FramedAvatar from "@/components/FramedAvatar";
@@ -202,17 +202,34 @@ export default function Watch() {
 
   const currentRendition = video?.renditions?.find((r) => r.resolution === resolution) || video?.renditions?.[0];
 
-  // Watch party: create a new room for the current video and navigate.
+  // Watch party: open a dialog to pick public/private + guest name, then
+  // create the room and navigate.
+  const [partyDialogOpen, setPartyDialogOpen] = useState(false);
+  const [partyIsPublic, setPartyIsPublic] = useState(true);
+  const [partyGuestName, setPartyGuestName] = useState("");
+  const [partyCreating, setPartyCreating] = useState(false);
+  const openPartyDialog = () => {
+    setPartyGuestName(user?.username || "");
+    setPartyIsPublic(true);
+    setPartyDialogOpen(true);
+  };
   const createParty = async () => {
     if (!video) return;
+    const guestName = (partyGuestName || "").trim() || user?.username || "Guest";
     try {
-      const guestName = user?.username || "Guest";
-      const { data } = await api.post("/parties", { video_id: video.id, guest_name: guestName });
+      setPartyCreating(true);
+      const { data } = await api.post("/parties", {
+        video_id: video.id,
+        guest_name: guestName,
+        is_public: partyIsPublic,
+      });
       if (data?.code) {
         navigate(`/party/${data.code}`);
       }
     } catch (_e) {
       toast.error("Nu am putut crea camera. Încearcă din nou.");
+    } finally {
+      setPartyCreating(false);
     }
   };
 
@@ -428,13 +445,13 @@ export default function Watch() {
             <Flag size={14} /> {t("report.button") || "Report"}
           </button>
           <button
-            onClick={createParty}
+            onClick={openPartyDialog}
             className="inline-flex items-center gap-1.5 text-sm text-zinc-400 hover:text-fuchsia-400 transition-colors"
             data-testid="party-btn"
             type="button"
             title="Vizionează sincron cu prietenii"
           >
-            <Users size={14} /> Watch Party
+            <Users size={14} /> Vizionare în grup
           </button>
           {/* Uploader — opens profile in a new tab on Ctrl/Cmd+click; users can also right-click → "open in new tab". */}
           <a
@@ -617,6 +634,91 @@ export default function Watch() {
               data-testid="report-submit"
             >
               {reportBusy ? (<><Loader2 size={14} className="animate-spin mr-1" /> {t("report.sending") || "Se trimite…"}</>) : (t("report.submit") || "Trimite")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ─── Create Watch Party dialog (public vs private + nume) ─── */}
+      <Dialog open={partyDialogOpen} onOpenChange={(o) => { if (!partyCreating) setPartyDialogOpen(o); }}>
+        <DialogContent className="bg-zinc-950 border-zinc-800 text-zinc-100 sm:max-w-md" data-testid="party-dialog">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-lg">
+              <Users className="text-fuchsia-400" size={18} /> Vizionare în grup
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-5 py-2">
+            <div>
+              <label className="block text-xs uppercase tracking-wider text-zinc-400 mb-2">
+                Numele tău afișat celorlalți
+              </label>
+              <input
+                type="text"
+                value={partyGuestName}
+                onChange={(e) => setPartyGuestName(e.target.value)}
+                placeholder="Numele tău"
+                maxLength={40}
+                className="w-full bg-zinc-900 border border-zinc-800 rounded-md px-3 py-2 text-sm focus:outline-none focus:border-fuchsia-500"
+                data-testid="party-dialog-name"
+              />
+            </div>
+            <div>
+              <label className="block text-xs uppercase tracking-wider text-zinc-400 mb-2">
+                Vizibilitate cameră
+              </label>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setPartyIsPublic(true)}
+                  className={`flex flex-col items-center text-center p-3 rounded-lg border transition-all ${
+                    partyIsPublic
+                      ? "border-emerald-500 bg-emerald-500/10 shadow-[0_0_12px_rgba(16,185,129,0.25)]"
+                      : "border-zinc-800 bg-zinc-900 hover:border-zinc-700"
+                  }`}
+                  data-testid="party-dialog-public"
+                >
+                  <Globe size={22} className={partyIsPublic ? "text-emerald-400 mb-1" : "text-zinc-500 mb-1"} />
+                  <div className="text-sm font-semibold">Publică</div>
+                  <div className="text-[11px] text-zinc-400 leading-tight mt-0.5">
+                    Apare în Party Rooms
+                  </div>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPartyIsPublic(false)}
+                  className={`flex flex-col items-center text-center p-3 rounded-lg border transition-all ${
+                    !partyIsPublic
+                      ? "border-fuchsia-500 bg-fuchsia-500/10 shadow-[0_0_12px_rgba(217,70,239,0.25)]"
+                      : "border-zinc-800 bg-zinc-900 hover:border-zinc-700"
+                  }`}
+                  data-testid="party-dialog-private"
+                >
+                  <Lock size={22} className={!partyIsPublic ? "text-fuchsia-400 mb-1" : "text-zinc-500 mb-1"} />
+                  <div className="text-sm font-semibold">Privată</div>
+                  <div className="text-[11px] text-zinc-400 leading-tight mt-0.5">
+                    Doar prin link
+                  </div>
+                </button>
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              className="border-zinc-700"
+              onClick={() => setPartyDialogOpen(false)}
+              disabled={partyCreating}
+              data-testid="party-dialog-cancel"
+            >
+              Anulează
+            </Button>
+            <Button
+              onClick={createParty}
+              disabled={partyCreating}
+              className="pro-gradient text-white border-0"
+              data-testid="party-dialog-create"
+            >
+              {partyCreating ? (<><Loader2 size={14} className="mr-1 animate-spin" /> Se creează…</>) : "Creează camera"}
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -606,6 +606,7 @@ class WatchParty(BaseModel):
     created_at: str = Field(default_factory=now_iso)
     last_activity_at: str = Field(default_factory=now_iso)
     active: bool = True
+    is_public: bool = True  # True → listed on /party-rooms, False → link-only
     member_count: int = 0  # updated by the websocket layer
 
 

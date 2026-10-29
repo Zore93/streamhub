@@ -8,7 +8,7 @@ import { Dialog, DialogContent, DialogTitle, DialogDescription, DialogHeader } f
 import { Button } from "@/components/ui/button";
 import { useT } from "@/contexts/LanguageContext";
 
-export function Layout({ recommendations = null, children }) {
+export function Layout({ recommendations = null, children, fullWidth = false }) {
   const { t, siteCfg } = useT();
   const [announcements, setAnnouncements] = useState([]);
   const [activeAnn, setActiveAnn] = useState(null);
@@ -70,14 +70,16 @@ export function Layout({ recommendations = null, children }) {
       </header>
 
       <LeftSidebar mobileOpen={navOpen} onClose={() => setNavOpen(false)} />
-      <RightSidebar
-        recommendations={recommendations}
-        mobileOpen={accountOpen}
-        onMobileClose={() => setAccountOpen(false)}
-      />
+      {!fullWidth && (
+        <RightSidebar
+          recommendations={recommendations}
+          mobileOpen={accountOpen}
+          onMobileClose={() => setAccountOpen(false)}
+        />
+      )}
 
       <main
-        className="lg:ml-[240px] lg:mr-[280px] xl:mr-[300px] min-h-screen px-4 sm:px-6 lg:px-10 py-6 lg:py-8 animate-fade-in"
+        className={`${fullWidth ? "lg:ml-[240px]" : "lg:ml-[240px] lg:mr-[280px] xl:mr-[300px]"} min-h-screen px-4 sm:px-6 lg:px-10 py-6 lg:py-8 animate-fade-in`}
         data-testid="main-content"
       >
         {children || <Outlet />}

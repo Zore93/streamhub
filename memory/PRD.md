@@ -1,3 +1,27 @@
+## Iteration 29 — Watch Party UX refinements + Party Rooms discovery (Feb 2026)
+
+### Full-width Watch Party layout
+- **Problem**: `/party/:code` was wrapped twice in `Layout` (once by the parent route in `App.js`, once inside `WatchParty.jsx`), so the inner `fullWidth` prop never reached the active layout — the right sidebar stayed visible and the video shrank to ~700px wide.
+- **Fix**: moved `/party/:code` and `/party-rooms` out of the shared `<Route element={<Layout />}>` wrapper into their own top-level routes (same pattern as `/watch/:id`). Watch Party now renders at full width (right sidebar hidden). Video column grows to ~930px, chat column to ~340px — matches the user-provided reference screenshot.
+- **Layout.jsx**: added `fullWidth` prop that hides `RightSidebar` and removes the `lg:mr-[280px]` reservation.
+
+### Public / Private visibility toggle
+- **Backend `WatchParty` model**: added `is_public: bool = True`.
+- **`POST /parties`**: accepts `is_public` from the client; stored on creation.
+- **`GET /parties`**: new endpoint — returns ONLY active public parties with at least one member, projected with video metadata, ordered by `member_count DESC`.
+- **WebSocket cleanup**: when the last member disconnects, the party is marked `active: False` so it drops from the public listing immediately.
+- **Frontend `Watch.jsx`**: `createParty` now opens a dialog with name input + Public/Private tiles (Globe vs Lock icons, emerald vs fuchsia accents). Public is pre-selected.
+
+### Party Rooms page (`/party-rooms`)
+- **New page `PartyRooms.jsx`**: lists all public active parties with thumbnail, title, uploader, member count, access tier badge, and a brand-accent "Intră" button. Auto-refreshes every 10s so empty rooms fall off and new rooms appear.
+- **Empty state**: friendly explainer pointing users to create their own party via the Watch page button.
+- **Sidebar**: new nav entry "Party Rooms" (Users icon) inserted between "Trending acum" and "Populare".
+
+### Button label translation
+- **Watch.jsx**: the "Watch Party" trigger renamed to **"Vizionare în grup"** (Romanian). All adjacent UI (dialog header, buttons, labels, tooltip) is in Romanian.
+
+
+
 ## Iteration 28 — Preview clips, Weekly Top & Trending, Emoji reactions, Expiration emails, Watch Party (Feb 2026)
 
 ### Feature 1 — 15s/30s Preview clips for non-paying users
