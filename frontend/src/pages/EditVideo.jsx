@@ -164,7 +164,7 @@ export default function EditVideo() {
   const addSubtitle = async (e) => {
     e.preventDefault();
     if (!subFile) return toast.error("Pick a subtitle file");
-    if ((v.subtitles || []).length >= 10) return toast.error("Maximum 10 subtitles");
+    if ((v.subtitles || []).length >= 100) return toast.error("Maximum 100 subtitles");
     const lang = effectiveLang();
     if (!lang) return toast.error("Pick or enter a language code");
     setBusy(true);
