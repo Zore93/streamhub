@@ -351,10 +351,7 @@ export default function Watch() {
             <div className="absolute inset-0 flex flex-col items-center justify-center bg-zinc-950 text-center px-6" data-testid="processing-view">
               <Loader2 size={42} className="text-rose-500 mb-4 animate-spin" />
               <p className="text-zinc-200 max-w-md">{t("player.processing")}</p>
-              {/* Rich progress bar / percentage shown ONLY to admins. Regular
-                  viewers get the plain "please wait" message above and the
-                  page refetches automatically — see the polling effect below. */}
-              {user?.role === "admin" && video.progress != null && (
+              {video.progress != null && (
                 <div className="w-64 mt-5">
                   <Progress value={video.progress} className="h-2" />
                   <div className="text-xs text-zinc-500 mt-2">{video.progress}%</div>

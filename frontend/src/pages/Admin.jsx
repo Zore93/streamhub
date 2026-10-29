@@ -439,7 +439,7 @@ function VideosTab() {
               {v.synopsis && <><span>·</span><span className="text-violet-300 inline-flex items-center gap-0.5"><Sparkles size={10} /> sinopsis</span></>}
             </div>
             {v.status === "processing" && (
-              <EncodingProgressBar progress={v.progress} progressDetail={v.progress_detail} videoId={v.id} />
+              <EncodingProgressBar progress={v.progress} videoId={v.id} />
             )}
           </div>
           <Link to={`/edit-video/${v.id}`}>
@@ -3505,50 +3505,17 @@ function ReportsTab() {
 
 
 // ─────────── Live encoding progress bar used in VideosTab ────────────
-function EncodingProgressBar({ progress, progressDetail, videoId }) {
-  const overallPct = Math.max(0, Math.min(100, parseInt(progress, 10) || 0));
-  const detail = progressDetail || {};
-  const curRes = detail.current_rendition || "";
-  const curPct = Math.max(0, Math.min(100, Number(detail.current_pct) || 0));
-  const etaSec = Math.max(0, parseInt(detail.current_eta_sec, 10) || 0);
-  const idx = Number(detail.rendition_index) || 0;
-  const tot = Number(detail.total_renditions) || 1;
-  const fmtEta = (s) => {
-    if (!s || s <= 0) return "";
-    if (s < 60) return `~${Math.ceil(s)}s`;
-    const m = Math.floor(s / 60);
-    const sec = Math.round(s - m * 60);
-    return `~${m}m ${sec}s`;
-  };
+function EncodingProgressBar({ progress, videoId }) {
+  const pct = Math.max(0, Math.min(100, parseInt(progress, 10) || 0));
   return (
-    <div className="mt-2 space-y-1.5" data-testid={`encoding-progress-${videoId}`}>
-      {/* ── Current rendition (resets between rendition handoffs) ── */}
-      {curRes && (
-        <div className="flex items-center gap-2">
-          <div className="flex-1 h-2 bg-zinc-800 rounded-full overflow-hidden" title={`Encodare ${curRes}`}>
-            <div
-              className="h-full bg-gradient-to-r from-amber-400 to-rose-500 transition-all duration-500"
-              style={{ width: `${curPct}%` }}
-            />
-          </div>
-          <span className="text-[10px] text-amber-300 font-mono whitespace-nowrap min-w-[90px] text-right">
-            {curRes} · {curPct.toFixed(1)}%
-            {etaSec > 0 && <span className="text-zinc-500"> · {fmtEta(etaSec)}</span>}
-          </span>
-        </div>
-      )}
-      {/* ── Combined / overall progress across all renditions ── */}
-      <div className="flex items-center gap-2">
-        <div className="flex-1 h-2 bg-zinc-800 rounded-full overflow-hidden" title="Progres total">
-          <div
-            className="h-full bg-gradient-to-r from-emerald-500 via-rose-500 to-fuchsia-500 transition-all duration-500"
-            style={{ width: `${overallPct}%` }}
-          />
-        </div>
-        <span className="text-[10px] text-zinc-300 font-mono whitespace-nowrap min-w-[90px] text-right">
-          Total · {overallPct}%{tot > 1 ? ` · ${Math.min(idx + 1, tot)}/${tot}` : ""}
-        </span>
+    <div className="mt-2 flex items-center gap-2" data-testid={`encoding-progress-${videoId}`}>
+      <div className="flex-1 h-2 bg-zinc-800 rounded-full overflow-hidden">
+        <div
+          className="h-full bg-gradient-to-r from-rose-500 via-orange-500 to-amber-400 transition-all duration-500"
+          style={{ width: `${pct}%` }}
+        />
       </div>
+      <span className="text-[11px] text-amber-300 font-mono w-10 text-right">{pct}%</span>
     </div>
   );
 }

@@ -378,20 +378,9 @@ async def transcode_to_resolution(
     output_path: str,
     target_resolution: str,
     profile: str = DEFAULT_ENCODE_PROFILE,
-    duration_sec: float = 0.0,
-    on_progress: Optional[Callable[[float, float], Awaitable[None]]] = None,
 ) -> bool:
     """Transcodes input video to a specific resolution in mp4 (H.264 + AAC).
     Returns True on success.
-
-    If `duration_sec` and `on_progress` are provided, ffmpeg's `-progress pipe:1`
-    stream is parsed and the async callback is invoked ~every ~1s with
-    (percent_done, eta_seconds) so callers can surface live progress to the UI.
-
-    Strategy: encode into a /tmp staging file first (large videos + multiple
-    renditions can easily blow past the small UPLOAD_DIR volume on cloud
-    pods — /tmp is usually the bigger overlayfs). We `shutil.move` to the
-    final path on success.
     """
     if target_resolution not in RESOLUTIONS:
         return False
@@ -400,8 +389,8 @@ async def transcode_to_resolution(
     cap = prof["caps"].get(h, 5000)
     preset = prof.get("preset", "slow")
     logger.info(
-        "transcode_to_resolution: → %s (%dx%d) profile=%s preset=%s crf=%d maxrate=%dk dur=%.1fs",
-        target_resolution, w, h, profile, preset, prof["crf"], cap, duration_sec,
+        "transcode_to_resolution: → %s (%dx%d) profile=%s preset=%s crf=%d maxrate=%dk",
+        target_resolution, w, h, profile, preset, prof["crf"], cap,
     )
     vf = f"scale='if(gt(a,{w}/{h}),{w},-2)':'if(gt(a,{w}/{h}),-2,{h})'"
     Path(os.path.dirname(output_path)).mkdir(parents=True, exist_ok=True)
@@ -411,8 +400,6 @@ async def transcode_to_resolution(
     )
     os.close(tmp_fd)
     try:
-        # When we want live progress we pipe the key=value stream to stdout.
-        progress_arg = ["-progress", "pipe:1"] if (on_progress and duration_sec > 0) else []
         proc = await asyncio.create_subprocess_exec(
             "ffmpeg",
             "-y",
@@ -430,68 +417,11 @@ async def transcode_to_resolution(
             "-c:a", "aac",
             "-b:a", prof["audio"],
             "-movflags", "+faststart",
-            *progress_arg,
             tmp_name,
-            stdout=asyncio.subprocess.PIPE if progress_arg else asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.PIPE,
         )
-
-        # Read progress stream concurrently with waiting for ffmpeg to finish.
-        async def _drain_progress():
-            if not progress_arg or proc.stdout is None:
-                return
-            start_ts = asyncio.get_event_loop().time()
-            last_report = 0.0
-            out_time_us = 0  # last reported encode position in microseconds
-            try:
-                while True:
-                    line = await proc.stdout.readline()
-                    if not line:
-                        break
-                    s = line.decode(errors="ignore").strip()
-                    if s.startswith("out_time_us=") or s.startswith("out_time_ms="):
-                        try:
-                            v = int(s.split("=", 1)[1])
-                            # ffmpeg historically mis-labels "out_time_ms" as microseconds
-                            out_time_us = v
-                        except Exception:
-                            pass
-                    elif s.startswith("out_time="):
-                        # HH:MM:SS.mmm fallback
-                        try:
-                            hh, mm, rest = s.split("=", 1)[1].split(":")
-                            ss = float(rest)
-                            out_time_us = int((int(hh) * 3600 + int(mm) * 60 + ss) * 1_000_000)
-                        except Exception:
-                            pass
-                    elif s.startswith("progress="):
-                        pass  # emitted periodically; use as a flush trigger below
-                    else:
-                        continue
-                    now = asyncio.get_event_loop().time()
-                    if now - last_report < 1.0:
-                        continue
-                    last_report = now
-                    secs_done = out_time_us / 1_000_000.0
-                    pct = max(0.0, min(100.0, (secs_done / duration_sec) * 100.0))
-                    elapsed = now - start_ts
-                    speed = (secs_done / elapsed) if elapsed > 0.1 else 0.0
-                    eta = ((duration_sec - secs_done) / speed) if speed > 0.01 else 0.0
-                    try:
-                        await on_progress(pct, max(0.0, eta))
-                    except Exception:
-                        pass
-            except Exception:
-                pass
-
-        drain_task = asyncio.create_task(_drain_progress())
         _, err = await proc.communicate()
-        drain_task.cancel()
-        try:
-            await drain_task
-        except Exception:
-            pass
-
         if proc.returncode != 0 or not os.path.exists(tmp_name) or os.path.getsize(tmp_name) == 0:
             tail = (err or b"").decode("utf-8", errors="ignore")[-2000:]
             logger.warning(
@@ -503,12 +433,6 @@ async def transcode_to_resolution(
             return False
         import shutil as _shutil
         _shutil.move(tmp_name, output_path)
-        # Final 100% ping so the UI isn't stuck at e.g. 97%.
-        if on_progress:
-            try:
-                await on_progress(100.0, 0.0)
-            except Exception:
-                pass
         return os.path.exists(output_path)
     except Exception as e:  # noqa: BLE001
         logger.exception("transcode_to_resolution crashed: %s", e)
