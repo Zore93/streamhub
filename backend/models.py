@@ -125,6 +125,10 @@ class Video(BaseModel):
     original_size_bytes: int = 0
     original_width: int = 0
     original_height: int = 0
+    # Per-upload override: when True, process_video ignores the single-rendition
+    # policy and generates every enabled resolution ≤ source height. Set by the
+    # uploader via the checkbox in Upload.jsx.
+    encode_all_resolutions: bool = False
     # Sum of all transcoded rendition file sizes — used by Admin → Storage to
     # show how much space the compression saved vs the original upload.
     compressed_size_bytes: int = 0

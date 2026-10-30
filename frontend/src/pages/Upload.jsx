@@ -49,6 +49,9 @@ export default function Upload() {
     tv_series_position: null,
     is_film_rosub: false,
     film_category_ids: [],
+    // When ON: encode every enabled resolution ≤ source height. When OFF
+    // (default): just the single best-match rendition — way smaller output.
+    encode_all_resolutions: false,
   });
   const [categories, setCategories] = useState([]);
   const [animeSeriesList, setAnimeSeriesList] = useState([]);
@@ -156,6 +159,7 @@ export default function Upload() {
           tv_series_id: (!shared.is_short && !shared.is_anime && !shared.is_hentai && shared.is_tv) ? shared.tv_series_id : null,
           is_film_rosub: !shared.is_short && !shared.is_anime && !shared.is_hentai && !shared.is_tv && !!shared.is_film_rosub,
           film_category_ids: (!shared.is_short && !shared.is_anime && !shared.is_hentai && !shared.is_tv && shared.is_film_rosub) ? (shared.film_category_ids || []) : [],
+          encode_all_resolutions: !!shared.encode_all_resolutions,
         };
         const video = await uploadVideoChunked({
           file: entry.file,
@@ -354,6 +358,22 @@ export default function Upload() {
               <p className="text-xs text-zinc-500 mt-1">{t("upload.isShort.help", null, { dur: shortsMax })}</p>
             </div>
             <Switch checked={shared.is_short} onCheckedChange={(v) => setShared({ ...shared, is_short: v, is_anime: v ? false : shared.is_anime })} data-testid="upload-is-short" />
+          </div>
+          {/* ─── Encode-all override — bypasses the single-rendition default. */}
+          <div className="flex items-start justify-between bg-zinc-950 border border-zinc-800 rounded-md p-3">
+            <div className="pr-4">
+              <Label className="block">Encodează la toate rezoluțiile bifate</Label>
+              <p className="text-xs text-zinc-500 mt-1">
+                Normal se encodează doar rezoluția care se potrivește cu sursa. Activează
+                pentru acest videoclip ca să generezi tot ladder-ul (360p, 720p, 1080p etc.)
+                — util dacă vrei fallback pentru conexiuni slabe. Spațiul ocupat crește semnificativ.
+              </p>
+            </div>
+            <Switch
+              checked={!!shared.encode_all_resolutions}
+              onCheckedChange={(v) => setShared({ ...shared, encode_all_resolutions: v })}
+              data-testid="upload-encode-all-resolutions"
+            />
           </div>
           {!shared.is_short && (
             <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-3 space-y-3" data-testid="upload-is-anime-block">

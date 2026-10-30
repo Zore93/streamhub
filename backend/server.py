@@ -97,6 +97,7 @@ from transcoder import (
     RESOLUTIONS,
     extract_embedded_subtitles,
     extract_preview_clip,
+    filter_resolutions_all,
     filter_resolutions_for_source,
     generate_thumbnails,
     probe_video,
@@ -655,11 +656,18 @@ async def process_video(video_id: str, src_path: str):
                 logger.warning("subtitle extraction failed: %s", _sub_err)
             # Decide which resolutions
             enabled = settings.get("enabled_resolutions", ["360p", "720p", "1080p"])
-            target_resolutions = filter_resolutions_for_source(src_h or 1080, enabled)
+            # Per-video override: when the uploader checked "encode all enabled
+            # resolutions" we use the legacy ladder; otherwise the default
+            # single-rendition policy (smallest enabled ≥ source height).
+            use_all = bool(cur_doc.get("encode_all_resolutions"))
+            if use_all:
+                target_resolutions = filter_resolutions_all(src_h or 1080, enabled)
+            else:
+                target_resolutions = filter_resolutions_for_source(src_h or 1080, enabled)
             chosen_profile = settings.get("encode_profile") or "default"
             logger.info(
-                "process_video: id=%s src=%dx%d (dur=%.1fs) → enabled=%s → chosen=%s · profile=%s",
-                video_id, src_w, src_h, duration, enabled, target_resolutions, chosen_profile,
+                "process_video: id=%s src=%dx%d (dur=%.1fs) → enabled=%s → chosen=%s · profile=%s · all=%s",
+                video_id, src_w, src_h, duration, enabled, target_resolutions, chosen_profile, use_all,
             )
             renditions: List[dict] = []
             total = max(len(target_resolutions), 1)
@@ -2645,6 +2653,7 @@ async def upload_video(
     access_tier: str = Form("free"),
     is_short: bool = Form(False),
     shorts_category: str = Form("xxx"),
+    encode_all_resolutions: bool = Form(False),
     user: dict = Depends(require_user),
 ):
     settings = await get_settings()
@@ -2685,6 +2694,7 @@ async def upload_video(
         access_tier=access_tier,
         is_short=is_short,
         shorts_category=shorts_category if is_short else "xxx",
+        encode_all_resolutions=encode_all_resolutions,
         original_filename=file.filename or "",
         original_size_bytes=size,
         status="processing",
@@ -3033,6 +3043,7 @@ async def upload_video_finish(
             tv_series_position=tv_series_position,
             is_film_rosub=is_film_rosub,
             film_category_ids=film_category_ids,
+            encode_all_resolutions=bool(payload.get("encode_all_resolutions", False)),
             original_filename=state.get("filename") or "",
             original_size_bytes=received,
             status="processing",

@@ -465,14 +465,36 @@ def filter_resolutions_for_source(
     if not valid:
         return []
     sorted_valid = sorted(valid, key=lambda r: RESOLUTIONS[r][1])  # ascending by height
-    # Small tolerance so a 1078-pixel source still matches 1080p instead of 2048p.
     tol = 20
     for r in sorted_valid:
         _, h = RESOLUTIONS[r]
         if h + tol >= source_height:
             return [r]
-    # Source is taller than every enabled option → cap at the tallest enabled.
     return [sorted_valid[-1]]
+
+
+def filter_resolutions_all(
+    source_height: int, enabled: List[str]
+) -> List[str]:
+    """Legacy "encode every enabled resolution ≤ source" filter — kept so a
+    specific upload can request the full ladder by setting
+    `encode_all_resolutions=True` on the video doc.
+    """
+    out: List[str] = []
+    for r in enabled:
+        if r not in RESOLUTIONS:
+            continue
+        _, h = RESOLUTIONS[r]
+        if h <= source_height + 50:
+            out.append(r)
+    if not out and enabled:
+        sorted_enabled = sorted(
+            [r for r in enabled if r in RESOLUTIONS],
+            key=lambda r: RESOLUTIONS[r][1],
+        )
+        if sorted_enabled:
+            out = [sorted_enabled[0]]
+    return out
 
 
 
