@@ -444,23 +444,35 @@ async def transcode_to_resolution(
 def filter_resolutions_for_source(
     source_height: int, enabled: List[str]
 ) -> List[str]:
-    """Only keep enabled resolutions that are <= source height (plus the closest higher)."""
-    out: List[str] = []
-    for r in enabled:
-        if r not in RESOLUTIONS:
-            continue
+    """Return a single-element list containing the one rendition that best
+    matches the source height.
+
+    Policy (per operator request): encode EXACTLY ONE rendition per video —
+    the smallest enabled resolution whose height is ≥ `source_height`. If the
+    source is taller than every enabled option, we fall back to the tallest
+    enabled resolution (no further upscale beyond what's allowed).
+
+    Examples (with all five enabled):
+        source 360   → ["360p"]
+        source 480   → ["720p"]   (closest-equal-or-greater)
+        source 720   → ["720p"]
+        source 1080  → ["1080p"]
+        source 1152  → ["2048p"]
+        source 2160  → ["4096p"]
+        source 2500  → ["4096p"]  (tallest enabled)
+    """
+    valid = [r for r in enabled if r in RESOLUTIONS]
+    if not valid:
+        return []
+    sorted_valid = sorted(valid, key=lambda r: RESOLUTIONS[r][1])  # ascending by height
+    # Small tolerance so a 1078-pixel source still matches 1080p instead of 2048p.
+    tol = 20
+    for r in sorted_valid:
         _, h = RESOLUTIONS[r]
-        if h <= source_height + 50:  # small tolerance
-            out.append(r)
-    if not out and enabled:
-        # ensure at least one (the lowest enabled)
-        sorted_enabled = sorted(
-            [r for r in enabled if r in RESOLUTIONS],
-            key=lambda r: RESOLUTIONS[r][1],
-        )
-        if sorted_enabled:
-            out = [sorted_enabled[0]]
-    return out
+        if h + tol >= source_height:
+            return [r]
+    # Source is taller than every enabled option → cap at the tallest enabled.
+    return [sorted_valid[-1]]
 
 
 
