@@ -421,7 +421,37 @@ async def transcode_to_resolution(
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.PIPE,
         )
-        _, err = await proc.communicate()
+        # Hard cap so a hanging ffmpeg can't lock the FFmpeg semaphore forever.
+        # Allow 20× realtime (very generous — a slow encode of a 1h episode on
+        # a loaded pod rarely exceeds 15× realtime). Minimum 10 minutes so very
+        # short videos don't get killed by overhead.
+        src_dur = 0.0
+        try:
+            # cheap probe just for duration
+            p = await asyncio.create_subprocess_exec(
+                "ffprobe", "-v", "error", "-show_entries", "format=duration",
+                "-of", "default=noprint_wrappers=1:nokey=1", input_path,
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+            )
+            out, _ = await asyncio.wait_for(p.communicate(), timeout=15)
+            src_dur = float((out or b"0").decode().strip() or 0)
+        except Exception:
+            src_dur = 0.0
+        TRANSCODE_TIMEOUT = max(600.0, src_dur * 20.0)
+        try:
+            _, err = await asyncio.wait_for(proc.communicate(), timeout=TRANSCODE_TIMEOUT)
+        except asyncio.TimeoutError:
+            logger.warning(
+                "ffmpeg TIMEOUT after %.0fs for %s → %s (src_dur=%.1fs). Killing.",
+                TRANSCODE_TIMEOUT, target_resolution, output_path, src_dur,
+            )
+            try: proc.kill()
+            except Exception: pass
+            try: await proc.wait()
+            except Exception: pass
+            try: os.remove(tmp_name)
+            except Exception: pass
+            return False
         if proc.returncode != 0 or not os.path.exists(tmp_name) or os.path.getsize(tmp_name) == 0:
             tail = (err or b"").decode("utf-8", errors="ignore")[-2000:]
             logger.warning(
@@ -508,45 +538,63 @@ async def extract_preview_clip(src_path: str, out_path: str, duration_sec: int =
     """Extract the first `duration_sec` seconds of the source into `out_path`.
 
     Fast path: `-c copy` (no re-encode). Fallback path: libx264 at CRF 24.
+    Both paths are wrapped in a hard timeout (90 s) — some corrupted or
+    oddly-muxed inputs can make ffmpeg hang forever, which previously
+    deadlocked the FFmpeg semaphore and froze the whole encoding queue.
     """
     out = Path(out_path)
     out.parent.mkdir(parents=True, exist_ok=True)
+    PREVIEW_TIMEOUT = 90.0  # seconds
+
+    async def _run_ffmpeg(args: List[str]) -> Tuple[int, bytes]:
+        """Spawn ffmpeg + kill it hard if it doesn't exit within PREVIEW_TIMEOUT."""
+        proc = await asyncio.create_subprocess_exec(
+            *args,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            _, err = await asyncio.wait_for(proc.communicate(), timeout=PREVIEW_TIMEOUT)
+            return proc.returncode or 0, err or b""
+        except asyncio.TimeoutError:
+            logger.warning("preview ffmpeg TIMEOUT after %.0fs → killing (%s)",
+                           PREVIEW_TIMEOUT, Path(out_path).name)
+            try: proc.kill()
+            except Exception: pass
+            try: await proc.wait()
+            except Exception: pass
+            return -1, b"TIMEOUT"
     # ---- Fast path: stream-copy VIDEO, re-encode AUDIO to AAC ------
     # Audio must be re-encoded even in the fast path: many sources use codecs
     # MP4 cannot carry (AC3, DTS, Opus in MKV, FLAC, PCM, etc.) and `-c:a copy`
     # into .mp4 silently drops them → the preview ends up muted. AAC @ 128k is
     # universally compatible and still fast because video is still copied.
     try:
-        proc = await asyncio.create_subprocess_exec(
-            "ffmpeg",
-            "-y",
+        rc, err = await _run_ffmpeg([
+            "ffmpeg", "-y",
             "-ss", "0",
             "-i", src_path,
             "-t", str(duration_sec),
             "-map", "0:v:0",
-            "-map", "0:a:0?",   # audio optional
+            "-map", "0:a:0?",
             "-c:v", "copy",
             "-c:a", "aac",
             "-b:a", "128k",
             "-ac", "2",
             "-movflags", "+faststart",
             str(out),
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        _, err = await proc.communicate()
-        if proc.returncode == 0 and out.exists() and out.stat().st_size > 1024:
+        ])
+        if rc == 0 and out.exists() and out.stat().st_size > 1024:
             logger.info("preview copy OK: %s (%.1f MB)", out.name, out.stat().st_size / 1024 / 1024)
             return True
         logger.info("preview copy failed (rc=%s), falling back to re-encode: %s",
-                    proc.returncode, (err or b'')[-200:].decode(errors='replace'))
+                    rc, err[-200:].decode(errors='replace'))
     except Exception as e:  # noqa: BLE001
         logger.warning("preview copy exception, falling back: %s", e)
-    # ---- Fallback: re-encode (always succeeds) --------------------
+    # ---- Fallback: re-encode (always succeeds, hard-capped by timeout) --
     try:
-        proc = await asyncio.create_subprocess_exec(
-            "ffmpeg",
-            "-y",
+        rc, err = await _run_ffmpeg([
+            "ffmpeg", "-y",
             "-ss", "0",
             "-i", src_path,
             "-t", str(duration_sec),
@@ -558,14 +606,11 @@ async def extract_preview_clip(src_path: str, out_path: str, duration_sec: int =
             "-b:a", "128k",
             "-movflags", "+faststart",
             str(out),
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        _, err = await proc.communicate()
-        if proc.returncode == 0 and out.exists() and out.stat().st_size > 1024:
+        ])
+        if rc == 0 and out.exists() and out.stat().st_size > 1024:
             logger.info("preview re-encode OK: %s (%.1f MB)", out.name, out.stat().st_size / 1024 / 1024)
             return True
-        logger.warning("preview re-encode FAILED rc=%s: %s", proc.returncode, (err or b'')[-400:].decode(errors='replace'))
+        logger.warning("preview re-encode FAILED rc=%s: %s", rc, err[-400:].decode(errors='replace'))
     except Exception as e:  # noqa: BLE001
         logger.warning("preview re-encode exception: %s", e)
     return False

@@ -4448,6 +4448,19 @@ async def startup():
         await _fix_unsafe_series_slugs()
     except Exception as e:  # noqa: BLE001
         logger.warning(f"[startup] slug fix failed: {e}")
+    # Reset videos stuck in "processing" for more than 2 hours — these are
+    # orphaned from a previous process (crash, OOM kill, ffmpeg hang before
+    # we added timeouts) and would otherwise clog the Admin → Videos list.
+    try:
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
+        r = await db.videos.update_many(
+            {"status": "processing", "created_at": {"$lt": cutoff}},
+            {"$set": {"status": "failed", "progress": 0}},
+        )
+        if r.modified_count:
+            logger.info(f"[startup] reset {r.modified_count} stale processing videos → failed")
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"[startup] stale-processing cleanup failed: {e}")
     # Ensure settings exist
     try:
         s = await get_settings()
