@@ -4461,19 +4461,18 @@ async def startup():
         await _fix_unsafe_series_slugs()
     except Exception as e:  # noqa: BLE001
         logger.warning(f"[startup] slug fix failed: {e}")
-    # Reset videos stuck in "processing" since the last run. Background tasks
-    # don't survive a server restart — anything still "processing" was
-    # interrupted and will NEVER progress on its own. We use a 5-minute cutoff
-    # so an in-flight encoder isn't nuked by a reload mid-encode.
+    # Reset ALL videos stuck in "processing". Background tasks never survive
+    # a server restart — anything still "processing" was interrupted and
+    # will never progress on its own. Safe: this runs BEFORE we accept new
+    # uploads, so no in-flight encoder can be nuked.
     try:
-        cutoff = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
         r = await db.videos.update_many(
-            {"status": "processing", "created_at": {"$lt": cutoff}},
+            {"status": "processing"},
             {"$set": {"status": "failed", "progress": 0,
                        "error": "interrupted by server restart"}},
         )
         if r.modified_count:
-            logger.info(f"[startup] reset {r.modified_count} stale processing videos → failed")
+            logger.info(f"[startup] reset {r.modified_count} orphaned processing videos → failed")
     except Exception as e:  # noqa: BLE001
         logger.warning(f"[startup] stale-processing cleanup failed: {e}")
     # Ensure settings exist

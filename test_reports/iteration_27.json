@@ -1,0 +1,36 @@
+{
+  "summary": "Iteration 27 backend-only retest of the encoding-pipeline fixes. 15/15 pytest pass: 8 new tests in test_iteration27_encoding_fixes.py and 7 regression tests in test_iteration26_encoding_timeouts.py. Both HIGH issues from iteration 26 are fixed. (1) A garbage 200KB .mp4 now ends as status=failed, progress=0, error='all renditions failed or timed out', renditions=[] (about 9s). (2) The FIFO-hang timeouts work and leave no leftover processes: probe_video asks for 30s on both ffprobe calls; _ffmpeg_extract_subtitle asks for 120s, returns 'TIMEOUT' and kills ffmpeg; generate_thumbnails asks for 30s per thumbnail (an uncapped real run was killed at 30.0s). In transcode_to_resolution the 15s duration-ffprobe is now killed, with no orphan ffprobe or ffmpeg left afterwards. Regressions still pass: a valid tiny upload reaches ready/100 with 1 rendition and a preview_url in about 9s; a burst of 5 uploads (more than ffmpeg_concurrency) all reach ready. Startup cleanup verified with a backend restart: a doc in processing for 10 min becomes failed/0/'interrupted by server restart'; a 2-min processing doc and an old ready doc are left alone. /api/admin/videos returns 200 after the restart and the startup log has no exception.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "transcoder.extract_embedded_subtitles tier-2 / tier-3 conversion (~L205, ~L228)", "issue": "These two `ffmpeg -i <intermediate .srt/.ass> -c:s webvtt` calls still have NO -nostdin, NO stdin=DEVNULL and NO timeout (plain proc.communicate()). So the claim that ALL ffmpeg calls pass -nostdin and DEVNULL is not true. The risk is low because the input is a small local file, but for consistency route them through a shared run-with-timeout helper."},
+      {"endpoint": "startup stale cleanup (server.py ~L4468)", "issue": "Docs in processing that are younger than 5 min at boot are still orphaned forever, because background tasks never survive a restart (verified: the 2-min doc stayed processing). The comment 'so an in-flight encoder isn't nuked' does not apply in a single process. Consider resetting all processing docs, or re-queuing the young ones."},
+      {"endpoint": "process_video progress", "issue": "Not changed: progress stays at 30% for the whole transcode. Worst-case subtitle stage is now 3 tiers x 120s per stream, plus a 600s+ transcode, so long videos can still look stuck at 30% without being hung."},
+      {"endpoint": "process_video exception path (~L750)", "issue": "The generic except sets status=failed but does not reset progress, so the UI may show 'failed' at 30%. Cosmetic."}
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iteration27_encoding_fixes.py",
+    "/app/backend/tests/test_iteration26_encoding_timeouts.py",
+    "/app/backend/tests/it27_startup_seed.py",
+    "/app/test_reports/pytest/iteration27.xml",
+    "/app/test_reports/pytest/iteration26_rerun.xml"
+  ],
+  "action_items": [
+    "Optional: add -nostdin, stdin=DEVNULL and an asyncio.wait_for timeout to the two intermediate-to-webvtt ffmpeg calls in extract_embedded_subtitles.",
+    "Optional: reset all 'processing' docs at startup, or re-queue them, instead of only those older than 5 min.",
+    "Optional: add intermediate progress updates during the transcode (e.g. parse ffmpeg -progress output)."
+  ],
+  "critical_code_review_comments": [
+    "transcoder.py now repeats the 'spawn + wait_for + kill + wait' pattern 6+ times (probe, subtitle, thumbs, duration-probe, transcode, preview). Extract one `_run_proc(args, timeout)` helper.",
+    "server.py is about 7500 lines; process_video and the startup routines should move into their own modules."
+  ],
+  "updated_files": ["/app/backend/tests/test_iteration27_encoding_fixes.py", "/app/backend/tests/it27_startup_seed.py"],
+  "success_rate": {"backend": "100% (15/15 tests; startup-cleanup check passed)", "frontend": "not tested (backend only)"},
+  "test_credentials": "admin@streamhub.io / Admin123!",
+  "seed_data_creation": "TEST_it27_* videos were uploaded through the API and deleted by id in fixture teardown. Three TEST_it27_* mongo docs were seeded for the startup test and then deleted by explicit id. The backend was restarted once. pkill ffmpeg/ffprobe was run afterwards and no processes were left.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Run: pytest tests/test_iteration27_encoding_fixes.py -p no:xdist -s (about 2 min, including a real 30s thumbnail timeout) and test_iteration26_encoding_timeouts.py (about 70s). Startup cleanup: python tests/it27_startup_seed.py seed, then sudo supervisorctl restart backend, then check, then clean. The FIFO trick (os.mkfifo) plus a monkeypatched asyncio.wait_for capped at 3s is used to simulate hangs."
+}

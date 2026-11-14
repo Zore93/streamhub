@@ -201,12 +201,21 @@ async def extract_embedded_subtitles(
             inter_path = out_path.with_suffix(inter_ext)
             err1 = await _ffmpeg_extract_subtitle(src_path, idx, inter_path, codec_args=["-c:s", "copy"])
             if _file_nonempty(inter_path):
-                # Convert the standalone subtitle file to WebVTT
+                # Convert the standalone subtitle file to WebVTT (small local
+                # input but still timeout-guard it for consistency).
                 proc = await asyncio.create_subprocess_exec(
-                    "ffmpeg", "-y", "-i", str(inter_path), "-c:s", "webvtt", str(out_path),
+                    "ffmpeg", "-y", "-nostdin", "-i", str(inter_path), "-c:s", "webvtt", str(out_path),
+                    stdin=asyncio.subprocess.DEVNULL,
                     stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE,
                 )
-                _stdout, stderr = await proc.communicate()
+                try:
+                    _stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=60.0)
+                except asyncio.TimeoutError:
+                    try: proc.kill()
+                    except Exception: pass
+                    try: await proc.wait()
+                    except Exception: pass
+                    stderr = b"TIMEOUT"
                 try:
                     inter_path.unlink()
                 except Exception:
@@ -226,10 +235,18 @@ async def extract_embedded_subtitles(
             err2 = await _ffmpeg_extract_subtitle(src_path, idx, tmp_srt, codec_args=["-c:s", "srt"])
             if _file_nonempty(tmp_srt):
                 proc = await asyncio.create_subprocess_exec(
-                    "ffmpeg", "-y", "-i", str(tmp_srt), "-c:s", "webvtt", str(out_path),
+                    "ffmpeg", "-y", "-nostdin", "-i", str(tmp_srt), "-c:s", "webvtt", str(out_path),
+                    stdin=asyncio.subprocess.DEVNULL,
                     stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE,
                 )
-                _stdout, stderr = await proc.communicate()
+                try:
+                    _stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=60.0)
+                except asyncio.TimeoutError:
+                    try: proc.kill()
+                    except Exception: pass
+                    try: await proc.wait()
+                    except Exception: pass
+                    stderr = b"TIMEOUT"
                 try:
                     tmp_srt.unlink()
                 except Exception:
