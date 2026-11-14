@@ -21,52 +21,53 @@ RESOLUTIONS: Dict[str, Tuple[int, int]] = {
 async def probe_video(path: str) -> Dict:
     """Returns {duration, width, height, subtitle_streams} via ffprobe.
 
-    `subtitle_streams` is a list of dicts describing each embedded subtitle
-    track found in the container (typically populated only for .mkv files):
-        {
-            "index": <stream index, e.g. 2>,
-            "codec_name": "subrip" | "ass" | "mov_text" | "webvtt" | ...,
-            "language": <ISO 639-1/2 code, "und" or ""=unknown>,
-            "title": <free-form title from the file, may be empty>,
-        }
+    Both ffprobe calls are hard-capped at 30s so corrupted containers can't
+    hang the processing pipeline. Any failure returns a zero-dict so the
+    caller can decide whether to continue.
     """
-    proc = await asyncio.create_subprocess_exec(
+    PROBE_TIMEOUT = 30.0
+
+    async def _probe(args: List[str]) -> bytes:
+        p = await asyncio.create_subprocess_exec(
+            *args,
+            stdin=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            out, _ = await asyncio.wait_for(p.communicate(), timeout=PROBE_TIMEOUT)
+            return out or b""
+        except asyncio.TimeoutError:
+            logger.warning("ffprobe TIMEOUT (%ss) on %s — killing", PROBE_TIMEOUT, Path(path).name)
+            try: p.kill()
+            except Exception: pass
+            try: await p.wait()
+            except Exception: pass
+            return b""
+
+    stdout = await _probe([
         "ffprobe",
         "-v", "error",
         "-show_entries", "stream=index,codec_type,codec_name:stream_tags=language,title:format=duration",
         "-of", "json",
         path,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    stdout, _ = await proc.communicate()
+    ])
     try:
-        info = json.loads(stdout.decode())
+        info = json.loads(stdout.decode()) if stdout else {}
         streams = info.get("streams", [])
         fmt = info.get("format", {})
-        # Pick the LARGEST video stream (by pixel count) for width/height.
-        # Many MKV / MP4 containers embed cover-art as a tiny attached picture
-        # stream flagged as codec_type="video" — that used to make us encode
-        # 1080p sources at only 320x320 (or whatever the thumbnail was).
-        # Re-query width/height per video stream because the initial projection
-        # didn't include them.
-        proc2 = await asyncio.create_subprocess_exec(
+        out2 = await _probe([
             "ffprobe",
             "-v", "error",
             "-select_streams", "v",
             "-show_entries", "stream=index,width,height,disposition",
             "-of", "json",
             path,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        out2, _ = await proc2.communicate()
+        ])
         try:
             vstreams = json.loads(out2.decode()).get("streams", []) or []
         except Exception:
             vstreams = []
-        # Prefer streams whose `attached_pic` disposition flag is 0 (i.e. real
-        # video), then pick the biggest one by width*height.
         def _pixels(s: Dict) -> int:
             try:
                 return int(s.get("width", 0) or 0) * int(s.get("height", 0) or 0)
@@ -79,14 +80,12 @@ async def probe_video(path: str) -> Dict:
         pool = real_streams or vstreams
         video_stream: Dict = max(pool, key=_pixels, default={})
         if _pixels(video_stream) == 0 and vstreams:
-            # last-resort fallback — some ffprobe builds don't fill disposition
             video_stream = max(vstreams, key=_pixels, default={})
         logger.info(
-            "probe_video: %s → %d video stream(s), chose index=%s %dx%d (candidates: %s)",
+            "probe_video: %s → %d video stream(s), chose index=%s %dx%d",
             Path(path).name, len(vstreams), video_stream.get("index"),
             int(video_stream.get("width", 0) or 0),
             int(video_stream.get("height", 0) or 0),
-            [(s.get("index"), s.get("width"), s.get("height")) for s in vstreams],
         )
         sub_streams: List[Dict] = []
         for s in streams:
@@ -282,7 +281,7 @@ async def _ffmpeg_extract_subtitle(src: str, stream_index: int, out: Path, codec
     except Exception:
         pass
     cmd = [
-        "ffmpeg", "-y",
+        "ffmpeg", "-y", "-nostdin",
         "-fflags", "+genpts",
         "-err_detect", "ignore_err",
         "-i", src,
@@ -291,9 +290,18 @@ async def _ffmpeg_extract_subtitle(src: str, stream_index: int, out: Path, codec
         str(out),
     ]
     proc = await asyncio.create_subprocess_exec(
-        *cmd, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE,
+        *cmd, stdin=asyncio.subprocess.DEVNULL,
+        stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE,
     )
-    _stdout, stderr = await proc.communicate()
+    try:
+        _stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=120.0)
+    except asyncio.TimeoutError:
+        logger.warning("subtitle extract TIMEOUT on %s stream %d — killing", Path(src).name, stream_index)
+        try: proc.kill()
+        except Exception: pass
+        try: await proc.wait()
+        except Exception: pass
+        return "TIMEOUT"
     return (stderr or b"").decode(errors="replace")
 
 
@@ -336,22 +344,30 @@ async def generate_thumbnails(
     if duration_sec <= 0:
         duration_sec = 10.0
     for i in range(count):
-        # take frames at fraction i/(count+1) skipping first and last edges
         t = duration_sec * (i + 1) / (count + 1)
         out = os.path.join(out_dir, f"{video_id}_thumb_{i}.jpg")
         proc = await asyncio.create_subprocess_exec(
             "ffmpeg",
-            "-y",
+            "-y", "-nostdin",
             "-ss", f"{t:.2f}",
             "-i", video_path,
             "-frames:v", "1",
             "-vf", "scale=640:-2",
             "-q:v", "3",
             out,
+            stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.DEVNULL,
         )
-        await proc.wait()
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=30.0)
+        except asyncio.TimeoutError:
+            logger.warning("thumbnail %d/%d TIMEOUT on %s — killing", i + 1, count, Path(video_path).name)
+            try: proc.kill()
+            except Exception: pass
+            try: await proc.wait()
+            except Exception: pass
+            continue
         if os.path.exists(out):
             paths.append(out)
     return paths
@@ -402,7 +418,7 @@ async def transcode_to_resolution(
     try:
         proc = await asyncio.create_subprocess_exec(
             "ffmpeg",
-            "-y",
+            "-y", "-nostdin",
             "-v", "error",
             "-nostats",
             "-i", input_path,
@@ -418,6 +434,7 @@ async def transcode_to_resolution(
             "-b:a", prof["audio"],
             "-movflags", "+faststart",
             tmp_name,
+            stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.PIPE,
         )
@@ -427,14 +444,21 @@ async def transcode_to_resolution(
         # short videos don't get killed by overhead.
         src_dur = 0.0
         try:
-            # cheap probe just for duration
             p = await asyncio.create_subprocess_exec(
                 "ffprobe", "-v", "error", "-show_entries", "format=duration",
                 "-of", "default=noprint_wrappers=1:nokey=1", input_path,
+                stdin=asyncio.subprocess.DEVNULL,
                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
             )
-            out, _ = await asyncio.wait_for(p.communicate(), timeout=15)
-            src_dur = float((out or b"0").decode().strip() or 0)
+            try:
+                out, _ = await asyncio.wait_for(p.communicate(), timeout=15)
+                src_dur = float((out or b"0").decode().strip() or 0)
+            except asyncio.TimeoutError:
+                logger.warning("duration-probe TIMEOUT on %s — killing ffprobe", Path(input_path).name)
+                try: p.kill()
+                except Exception: pass
+                try: await p.wait()
+                except Exception: pass
         except Exception:
             src_dur = 0.0
         TRANSCODE_TIMEOUT = max(600.0, src_dur * 20.0)
@@ -550,6 +574,7 @@ async def extract_preview_clip(src_path: str, out_path: str, duration_sec: int =
         """Spawn ffmpeg + kill it hard if it doesn't exit within PREVIEW_TIMEOUT."""
         proc = await asyncio.create_subprocess_exec(
             *args,
+            stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.PIPE,
         )
@@ -571,7 +596,7 @@ async def extract_preview_clip(src_path: str, out_path: str, duration_sec: int =
     # universally compatible and still fast because video is still copied.
     try:
         rc, err = await _run_ffmpeg([
-            "ffmpeg", "-y",
+            "ffmpeg", "-y", "-nostdin",
             "-ss", "0",
             "-i", src_path,
             "-t", str(duration_sec),
@@ -594,7 +619,7 @@ async def extract_preview_clip(src_path: str, out_path: str, duration_sec: int =
     # ---- Fallback: re-encode (always succeeds, hard-capped by timeout) --
     try:
         rc, err = await _run_ffmpeg([
-            "ffmpeg", "-y",
+            "ffmpeg", "-y", "-nostdin",
             "-ss", "0",
             "-i", src_path,
             "-t", str(duration_sec),

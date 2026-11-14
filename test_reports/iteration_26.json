@@ -1,0 +1,38 @@
+{
+  "summary": "Backend-only test of the encoding pipeline hang fix. 7/7 pytest pass (/app/backend/tests/test_iteration26_encoding_timeouts.py). E2E: a single tiny upload reaches ready/100% in about 7s with a 360p rendition and a preview_url. Back-to-back uploads (garbage + 2 valid) and a burst of 5 uploads (more than ffmpeg_concurrency=3) all reach a final status, so the queue does not deadlock. Unit tests: a hanging ffmpeg was simulated with a FIFO input that never sends data and asyncio.wait_for was capped to 3s. extract_preview_clip requests the 90s timeout, kills ffmpeg and returns False. transcode_to_resolution requests max(600, dur*20)=600, kills ffmpeg, removes the temp file and returns False. A semaphore wrapped around a hanging transcode is released and the next job succeeds. Startup cleanup verified: a doc in processing for 3h goes to failed/0 after a backend restart; a 30min-old doc and an old ready doc are left alone. Found 3 real issues (below): the main one is that a transcode that fails or times out is still marked READY with zero renditions, and probe, thumbnails and subtitle extraction still have NO timeouts, so they can still hang at 5%, 15% or 30%.",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "process_video (server.py ~L675-728)", "issue": "If every transcode_to_resolution returns False (ffmpeg error OR the new timeout), the loop finishes and still sets status='ready', progress=100 with renditions=[]. Reproduced: uploading 200KB of random bytes as .mp4 gives status=ready, progress=100, renditions=[], duration_sec=0, thumbnail_url=None, error=None. So with the new timeouts, a hung video becomes an unplayable 'ready' video instead of 'failed'.", "priority": "HIGH"},
+      {"endpoint": "transcoder.py probe_video / generate_thumbnails / extract_embedded_subtitles / _ffmpeg_extract_subtitle", "issue": "None of these ffmpeg/ffprobe calls have a timeout (plain proc.communicate()/proc.wait()). Subtitle extraction runs AFTER progress=30 and the preview step, while the semaphore is held. A hang there freezes the video at 30% and blocks the semaphore, which is the exact symptom the user reported. With concurrency 2-3, all slots hang and new uploads sit at status=processing/progress=0 (waiting on the semaphore). That matches the screenshot (2 videos at 30%, 2 at 0%). probe hang = stuck at 5%, thumbnails hang = stuck at 15%.", "priority": "HIGH"}
+    ],
+    "minor": [
+      {"endpoint": "transcoder.transcode_to_resolution duration probe", "issue": "When the 15s ffprobe wait_for times out, the ffprobe process `p` is never killed, so it leaks as an orphan process (confirmed: orphan ffprobe processes still alive after the test). Add p.kill() + await p.wait() in the except block."},
+      {"endpoint": "process_video progress", "issue": "Progress stays at 30% for the whole transcode (only updates after each rendition finishes). Settings use encode_profile='original' (preset=slow, crf 20), so long videos can legitimately sit at 30% for a long time and look 'stuck'. Consider adding an intermediate progress update, or warn the admin that slow profiles are slow."},
+      {"endpoint": "startup stale cleanup (server.py ~L4452)", "issue": "Only resets processing docs older than 2h. Background tasks do not survive a restart, so ANY doc in processing at boot is orphaned. A video uploaded 30 min before a restart stays 'processing' forever (verified). The cleanup also doesn't set an `error` message. Consider resetting all processing docs at startup (single-worker) or re-queuing them, and set error='interrupted by restart'."},
+      {"endpoint": "ffmpeg subprocesses", "issue": "No `-nostdin` / stdin=DEVNULL on the ffmpeg calls. ffmpeg can block reading stdin in some supervisor or terminal setups. Cheap hardening."},
+      {"endpoint": "TranscodeQueue.set_concurrency", "issue": "It replaces the Semaphore object when the settings change. Jobs already waiting on the old semaphore keep the old limit, so the effective concurrency can temporarily exceed the setting (old + new). It does not deadlock."}
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": ["/app/backend/tests/test_iteration26_encoding_timeouts.py", "/app/test_reports/pytest/iteration26_e2e.xml"],
+  "action_items": [
+    "In process_video: if `renditions` is empty after the loop, set status='failed' with error='all renditions failed / timed out' instead of ready/100.",
+    "Add asyncio.wait_for + proc.kill() timeouts to probe_video (~30s), every generate_thumbnails ffmpeg call (~30s each), and every ffmpeg call in extract_embedded_subtitles / _ffmpeg_extract_subtitle (~120s). Ideally move them all to one shared helper like _run_ffmpeg.",
+    "Kill the ffprobe duration-probe process when it times out in transcode_to_resolution.",
+    "Add -nostdin (or stdin=DEVNULL) to all ffmpeg subprocess calls.",
+    "Consider resetting all 'processing' docs at startup (not only those older than 2h) and set an error message."
+  ],
+  "critical_code_review_comments": [
+    "transcoder.py now has 3 copies of the 'spawn + wait_for + kill' pattern. Extract one async helper and reuse it everywhere (probe, thumbs, subtitles, preview, transcode).",
+    "server.py is 7480 lines; process_video should move into its own module.",
+    "UPLOAD_DIR in backend/.env is /app/uploads (the request says /app/backend/uploads). FYI only."
+  ],
+  "updated_files": ["/app/backend/tests/test_iteration26_encoding_timeouts.py"],
+  "success_rate": {"backend": "100% of written tests pass (7/7); 2 HIGH + 5 minor issues found via code review and the garbage-file repro", "frontend": "not tested (backend only requested)"},
+  "test_credentials": "admin@streamhub.io / Admin123! (from /app/memory/test_credentials.md, file is populated)",
+  "seed_data_creation": "TEST_-prefixed videos created and then deleted (API DELETE + mongo deleteMany id:/^TEST_/). The backend was restarted once to test the startup cleanup.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Run: pytest /app/backend/tests/test_iteration26_encoding_timeouts.py -v -s (about 70s). The unit tests simulate an ffmpeg hang with os.mkfifo input and monkeypatch asyncio.wait_for to cap timeouts to 3s. Settings: ffmpeg_concurrency=3, enabled_resolutions=[360p,720p], encode_profile=original. After the fixes, add asserts: the garbage upload should end status=failed, and the subtitle/probe/thumbnail timeouts should be exercised with the FIFO trick. Run `pkill -f hang.mp4` after the tests if ffprobe leaks are still present.",
+  "rca of the issue": "Reported: videos stuck at 30% and at 0%. Root cause: at progress=30 the pipeline runs the preview extraction (now has a timeout) and then embedded-subtitle extraction (NO timeout), followed by the transcode (now has a timeout, but progress is not updated during it). Any hang in the subtitle, probe or thumbnail ffmpeg calls holds a queue.semaphore slot forever. Once all slots are held, every new upload waits in `async with queue.semaphore` at status=processing and the default progress=0, which explains the 0% items. Mitigation: put timeouts on all remaining subprocesses, and mark videos with no renditions as failed."
+}

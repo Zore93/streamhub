@@ -722,10 +722,23 @@ async def process_video(video_id: str, src_path: str):
                     upd["status"] = "ready"
                 await db.videos.update_one({"id": video_id}, {"$set": upd})
                 await _publish_status(video_id)
-            await db.videos.update_one(
-                {"id": video_id},
-                {"$set": {"status": "ready", "progress": 100}},
-            )
+            # If every rendition failed/timed out we end up with renditions=[]
+            # → surface this as `failed` instead of pretending the video is
+            # ready & playable (which was the admin confusion earlier).
+            if not renditions:
+                await db.videos.update_one(
+                    {"id": video_id},
+                    {"$set": {
+                        "status": "failed",
+                        "progress": 0,
+                        "error": "all renditions failed or timed out",
+                    }},
+                )
+            else:
+                await db.videos.update_one(
+                    {"id": video_id},
+                    {"$set": {"status": "ready", "progress": 100}},
+                )
             await _publish_status(video_id)
             # Cleanup original file regardless of storage backend
             try:
@@ -4448,14 +4461,16 @@ async def startup():
         await _fix_unsafe_series_slugs()
     except Exception as e:  # noqa: BLE001
         logger.warning(f"[startup] slug fix failed: {e}")
-    # Reset videos stuck in "processing" for more than 2 hours — these are
-    # orphaned from a previous process (crash, OOM kill, ffmpeg hang before
-    # we added timeouts) and would otherwise clog the Admin → Videos list.
+    # Reset videos stuck in "processing" since the last run. Background tasks
+    # don't survive a server restart — anything still "processing" was
+    # interrupted and will NEVER progress on its own. We use a 5-minute cutoff
+    # so an in-flight encoder isn't nuked by a reload mid-encode.
     try:
-        cutoff = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
+        cutoff = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
         r = await db.videos.update_many(
             {"status": "processing", "created_at": {"$lt": cutoff}},
-            {"$set": {"status": "failed", "progress": 0}},
+            {"$set": {"status": "failed", "progress": 0,
+                       "error": "interrupted by server restart"}},
         )
         if r.modified_count:
             logger.info(f"[startup] reset {r.modified_count} stale processing videos → failed")
