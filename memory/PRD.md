@@ -273,3 +273,13 @@ Build a full-stack video-sharing platform inspired by hentairosub.ro with:
 ## Deployment
 - See `/app/deploy/README.md` then `sudo bash /app/deploy/scripts/install.sh`.
 - Migration: `python3 deploy/migrate/parse_legacy_dump.py --sql dump.sql --out-dir ./out --all-pro --wasabi-base-url …` then `bash deploy/migrate/import_to_mongo.sh`.
+
+## Iteration 24 — Custom Preview Player Controls (Feb 2026)
+- **Goal**: Replace native `<video controls>` on the locked-content preview (15/30s) with a custom overlay that exactly matches the main `VideoPlayer.jsx` look — in particular, a bottom-right CC (Subtitles) dropdown users can actually find.
+- **File**: `/app/frontend/src/pages/Watch.jsx` → `PreviewPlayer` component.
+- **Changes**:
+  - Dropped the native `controls` attribute; added a gradient bottom control bar with scrubber (clamped to `preview_duration`), play/pause button, `current / total` time, and a `Subtitles` Shadcn DropdownMenu triggered from the bottom-right (side="top", align="end") — identical to the main player.
+  - Controls auto-hide 2.5s after inactivity while playing, re-appear on mousemove/pause/end.
+  - Keeps the existing PREVIEW badge (top-left), paywall overlay (on `ended`), and "snap back" guard that clamps `currentTime` to the preview duration.
+  - No `crossOrigin` attribute (would break `/api/media/` same-origin subtitles).
+- **Verified**: Screenshot shows CC icon in the bottom-right, dropdown opens upward with `Subtitles / Off / Eng (en) / Ro (ro)`, matches main-player styling.

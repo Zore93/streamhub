@@ -13,6 +13,11 @@ import VideoPlayer from "@/components/VideoPlayer";
 import FramedAvatar from "@/components/FramedAvatar";
 import { Progress } from "@/components/ui/progress";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import {
+  DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem,
+  DropdownMenuLabel, DropdownMenuSeparator,
+} from "@/components/ui/dropdown-menu";
+import { Play, Pause } from "lucide-react";
 
 export default function Watch() {
   const { id } = useParams();
@@ -760,7 +765,13 @@ export default function Watch() {
  */
 function PreviewPlayer({ video, lockedTier }) {
   const vRef = React.useRef(null);
+  const wrapRef = React.useRef(null);
   const [ended, setEnded] = React.useState(false);
+  const [playing, setPlaying] = React.useState(false);
+  const [time, setTime] = React.useState(0);
+  const [activeTrack, setActiveTrack] = React.useState("off");
+  const [controlsVisible, setControlsVisible] = React.useState(true);
+  const hideTimer = React.useRef(null);
   const dur = Number(video.preview_duration) || 15;
   const subs = video.subtitles || [];
 
@@ -772,29 +783,79 @@ function PreviewPlayer({ video, lockedTier }) {
       el.pause();
       el.currentTime = dur;
       setEnded(true);
+      setPlaying(false);
+    } else {
+      setTime(el.currentTime);
     }
   };
 
-  const onEnded = () => setEnded(true);
+  const onEnded = () => { setEnded(true); setPlaying(false); };
+
+  const togglePlay = () => {
+    const el = vRef.current;
+    if (!el) return;
+    if (el.paused) { el.play().catch(() => {}); setPlaying(true); }
+    else { el.pause(); setPlaying(false); }
+  };
+
+  const seek = (e) => {
+    const el = vRef.current;
+    if (!el) return;
+    const v = Math.min(Number(e.target.value), dur);
+    el.currentTime = v;
+    setTime(v);
+  };
 
   const replay = () => {
     const el = vRef.current;
     if (!el) return;
     el.currentTime = 0;
+    setTime(0);
     setEnded(false);
     el.play().catch(() => {});
+    setPlaying(true);
   };
 
+  const selectTrack = (id) => {
+    const el = vRef.current;
+    if (!el) return;
+    setActiveTrack(id);
+    for (let i = 0; i < el.textTracks.length; i++) {
+      el.textTracks[i].mode = (el.textTracks[i].id === id) ? "showing" : "disabled";
+    }
+  };
+
+  const fmt = (s) => {
+    if (!s || !isFinite(s)) return "0:00";
+    const m = Math.floor(s / 60);
+    const sec = Math.floor(s % 60);
+    return `${m}:${String(sec).padStart(2, "0")}`;
+  };
+
+  // Auto-hide controls after 2.5s of inactivity (only while playing).
+  const bumpControls = () => {
+    setControlsVisible(true);
+    if (hideTimer.current) clearTimeout(hideTimer.current);
+    if (playing) {
+      hideTimer.current = setTimeout(() => setControlsVisible(false), 2500);
+    }
+  };
+  React.useEffect(() => {
+    bumpControls();
+    return () => { if (hideTimer.current) clearTimeout(hideTimer.current); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [playing]);
+
   // Force-enable the default subtitle once the video + tracks are ready.
-  // The HTML5 `default` attribute alone is unreliable across browsers when the
-  // video element is swapped in via React, so we also toggle textTracks here.
   React.useEffect(() => {
     const el = vRef.current;
     if (!el || subs.length === 0) return;
     const enable = () => {
       try {
         for (let i = 0; i < el.textTracks.length; i++) {
-          el.textTracks[i].mode = i === 0 ? "showing" : "disabled";
+          const trk = el.textTracks[i];
+          trk.mode = i === 0 ? "showing" : "disabled";
+          if (i === 0) setActiveTrack(trk.id || subs[0].id);
         }
       } catch { /* some browsers throw before metadata — harmless */ }
     };
@@ -806,22 +867,29 @@ function PreviewPlayer({ video, lockedTier }) {
   const isVip = lockedTier === "vip";
 
   return (
-    <div className="absolute inset-0" data-testid="preview-player">
+    <div
+      ref={wrapRef}
+      className="absolute inset-0 group/preview"
+      data-testid="preview-player"
+      onMouseMove={bumpControls}
+      onMouseLeave={() => { if (playing) setControlsVisible(false); }}
+    >
       <video
         ref={vRef}
         src={mediaUrl(video.preview_url)}
-        className="w-full h-full object-contain bg-black"
-        controls
-        controlsList="nodownload noplaybackrate"
-        disablePictureInPicture
+        className="w-full h-full object-contain bg-black cursor-pointer"
+        onClick={togglePlay}
+        onPlay={() => setPlaying(true)}
+        onPause={() => setPlaying(false)}
         onTimeUpdate={onTimeUpdate}
         onEnded={onEnded}
         onContextMenu={(e) => e.preventDefault()}
+        playsInline
       >
         {subs.map((s, i) => (
           <track
             key={s.id}
-            id={`preview-${s.id}`}
+            id={s.id}
             kind="subtitles"
             src={mediaUrl(s.url)}
             srcLang={s.language || "und"}
@@ -830,19 +898,89 @@ function PreviewPlayer({ video, lockedTier }) {
           />
         ))}
       </video>
+
       {/* Badge: shows during preview playback */}
       {!ended && (
         <div
-          className="absolute top-3 left-3 bg-black/70 backdrop-blur-sm text-rose-200 text-[11px] font-bold px-2 py-1 rounded border border-rose-500/40 pointer-events-none"
+          className="absolute top-3 left-3 bg-black/70 backdrop-blur-sm text-rose-200 text-[11px] font-bold px-2 py-1 rounded border border-rose-500/40 pointer-events-none z-20"
           data-testid="preview-badge"
         >
           PREVIEW · {dur}s
         </div>
       )}
+
+      {/* Custom control bar (mimics VideoPlayer.jsx). Hidden when paywall shows. */}
+      {!ended && (
+        <div
+          className={`absolute bottom-0 left-0 right-0 px-3 pt-10 pb-3 bg-gradient-to-t from-black/85 via-black/40 to-transparent transition-opacity duration-300 z-20 ${
+            controlsVisible ? "opacity-100" : "opacity-0 pointer-events-none"
+          }`}
+        >
+          {/* Scrubber (clamped to preview duration) */}
+          <input
+            type="range"
+            min="0"
+            max={dur}
+            step="0.1"
+            value={time}
+            onChange={seek}
+            className="w-full accent-rose-500 cursor-pointer"
+            data-testid="preview-scrubber"
+          />
+          <div className="flex items-center gap-2 mt-2 text-zinc-100 text-sm">
+            <button
+              onClick={togglePlay}
+              className="hover:text-rose-400 p-1"
+              data-testid="preview-play"
+            >
+              {playing ? <Pause size={20} /> : <Play size={20} fill="currentColor" />}
+            </button>
+            <span className="tabular-nums text-xs text-zinc-300">{fmt(time)} / {fmt(dur)}</span>
+
+            <div className="flex-1" />
+
+            {/* CC (subtitles) - bottom-right */}
+            {subs.length > 0 && (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button className="hover:text-rose-400 p-1" data-testid="preview-cc">
+                    <Subtitles size={18} />
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent
+                  side="top"
+                  align="end"
+                  className="bg-zinc-900 border-zinc-800 text-zinc-100"
+                >
+                  <DropdownMenuLabel className="text-xs">Subtitles</DropdownMenuLabel>
+                  <DropdownMenuSeparator className="bg-zinc-800" />
+                  <DropdownMenuItem
+                    onClick={() => selectTrack("off")}
+                    className={activeTrack === "off" ? "text-rose-400" : ""}
+                  >
+                    Off
+                  </DropdownMenuItem>
+                  {subs.map((s) => (
+                    <DropdownMenuItem
+                      key={s.id}
+                      onClick={() => selectTrack(s.id)}
+                      className={activeTrack === s.id ? "text-rose-400" : ""}
+                      data-testid={`preview-cc-${s.id}`}
+                    >
+                      {s.label} <span className="text-xs text-zinc-500 ml-2">({s.language})</span>
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Paywall overlay — shows when preview ends. */}
       {ended && (
         <div
-          className="absolute inset-0 flex flex-col items-center justify-center text-center px-6 bg-gradient-to-br from-black/95 via-black/90 to-rose-950/80 backdrop-blur-sm"
+          className="absolute inset-0 flex flex-col items-center justify-center text-center px-6 bg-gradient-to-br from-black/95 via-black/90 to-rose-950/80 backdrop-blur-sm z-30"
           data-testid="preview-paywall"
         >
           <Lock size={44} className={isVip ? "vip-gradient-text mb-3" : "text-rose-500 mb-3"} />
