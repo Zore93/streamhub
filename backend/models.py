@@ -24,10 +24,12 @@ class User(BaseModel):
     is_pro: bool = False
     pro_package_id: Optional[str] = None
     pro_expires_at: Optional[str] = None
+    pro_auto_renew: bool = False  # user opted for auto-renewal at last checkout
     # VIP tier — separate from PRO. VIP users can also watch PRO content.
     is_vip: bool = False
     vip_package_id: Optional[str] = None
     vip_expires_at: Optional[str] = None
+    vip_auto_renew: bool = False  # user opted for auto-renewal at last checkout
     email_verified: bool = False
     verify_token: Optional[str] = None
     avatar_url: Optional[str] = None
@@ -43,6 +45,9 @@ class User(BaseModel):
     # Frames inventory
     owned_frames: List[str] = []  # AvatarFrame ids
     selected_frame_id: Optional[str] = None
+    # Network tracking (for audit + one-time package scope)
+    last_login_ip: Optional[str] = None
+    last_login_at: Optional[str] = None
     created_at: str = Field(default_factory=now_iso)
 
 
@@ -359,6 +364,10 @@ class Package(BaseModel):
     active: bool = True
     sort_order: int = 0
     tier: str = "pro"  # pro | vip
+    # One-time (trial) package settings
+    one_time: bool = False  # If True, each user can buy this package only once
+    one_time_scope: str = "account"  # account | account_ip | account_email
+    allow_recurring: bool = True  # If False, user cannot opt-in to auto-renew
     created_at: str = Field(default_factory=now_iso)
 
 
@@ -483,6 +492,8 @@ class PaymentTransaction(BaseModel):
     currency: str
     payment_status: str = "pending"  # pending | paid | expired | failed
     status: str = "open"
+    is_recurring: bool = False  # user opted for auto-renew at checkout
+    ip_address: Optional[str] = None  # client IP captured at checkout
     metadata: Dict[str, str] = {}
     created_at: str = Field(default_factory=now_iso)
     updated_at: str = Field(default_factory=now_iso)

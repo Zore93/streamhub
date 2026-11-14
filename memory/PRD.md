@@ -233,6 +233,30 @@ Build a full-stack video-sharing platform inspired by hentairosub.ro with:
 - P1: Backfill `uploader_id` on legacy videos.
 - P2: Home vertical tab in URL (`?v=`); drag-and-drop episode reorder in Admin.
 
+## Iteration 29 — One-time Trial Packages + Auto-renew Checkbox + Purchase Audit Log (Nov 2026)
+- **Goal**: Admin can sell trial packages (ex. 1€) that can be bought only once per user; at checkout user picks between one-time payment and monthly auto-renew; admin sees Username / IP / Subscription under each package.
+- **Models (`models.py`)**:
+  - `Package`: `one_time: bool`, `one_time_scope: str` (account | account_ip | account_email), `allow_recurring: bool`.
+  - `PaymentTransaction`: `is_recurring: bool`, `ip_address: Optional[str]`.
+  - `User`: `pro_auto_renew`, `vip_auto_renew`, `last_login_ip`, `last_login_at`.
+- **Backend (`server.py`)**:
+  - `_client_ip(request)` helper honours `cf-connecting-ip` → `x-real-ip` → first entry of `x-forwarded-for` → `request.client.host` (preview and production safe).
+  - `/auth/login` persists `last_login_ip` + `last_login_at` on success.
+  - `POST /packages` + `PATCH /packages/{id}`: normalise `one_time_scope`, auto-force `allow_recurring=False` when `one_time=True`.
+  - `GET /packages/me/purchased-one-time`: returns package_ids the authed user already paid (used by storefront to lock the buy button).
+  - `GET /admin/packages/{id}/purchases` (admin only): returns `[{username, email, ip_address, is_recurring, amount, created_at}]` for each paid transaction of the package.
+  - `POST /payments/checkout`:
+    - Captures client IP, accepts `is_recurring` from payload.
+    - Forces `is_recurring=False` when `pkg.one_time` or `pkg.allow_recurring=False`.
+    - Enforces one-time eligibility per scope (`account` / `account_ip` / `account_email`) — returns 403 with Romanian message "Acest pachet poate fi cumpărat o singură dată și a fost deja folosit."
+    - Persists `is_recurring` + `ip_address` on `PaymentTransaction`; forwards both in Stripe `metadata`.
+  - `GET /payments/status` + `POST /webhook/stripe`: on first successful payment, also persist `pro_auto_renew` / `vip_auto_renew` from `tx.is_recurring`.
+- **Frontend**:
+  - `Admin.jsx → PackagesTab`: creation form has `One-time` + scope select + `Permite abonament lunar` toggles. Each package row shows `ONE-TIME · {scope}` / `Fără abonament` badges, inline edit for those fields, and a `Vezi cumpărători` button that opens the log table (Username / IP logare / Subscripție / Data).
+  - `Pro.jsx` + `Vip.jsx`: one-time packages render a `TRIAL · O SINGURĂ DATĂ` badge and change CTA to `Cumpără trial`; recurring-eligible packages show a `Vreau abonament lunar automat` checkbox that flows into `/payments/checkout`. Active PRO/VIP banner shows `Reînnoire automată activă` when `pro_auto_renew`/`vip_auto_renew` is set. Button is disabled when the user already used a one-time package.
+- **Known limitation**: `is_recurring=True` is persisted on user and tx but Stripe recurring charges are not yet wired through Stripe Subscriptions — the flag is source-of-truth for the existing expiry-notification cron. True auto-charging requires Stripe Billing/Subscription mode (out of scope for this iteration).
+- Tested via curl: create one-time pkg ✓, patch to one-time ✓, paid-tx insert visible in log ✓, second checkout attempt returns 403 ✓, `/packages/me/purchased-one-time` returns the blocked id ✓. Smoke-screenshot of Admin and Pro page confirms UI renders.
+
 ## Iteration 23 — Anime Seasons layer (Feb 2026)
 - **Goal**: multi-season structure for Anime (Option 2 from Chat), no migration needed.
 - **Model**: NEW `AnimeSeason { id, series_id, number, title, slug, description, synopsis, cover_thumbnail, year, season_type (season|ova|movie|special), position, active }`. Video gains `anime_season_id` (denormalised `anime_series_id` remains — derived from season on write).

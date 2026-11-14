@@ -325,6 +325,23 @@ def slugify(s: str) -> str:
     return re.sub(r"[\s-]+", "-", s) or new_id()[:8]
 
 
+def _client_ip(request: Request) -> str:
+    """Extract real client IP, honoring the ingress proxy.
+
+    Order: cf-connecting-ip > x-real-ip > first entry in x-forwarded-for >
+    request.client.host. Returns 'unknown' when nothing is available.
+    """
+    hdrs = request.headers
+    ip = (
+        hdrs.get("cf-connecting-ip")
+        or hdrs.get("x-real-ip")
+        or (hdrs.get("x-forwarded-for") or "").split(",")[0].strip()
+    )
+    if not ip and request.client:
+        ip = request.client.host
+    return ip or "unknown"
+
+
 async def build_video_slug(title: str, video_id: str) -> str:
     """Return `<slug>-<short>` where short = last 6 chars of the UUID.
 
@@ -825,6 +842,14 @@ async def login(req: LoginReq, request: Request):
             pass
     token = create_token(u["id"])
     _rate_limit_reset(rate_key)
+    # Record last login IP for audit (used by admin package purchase log)
+    try:
+        await db.users.update_one(
+            {"id": u["id"]},
+            {"$set": {"last_login_ip": _client_ip(request), "last_login_at": now_iso()}},
+        )
+    except Exception:
+        pass
     return {"token": token, "user": await public_user_with_frame(u, include_email=True)}
 
 
@@ -3430,6 +3455,30 @@ async def list_packages(tier: Optional[str] = None):
     return [_normalize_package(p) for p in pks]
 
 
+@api.get("/packages/me/purchased-one-time")
+async def my_one_time_purchases(user: dict = Depends(require_user)):
+    """Return IDs of one-time packages this user has already paid for.
+
+    Used by the storefront to lock the "Buy" button on a trial pack that the
+    user already used.
+    """
+    one_time_ids = [
+        p["id"]
+        async for p in db.packages.find({"one_time": True}, {"_id": 0, "id": 1})
+    ]
+    if not one_time_ids:
+        return {"purchased": []}
+    paid = await db.payment_transactions.find(
+        {
+            "user_id": user["id"],
+            "payment_status": "paid",
+            "package_id": {"$in": one_time_ids},
+        },
+        {"_id": 0, "package_id": 1},
+    ).to_list(100)
+    return {"purchased": sorted({t["package_id"] for t in paid})}
+
+
 @api.get("/packages/all")
 async def list_all_packages(tier: Optional[str] = None, admin: dict = Depends(require_admin)):
     filt: dict = {}
@@ -3451,6 +3500,13 @@ async def create_package(payload: dict, admin: dict = Depends(require_admin)):
     if tier not in ("pro", "vip"):
         tier = "pro"
     payload["tier"] = tier
+    # Normalise one-time fields
+    if payload.get("one_time"):
+        scope = (payload.get("one_time_scope") or "account").lower()
+        if scope not in ("account", "account_ip", "account_email"):
+            scope = "account"
+        payload["one_time_scope"] = scope
+        payload["allow_recurring"] = False  # one-time forbids subscription
     p = Package(**payload)
     await db.packages.insert_one(p.model_dump())
     return p.model_dump()
@@ -3460,6 +3516,14 @@ async def create_package(payload: dict, admin: dict = Depends(require_admin)):
 async def update_package(pkg_id: str, payload: dict, admin: dict = Depends(require_admin)):
     if "tier" in payload and payload["tier"] not in ("pro", "vip"):
         raise HTTPException(400, "tier must be pro or vip")
+    if "one_time_scope" in payload:
+        scope = (payload.get("one_time_scope") or "account").lower()
+        if scope not in ("account", "account_ip", "account_email"):
+            raise HTTPException(400, "one_time_scope must be account | account_ip | account_email")
+        payload["one_time_scope"] = scope
+    if payload.get("one_time") is True:
+        # One-time packages can never be recurring
+        payload["allow_recurring"] = False
     await db.packages.update_one({"id": pkg_id}, {"$set": payload})
     p = await db.packages.find_one({"id": pkg_id}, {"_id": 0})
     return _normalize_package(p)
@@ -3469,6 +3533,49 @@ async def update_package(pkg_id: str, payload: dict, admin: dict = Depends(requi
 async def delete_package(pkg_id: str, admin: dict = Depends(require_admin)):
     await db.packages.delete_one({"id": pkg_id})
     return {"ok": True}
+
+
+@api.get("/admin/packages/{pkg_id}/purchases")
+async def list_package_purchases(pkg_id: str, admin: dict = Depends(require_admin)):
+    """Admin audit log: everyone who purchased this package.
+
+    Returns Username, IP captured at checkout, and whether the user opted
+    for auto-renewal (subscription Yes/No).
+    """
+    pkg = await db.packages.find_one({"id": pkg_id}, {"_id": 0, "id": 1, "name": 1})
+    if not pkg:
+        raise HTTPException(404, "Package not found")
+    # Only return successful (paid) transactions. Admins can still see pending
+    # by passing ?status=all — kept simple for now.
+    txs = await (
+        db.payment_transactions
+        .find({"package_id": pkg_id, "payment_status": "paid"}, {"_id": 0})
+        .sort("created_at", -1)
+        .to_list(500)
+    )
+    user_ids = list({t["user_id"] for t in txs})
+    users_map: Dict[str, dict] = {}
+    if user_ids:
+        async for u in db.users.find(
+            {"id": {"$in": user_ids}},
+            {"_id": 0, "id": 1, "username": 1, "email": 1, "last_login_ip": 1},
+        ):
+            users_map[u["id"]] = u
+    rows = []
+    for t in txs:
+        u = users_map.get(t["user_id"], {})
+        rows.append({
+            "transaction_id": t.get("id"),
+            "user_id": t["user_id"],
+            "username": u.get("username") or (t.get("user_email", "").split("@")[0]),
+            "email": u.get("email") or t.get("user_email"),
+            "ip_address": t.get("ip_address") or u.get("last_login_ip") or "—",
+            "is_recurring": bool(t.get("is_recurring")),
+            "amount": t.get("amount"),
+            "currency": t.get("currency"),
+            "created_at": t.get("created_at"),
+        })
+    return {"package": pkg, "total": len(rows), "purchases": rows}
 
 
 # ============ ANNOUNCEMENTS ============
@@ -4012,6 +4119,41 @@ async def create_checkout(payload: dict, request: Request, user: dict = Depends(
     pkg = await db.packages.find_one({"id": pkg_id, "active": True}, {"_id": 0})
     if not pkg:
         raise HTTPException(404, "Package not found")
+
+    client_ip = _client_ip(request)
+
+    # Normalise recurring intent from the client
+    want_recurring = bool(payload.get("is_recurring"))
+    if pkg.get("one_time"):
+        # One-time (trial) packages can never be recurring
+        want_recurring = False
+    elif not pkg.get("allow_recurring", True):
+        want_recurring = False
+
+    # Enforce one-time eligibility: block a second successful purchase of the
+    # same package within the configured scope.
+    if pkg.get("one_time"):
+        scope = (pkg.get("one_time_scope") or "account").lower()
+        filt: dict = {"package_id": pkg["id"], "payment_status": "paid"}
+        if scope == "account_ip":
+            filt["$or"] = [
+                {"user_id": user["id"]},
+                {"ip_address": client_ip},
+            ]
+        elif scope == "account_email":
+            filt["$or"] = [
+                {"user_id": user["id"]},
+                {"user_email": (user.get("email") or "").lower()},
+            ]
+        else:  # account
+            filt["user_id"] = user["id"]
+        existing = await db.payment_transactions.find_one(filt, {"_id": 0, "id": 1})
+        if existing:
+            raise HTTPException(
+                403,
+                "Acest pachet poate fi cumpărat o singură dată și a fost deja folosit.",
+            )
+
     settings = await get_settings()
     api_key = settings.get("stripe_secret_key") or os.environ.get("STRIPE_API_KEY")
     if not api_key:
@@ -4034,6 +4176,8 @@ async def create_checkout(payload: dict, request: Request, user: dict = Depends(
             "user_id": user["id"],
             "user_email": user["email"],
             "package_id": pkg["id"],
+            "is_recurring": "1" if want_recurring else "0",
+            "ip_address": client_ip,
         },
     )
     session = await stripe_checkout.create_checkout_session(req)
@@ -4044,7 +4188,14 @@ async def create_checkout(payload: dict, request: Request, user: dict = Depends(
         package_id=pkg["id"],
         amount=float(pkg["price"]),
         currency=pkg.get("currency", "usd"),
-        metadata={"package_id": pkg["id"], "user_id": user["id"]},
+        is_recurring=want_recurring,
+        ip_address=client_ip,
+        metadata={
+            "package_id": pkg["id"],
+            "user_id": user["id"],
+            "is_recurring": "1" if want_recurring else "0",
+            "ip_address": client_ip,
+        },
     )
     await db.payment_transactions.insert_one(tx.model_dump())
     return {"url": session.url, "session_id": session.session_id}
@@ -4069,17 +4220,20 @@ async def payment_status(session_id: str, request: Request):
         days = int(pkg.get("duration_days", 30)) if pkg else 30
         expires_at = (datetime.now(timezone.utc) + timedelta(days=days)).isoformat()
         pkg_tier = (pkg.get("tier") if pkg else "pro") or "pro"
+        auto_renew = bool(tx.get("is_recurring"))
         if pkg_tier == "vip":
             user_upd = {
                 "is_vip": True,
                 "vip_package_id": tx["package_id"],
                 "vip_expires_at": expires_at,
+                "vip_auto_renew": auto_renew,
             }
         else:
             user_upd = {
                 "is_pro": True,
                 "pro_package_id": tx["package_id"],
                 "pro_expires_at": expires_at,
+                "pro_auto_renew": auto_renew,
             }
         await db.users.update_one({"id": tx["user_id"]}, {"$set": user_upd})
     await db.payment_transactions.update_one(
@@ -4111,17 +4265,20 @@ async def stripe_webhook(request: Request):
             days = int(pkg.get("duration_days", 30)) if pkg else 30
             expires_at = (datetime.now(timezone.utc) + timedelta(days=days)).isoformat()
             pkg_tier = (pkg.get("tier") if pkg else "pro") or "pro"
+            auto_renew = bool(tx.get("is_recurring"))
             if pkg_tier == "vip":
                 user_upd = {
                     "is_vip": True,
                     "vip_package_id": tx["package_id"],
                     "vip_expires_at": expires_at,
+                    "vip_auto_renew": auto_renew,
                 }
             else:
                 user_upd = {
                     "is_pro": True,
                     "pro_package_id": tx["package_id"],
                     "pro_expires_at": expires_at,
+                    "pro_auto_renew": auto_renew,
                 }
             await db.users.update_one({"id": tx["user_id"]}, {"$set": user_upd})
             await db.payment_transactions.update_one(

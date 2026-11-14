@@ -963,7 +963,10 @@ function PackagesTab({ tier = "pro" }) {
   const defaultColor = isVip ? "#f59e0b" : "#f43f5e";
   const gradientCls = isVip ? "vip-gradient text-black" : "pro-gradient text-white";
   const [pks, setPks] = useState([]);
-  const [form, setForm] = useState({ name: "", description: "", color: defaultColor, price: 9.99, currency: "usd", duration_days: 30, active: true, sort_order: 0 });
+  const [form, setForm] = useState({ name: "", description: "", color: defaultColor, price: 9.99, currency: "usd", duration_days: 30, active: true, sort_order: 0, one_time: false, one_time_scope: "account", allow_recurring: true });
+  const [openPurchases, setOpenPurchases] = useState(null); // pkg_id whose log is open
+  const [purchases, setPurchases] = useState({ total: 0, purchases: [] });
+  const [loadingPurchases, setLoadingPurchases] = useState(false);
   const load = () => api.get(`/packages/all?tier=${tier}`).then((r) => setPks(r.data));
   useEffect(() => { load(); setForm((f) => ({ ...f, color: defaultColor })); /* eslint-disable-next-line */ }, [tier]);
   const create = async () => {
@@ -988,6 +991,28 @@ function PackagesTab({ tier = "pro" }) {
     await api.delete(`/packages/${id}`);
     load();
   };
+  const togglePurchases = async (id) => {
+    if (openPurchases === id) {
+      setOpenPurchases(null);
+      return;
+    }
+    setOpenPurchases(id);
+    setLoadingPurchases(true);
+    try {
+      const { data } = await api.get(`/admin/packages/${id}/purchases`);
+      setPurchases(data);
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Eroare log");
+      setPurchases({ total: 0, purchases: [] });
+    } finally {
+      setLoadingPurchases(false);
+    }
+  };
+  const SCOPE_LABELS = {
+    account: "Per cont (pe viață)",
+    account_ip: "Per cont + IP",
+    account_email: "Per cont + email",
+  };
   return (
     <div className="mt-6 space-y-6" data-testid={`admin-packages-${tier}`}>
       <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-4">
@@ -999,21 +1024,109 @@ function PackagesTab({ tier = "pro" }) {
           <Input type="number" placeholder="Durată (zile)" value={form.duration_days} onChange={(e) => setForm({ ...form, duration_days: e.target.value })} className="bg-zinc-950 border-zinc-800" data-testid={`new-pkg-${tier}-days`} />
           <Textarea placeholder="Descriere" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} className="bg-zinc-950 border-zinc-800 col-span-2" />
         </div>
+        <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-3 items-center">
+          <label className="flex items-center gap-2 text-sm">
+            <Switch checked={form.one_time} onCheckedChange={(v) => setForm({ ...form, one_time: v, allow_recurring: v ? false : form.allow_recurring })} data-testid={`new-pkg-${tier}-one-time`} />
+            Pachet One-time (trial, o singură achiziție)
+          </label>
+          {form.one_time && (
+            <select value={form.one_time_scope} onChange={(e) => setForm({ ...form, one_time_scope: e.target.value })} className="bg-zinc-950 border border-zinc-800 rounded px-3 py-2 text-sm" data-testid={`new-pkg-${tier}-scope`}>
+              <option value="account">Per cont (pe viață)</option>
+              <option value="account_ip">Per cont + IP</option>
+              <option value="account_email">Per cont + email</option>
+            </select>
+          )}
+          {!form.one_time && (
+            <label className="flex items-center gap-2 text-sm">
+              <Switch checked={form.allow_recurring} onCheckedChange={(v) => setForm({ ...form, allow_recurring: v })} data-testid={`new-pkg-${tier}-allow-recurring`} />
+              Permite abonament lunar automat
+            </label>
+          )}
+        </div>
         <Button onClick={create} className={`mt-3 ${gradientCls} border-0`} data-testid={`new-pkg-${tier}-btn`}>Adaugă pachet {label}</Button>
       </div>
       {pks.map((p) => (
-        <div key={p.id} className="bg-zinc-900 border border-zinc-800 rounded-xl p-4 flex justify-between items-center" data-testid={`pkg-row-${p.id}`}>
-          <div>
-            <div className="font-semibold flex items-center gap-2" style={{ color: p.color }}>
-              {p.name} — ${p.price}
-              <span className={`text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded ${isVip ? "bg-amber-500/20 text-amber-300 border border-amber-500/40" : "bg-rose-500/20 text-rose-300 border border-rose-500/40"}`}>{label}</span>
+        <div key={p.id} className="bg-zinc-900 border border-zinc-800 rounded-xl p-4" data-testid={`pkg-row-${p.id}`}>
+          <div className="flex justify-between items-center">
+            <div>
+              <div className="font-semibold flex items-center gap-2 flex-wrap" style={{ color: p.color }}>
+                {p.name} — ${p.price}
+                <span className={`text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded ${isVip ? "bg-amber-500/20 text-amber-300 border border-amber-500/40" : "bg-rose-500/20 text-rose-300 border border-rose-500/40"}`}>{label}</span>
+                {p.one_time && (
+                  <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">One-time · {SCOPE_LABELS[p.one_time_scope] || "Per cont"}</span>
+                )}
+                {!p.one_time && p.allow_recurring === false && (
+                  <span className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-zinc-700 text-zinc-300">Fără abonament</span>
+                )}
+              </div>
+              <div className="text-xs text-zinc-500">{p.duration_days} zile · activ: {String(p.active)}</div>
             </div>
-            <div className="text-xs text-zinc-500">{p.duration_days} zile · activ: {String(p.active)}</div>
+            <div className="flex gap-2 items-center">
+              <Button size="sm" variant="outline" onClick={() => togglePurchases(p.id)} className="border-zinc-700" data-testid={`pkg-log-${p.id}`}>
+                {openPurchases === p.id ? "Ascunde log" : "Vezi cumpărători"}
+              </Button>
+              <Switch checked={p.active} onCheckedChange={(v) => upd(p.id, { active: v })} data-testid={`pkg-active-${p.id}`} />
+              <Button size="sm" variant="destructive" onClick={() => del(p.id)} data-testid={`pkg-del-${p.id}`}><Trash2 size={14} /></Button>
+            </div>
           </div>
-          <div className="flex gap-2 items-center">
-            <Switch checked={p.active} onCheckedChange={(v) => upd(p.id, { active: v })} data-testid={`pkg-active-${p.id}`} />
-            <Button size="sm" variant="destructive" onClick={() => del(p.id)} data-testid={`pkg-del-${p.id}`}><Trash2 size={14} /></Button>
+          {/* Inline editor for one_time / scope / allow_recurring */}
+          <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-3 items-center border-t border-zinc-800 pt-3">
+            <label className="flex items-center gap-2 text-xs text-zinc-400">
+              <Switch checked={!!p.one_time} onCheckedChange={(v) => upd(p.id, { one_time: v, ...(v ? { allow_recurring: false } : {}) })} data-testid={`pkg-one-time-${p.id}`} />
+              One-time
+            </label>
+            {p.one_time ? (
+              <select value={p.one_time_scope || "account"} onChange={(e) => upd(p.id, { one_time_scope: e.target.value })} className="bg-zinc-950 border border-zinc-800 rounded px-2 py-1 text-xs" data-testid={`pkg-scope-${p.id}`}>
+                <option value="account">Per cont (pe viață)</option>
+                <option value="account_ip">Per cont + IP</option>
+                <option value="account_email">Per cont + email</option>
+              </select>
+            ) : (
+              <label className="flex items-center gap-2 text-xs text-zinc-400">
+                <Switch checked={p.allow_recurring !== false} onCheckedChange={(v) => upd(p.id, { allow_recurring: v })} data-testid={`pkg-allow-recurring-${p.id}`} />
+                Permite abonament lunar
+              </label>
+            )}
           </div>
+          {openPurchases === p.id && (
+            <div className="mt-4 border-t border-zinc-800 pt-3" data-testid={`pkg-log-panel-${p.id}`}>
+              <div className="text-sm font-semibold mb-2">Cumpărători ({purchases.total})</div>
+              {loadingPurchases ? (
+                <p className="text-xs text-zinc-500">Se încarcă…</p>
+              ) : purchases.purchases.length === 0 ? (
+                <p className="text-xs text-zinc-500" data-testid={`pkg-log-empty-${p.id}`}>Niciun cumpărător încă.</p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs">
+                    <thead className="text-zinc-500 border-b border-zinc-800">
+                      <tr>
+                        <th className="text-left py-1 pr-3">Username</th>
+                        <th className="text-left py-1 pr-3">IP logare</th>
+                        <th className="text-left py-1 pr-3">Subscripție</th>
+                        <th className="text-left py-1 pr-3">Data</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {purchases.purchases.map((row) => (
+                        <tr key={row.transaction_id} className="border-b border-zinc-900" data-testid={`pkg-log-row-${row.transaction_id}`}>
+                          <td className="py-1 pr-3">{row.username}</td>
+                          <td className="py-1 pr-3 font-mono text-zinc-400">{row.ip_address}</td>
+                          <td className="py-1 pr-3">
+                            {row.is_recurring ? (
+                              <span className="text-emerald-400">Da</span>
+                            ) : (
+                              <span className="text-zinc-400">Nu</span>
+                            )}
+                          </td>
+                          <td className="py-1 pr-3 text-zinc-500">{(row.created_at || "").slice(0, 10)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       ))}
       {pks.length === 0 && (
