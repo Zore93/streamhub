@@ -761,32 +761,8 @@ export default function Watch() {
 function PreviewPlayer({ video, lockedTier }) {
   const vRef = React.useRef(null);
   const [ended, setEnded] = React.useState(false);
-  const [activeTrack, setActiveTrack] = React.useState(null);
   const dur = Number(video.preview_duration) || 15;
   const subs = video.subtitles || [];
-
-  // Enable the first subtitle track by default once metadata loads.
-  React.useEffect(() => {
-    const el = vRef.current;
-    if (!el || subs.length === 0) return;
-    const enable = () => {
-      // Turn all tracks off, then enable the active one (or the first).
-      for (let i = 0; i < el.textTracks.length; i++) {
-        el.textTracks[i].mode = "disabled";
-      }
-      const idx = activeTrack
-        ? subs.findIndex((s) => s.id === activeTrack)
-        : 0;
-      if (idx >= 0 && el.textTracks[idx]) {
-        el.textTracks[idx].mode = "showing";
-        if (!activeTrack) setActiveTrack(subs[idx].id);
-      }
-    };
-    enable();
-    el.addEventListener("loadedmetadata", enable);
-    return () => el.removeEventListener("loadedmetadata", enable);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [subs.length, video.preview_url, activeTrack]);
 
   // Guard: user tries to seek past the preview → snap back and show overlay.
   const onTimeUpdate = () => {
@@ -809,25 +785,23 @@ function PreviewPlayer({ video, lockedTier }) {
     el.play().catch(() => {});
   };
 
-  const cycleTrack = () => {
-    if (subs.length === 0) return;
-    const curIdx = subs.findIndex((s) => s.id === activeTrack);
-    const nextIdx = curIdx < 0 ? 0 : (curIdx + 1) % (subs.length + 1);
-    // nextIdx === subs.length → turn OFF
-    if (nextIdx === subs.length) {
-      setActiveTrack("__off__");
-      const el = vRef.current;
-      if (el) {
-        for (let i = 0; i < el.textTracks.length; i++) el.textTracks[i].mode = "disabled";
-      }
-    } else {
-      setActiveTrack(subs[nextIdx].id);
-    }
-  };
-
-  const activeLabel = activeTrack === "__off__"
-    ? "OFF"
-    : subs.find((s) => s.id === activeTrack)?.label || subs[0]?.label || "CC";
+  // Force-enable the default subtitle once the video + tracks are ready.
+  // The HTML5 `default` attribute alone is unreliable across browsers when the
+  // video element is swapped in via React, so we also toggle textTracks here.
+  React.useEffect(() => {
+    const el = vRef.current;
+    if (!el || subs.length === 0) return;
+    const enable = () => {
+      try {
+        for (let i = 0; i < el.textTracks.length; i++) {
+          el.textTracks[i].mode = i === 0 ? "showing" : "disabled";
+        }
+      } catch { /* some browsers throw before metadata — harmless */ }
+    };
+    enable();
+    el.addEventListener("loadedmetadata", enable, { once: true });
+    return () => el.removeEventListener("loadedmetadata", enable);
+  }, [subs.length, video.preview_url]);
 
   const isVip = lockedTier === "vip";
 
@@ -840,7 +814,6 @@ function PreviewPlayer({ video, lockedTier }) {
         controls
         controlsList="nodownload noplaybackrate"
         disablePictureInPicture
-        crossOrigin={subs.length > 0 ? "anonymous" : undefined}
         onTimeUpdate={onTimeUpdate}
         onEnded={onEnded}
         onContextMenu={(e) => e.preventDefault()}
@@ -865,18 +838,6 @@ function PreviewPlayer({ video, lockedTier }) {
         >
           PREVIEW · {dur}s
         </div>
-      )}
-      {/* CC toggle (only when subtitles exist). Cycles: track1 → track2 → OFF → track1 */}
-      {!ended && subs.length > 0 && (
-        <button
-          onClick={cycleTrack}
-          className="absolute top-3 right-3 bg-black/70 backdrop-blur-sm text-zinc-100 text-[11px] font-bold px-2 py-1 rounded border border-zinc-600 hover:border-rose-500 hover:text-rose-300 transition"
-          data-testid="preview-cc-toggle"
-          title="Subtitrări"
-          type="button"
-        >
-          CC · {activeLabel}
-        </button>
       )}
       {/* Paywall overlay — shows when preview ends. */}
       {ended && (
