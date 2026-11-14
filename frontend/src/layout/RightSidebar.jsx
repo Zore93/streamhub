@@ -222,7 +222,7 @@ function RightSidebarBody({ user, logout, t, pkgs, chatEnabled, siteCfg, recomme
           <div className="text-xs font-bold uppercase tracking-[0.2em] text-zinc-600 mb-3">{t("right.packages")}</div>
           <div className="space-y-2">
             {pkgs.slice(0, 3).map((p) => (
-              <Link key={p.id} to="/pro" className="block bg-zinc-900 border border-zinc-800 rounded-md p-3 hover:bg-zinc-800/60 transition">
+              <Link key={p.id} to={p.tier === "vip" ? "/vip" : "/pro"} className="block bg-zinc-900 border border-zinc-800 rounded-md p-3 hover:bg-zinc-800/60 transition" data-testid={`sidebar-pkg-${p.id}`}>
                 <div className="flex items-center justify-between">
                   <span className="font-semibold text-sm" style={{ color: p.color }}>{p.name}</span>
                   <span className="text-sm font-bold">${p.price}</span>
