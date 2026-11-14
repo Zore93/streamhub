@@ -2556,7 +2556,18 @@ async def get_video(video_id: str, request: Request, user: Optional[dict] = Depe
             # Keep preview_url (if present) and preview_duration so the client
             # can play the 15s/30s teaser before showing the paywall overlay.
             v["renditions"] = []
-            v["subtitles"] = []
+            # Keep subtitles so the preview player can show CC on the teaser.
+            # Still sign them when signed URLs are active (preview_url already
+            # is a public rel path; subtitles live under /subtitles and need
+            # the same treatment the regular path below applies).
+            settings = await get_settings()
+            ttl = int(settings.get("signed_url_ttl_seconds", 300))
+            signed_subs = []
+            for s in v.get("subtitles", []) or []:
+                s2 = dict(s)
+                s2["url"] = await maybe_sign_url(request, s["url"], settings, ttl)
+                signed_subs.append(s2)
+            v["subtitles"] = signed_subs
             return v
     # Sign renditions + subtitles for the response (needed for tiered content
     # AND for admins previewing paywalled videos in the edit page).
