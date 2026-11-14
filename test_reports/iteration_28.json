@@ -1,0 +1,25 @@
+{
+  "summary": "Retest of the 2 minor issues left from iteration 27. Both are fixed. (1) In transcoder.extract_embedded_subtitles, the tier-2 and tier-3 steps that convert the intermediate file to webvtt now run ffmpeg with -nostdin and stdin=DEVNULL, wrapped in asyncio.wait_for(timeout=60.0), and call proc.kill() plus wait() on timeout. Checked with the FIFO trick: a spy on create_subprocess_exec swapped the intermediate input for a FIFO. With the timeout capped to 3s the result was [] in 6.0s, 60.0 was seen twice, both calls had -nostdin and DEVNULL stdin, and no ffmpeg processes were left. With the real (uncapped) timeout, both tiers were killed at about 60s each (120.1s in total) and the result was []. (2) Startup cleanup now resets every processing doc regardless of age. Seeded processing docs aged 10min, 2min and 10s plus one ready doc, then restarted the backend. All 3 processing docs became status=failed, progress=0, error='interrupted by server restart' (log: 'reset 3 orphaned processing videos'). The ready doc was not touched. Regression: the iteration-27 suite passed 8/8 (garbage upload -> failed/0/'all renditions failed or timed out'; valid upload -> ready/100 with 1 rendition and a preview; 5 uploads in a row all ready, no deadlock; probe, subtitle, thumbnail and transcode FIFO timeouts all pass). After the tests: no ffmpeg/ffprobe processes left, 0 TEST_it27/it28 docs left, 0 docs in processing, and the API returns 200.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iteration28_webvtt_timeout.py",
+    "/app/backend/tests/it28_startup_seed.py",
+    "/app/backend/tests/test_iteration27_encoding_fixes.py",
+    "/app/test_reports/pytest/it28_it27.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "The tier-2 and tier-3 conversion blocks in extract_embedded_subtitles are nearly identical, each about 20 lines of subprocess, timeout and kill code. Consider moving this into a helper, e.g. _ffmpeg_to_webvtt(inp, out).",
+    "Resetting at startup with no age cutoff is only safe while there is a single backend worker process. With several uvicorn workers or replicas, a restarting worker would mark encodes that other workers are still running as failed."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration28_webvtt_timeout.py",
+    "/app/backend/tests/it28_startup_seed.py"
+  ],
+  "success_rate": {"backend": "100% (11/11 tests + startup restart check)", "frontend": "not tested (backend only)"},
+  "seed_data_creation": "Created 4 TEST_it28_* video docs for the startup check and deleted them by id afterwards. Upload test videos were deleted through the API by the fixture teardown.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "test_iteration28_webvtt_timeout.py monkeypatches probe_video, _ffmpeg_extract_subtitle and asyncio.create_subprocess_exec so the intermediate-to-webvtt ffmpeg reads from a FIFO and hangs. The uncapped test takes about 120s, so run it separately or in the background. To check startup cleanup: python tests/it28_startup_seed.py seed, then sudo supervisorctl restart backend, then python tests/it28_startup_seed.py check, then python tests/it28_startup_seed.py clean."
+}
